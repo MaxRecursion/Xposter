@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xposter Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>🐦 <span>X</span>poster</h1>
+      <span class="system-indicator" id="system-indicator"></span>
+      <span id="system-label" style="font-size:12px; color: var(--text2)">loading…</span>
+
+      <div class="header-actions">
+        <!-- Theme toggle (iOS-style) -->
+        <label class="toggle-group" title="Toggle light / dark">
+          <span id="theme-icon">🌙</span>
+          <span class="ios-switch">
+            <input type="checkbox" id="theme-toggle" />
+            <span class="ios-slider"></span>
+          </span>
+        </label>
+
+        <!-- System start/stop (iOS-style) -->
+        <label class="toggle-group" title="Pause / resume system">
+          <span>System</span>
+          <span class="ios-switch">
+            <input type="checkbox" id="system-toggle" />
+            <span class="ios-slider"></span>
+          </span>
+        </label>
+
+        <button class="btn btn-primary" id="btn-run">▶ Run Now</button>
+        <button class="btn btn-ghost" id="btn-refresh" title="Refresh">↻</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- Stats -->
+      <div class="stats-bar" id="stats-bar">
+        <div class="stat-card"><div class="value" id="stat-pending">–</div><div class="label">Pending</div></div>
+        <div class="stat-card"><div class="value" id="stat-posted">–</div><div class="label">Posted</div></div>
+        <div class="stat-card"><div class="value" id="stat-skipped">–</div><div class="label">Skipped</div></div>
+        <div class="stat-card"><div class="value" id="stat-total">–</div><div class="label">Total (24h)</div></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="queue">Queue</button>
+        <button class="tab-btn" data-tab="history">History</button>
+        <button class="tab-btn" data-tab="console">⏵ Console</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
+      </div>
+
+      <!-- Queue Tab -->
+      <div class="tab-content active" id="tab-queue">
+        <div id="queue-list"></div>
+      </div>
+
+      <!-- History Tab -->
+      <div class="tab-content" id="tab-history">
+        <div id="history-list"></div>
+      </div>
+
+      <!-- Hacker Console Tab -->
+      <div class="tab-content" id="tab-console">
+        <div class="hacker-console" id="hacker-console">
+          <div class="hacker-console-header">
+            <div class="lhs">
+              <span class="hacker-console-led"></span>
+              <span>XPOSTER://activity.log</span>
+            </div>
+            <div class="rhs">
+              <span id="hc-status">[ LIVE ]</span>
+              <button class="btn btn-ghost" id="hc-clear" style="font-size:11px;padding:2px 8px;">CLEAR</button>
+              <button class="btn btn-ghost" id="hc-pause" style="font-size:11px;padding:2px 8px;">PAUSE</button>
+            </div>
+          </div>
+          <div class="hacker-console-body" id="hc-body">
+            <div class="hc-banner" id="hc-banner"></div>
+            <div id="hc-lines"></div>
+            <div class="hc-prompt">root@xposter:~$ <span class="hc-cursor"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Tab -->
+      <div class="tab-content" id="tab-settings">
+        <div class="settings-grid" id="settings-form">
+          <div class="settings-field">
+            <label>Topic Keywords (comma-separated)</label>
+            <input type="text" id="s-keywords" placeholder="pune,rain,traffic" />
+          </div>
+          <div class="settings-field">
+            <label>Minimum Score (0–100)</label>
+            <input type="number" id="s-min-score" min="0" max="100" />
+          </div>
+          <div class="settings-field">
+            <label>Max Candidates Per Run</label>
+            <input type="number" id="s-max-candidates" min="1" max="10" />
+          </div>
+          <div class="settings-field">
+            <label>Approval Timeout (minutes)</label>
+            <input type="number" id="s-timeout" min="5" max="1440" />
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+          <button class="btn btn-ghost" id="btn-test-notif">📱 Send Test Notification</button>
+        </div>
+
+        <!-- Diagnostics -->
+        <h3 style="margin-top:32px;margin-bottom:8px;font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;">Diagnostics</h3>
+        <div class="diag-table" id="diag-table">
+          <div class="diag-row"><div class="key">loading…</div><div class="value"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

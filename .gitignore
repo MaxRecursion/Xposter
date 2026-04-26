@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+
+# Runtime data and local browser session
+browser-profile/
+data/
+logs/
+
+# Build outputs
+dist/
+coverage/
+
+# OS/editor noise
+.DS_Store
+.claude/
+
+# Temporary files
+*.log
+*.tmp
