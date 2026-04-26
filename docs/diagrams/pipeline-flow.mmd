@@ -1,0 +1,17 @@
+flowchart TD
+  Start["Scheduler or manual Run Now"] --> Lock{"Pipeline already running?"}
+  Lock -->|"yes"| Skip["Skip overlapping run"]
+  Lock -->|"no"| System{"system_running setting true?"}
+  System -->|"no"| Paused["Return without ingestion"]
+  System -->|"yes"| Ingest["Ingest timeline via Playwright"]
+  Ingest --> Upsert["Validate tweet ID and upsert new posts"]
+  Upsert --> Filter["Detect language and topic filter"]
+  Filter --> Score["Score recency, topic relevance, reply opportunity, engagement, Marathi bonus"]
+  Score --> Threshold{"Any scored post >= min_score?"}
+  Threshold -->|"yes"| Rank["Rank candidates"]
+  Threshold -->|"no"| Fallback["Select best new fallback candidate"]
+  Rank --> Generate["Generate reply with Groq"]
+  Fallback --> Generate
+  Generate --> Pending["Store generated/final reply as PENDING_APPROVAL"]
+  Pending --> Notify["Send ntfy approval notification"]
+  Notify --> Complete["Log PIPELINE_COMPLETE"]

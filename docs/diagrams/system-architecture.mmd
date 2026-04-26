@@ -1,0 +1,26 @@
+flowchart LR
+  subgraph "Local Mac"
+    Dashboard["Web dashboard\npublic/"]
+    API["Express API\nsrc/api"]
+    Scheduler["node-cron scheduler\n5 runs/day"]
+    Pipeline["Pipeline\nfilter -> score -> generate"]
+    Browser["Playwright persistent browser\nbrowser-profile/"]
+    DB[("SQLite\nposts, settings, activity_log")]
+  end
+
+  X["x.com timeline and tweet pages"]
+  Groq["Groq chat completions API"]
+  Ntfy["ntfy.sh topic"]
+  Phone["iPhone ntfy app / browser"]
+
+  Dashboard <--> API
+  Scheduler --> Pipeline
+  API --> Pipeline
+  Pipeline --> Browser
+  Browser <--> X
+  Pipeline --> Groq
+  Pipeline <--> DB
+  Pipeline --> Ntfy
+  Ntfy --> Phone
+  Phone -->|"signed approve/skip callback"| API
+  API --> Browser

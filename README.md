@@ -1,180 +1,206 @@
 # Xposter
 
-Human-in-the-loop X (Twitter) reply automation for Pune / Marathi topics.
+Xposter is a local, human-in-the-loop assistant for discovering relevant X/Twitter posts, drafting short Puneri-style replies, and asking for explicit approval before anything is posted.
 
-Runs locally on macOS. Reads your logged-in X timeline via Playwright, filters for
-Marathi/English posts about Pune/rain/traffic, generates replies with Groq's free LLM,
-and sends a push notification to your iPhone for approval before posting anything.
+## Mission
 
----
+Help a real person engage with local Pune and Marathi conversations quickly, safely, and with personality, while preserving human approval as the final control point.
 
-## 3. Setup Instructions
+## Vision
 
-### Required accounts & API keys
+Build a lightweight personal engagement copilot that feels local, context-aware, funny without being reckless, and operationally transparent enough to trust.
 
-#### A. Groq API (free, required for LLM)
-1. Go to <https://console.groq.com>
-2. Sign up for a free account
-3. Navigate to **API Keys → Create API Key**
-4. Copy the key — it starts with `gsk_`
-5. Free tier: 14,400 requests/day, no credit card required
+## Objectives
 
-#### B. ntfy (free, required for iPhone notifications)
-1. Install the **ntfy** app from the iOS App Store
-2. No account needed — just pick a private topic name (treat it like a password)
-   - Example: `xposter-akshay-4f8b2c` (use something hard to guess)
-3. In the ntfy app: tap **+** → enter your topic name → subscribe
-4. That's it — no server-side registration needed for `ntfy.sh`
+- Collect posts from the authenticated X timeline using a persistent local Playwright browser profile.
+- Filter and score Marathi/English posts around Pune, civic issues, traffic, rain, local events, and public conversation.
+- Generate concise replies with gentle Puneri wit: dry, observant, lightly satirical, and low-risk.
+- Send approval notifications to an iPhone through ntfy.
+- Post only after an explicit Approve action.
+- Keep secrets, browser cookies, local databases, logs, and generated artifacts out of Git.
+- Run automatically five times a day by default.
 
-#### C. Find your Mac's local IP (for ntfy action buttons)
-```bash
-ipconfig getifaddr en0
-# Example output: 192.168.1.105
-```
-This must be reachable from your iPhone. Both devices must be on the same WiFi network,
-**or** you can use Tailscale/ngrok and put that URL as `CALLBACK_BASE_URL`.
+## License
 
----
+This project is licensed under the GNU General Public License v3.0 or later. See [LICENSE](./LICENSE).
 
-### Environment variables
+## Quick Start
+
+### Prerequisites
+
+- Node.js 20 or newer.
+- A Groq API key.
+- Chromium installed through Playwright.
+- An ntfy topic subscribed in the iOS ntfy app.
+- A logged-in X session in the local Playwright browser profile.
+
+### Install
 
 ```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-| Variable | Required | Description |
-|---|---|---|
-| `GROQ_API_KEY` | ✅ | From Groq console |
-| `NTFY_TOPIC` | ✅ | Your private ntfy topic name |
-| `CALLBACK_BASE_URL` | ✅ | `http://<mac-lan-ip>:3000` |
-| `API_KEY` | Recommended | Random secret for ntfy callbacks (`openssl rand -hex 32`) |
-| `BROWSER_HEADLESS` | — | `false` for first login, `true` after |
-| `INGEST_CRON` | — | Default `*/15 * * * *` (every 15 min) |
-| `GROQ_MODEL` | — | Default `llama-3.3-70b-versatile` |
-
----
-
-## 4. Local setup
-
-```bash
-# 1. Install Node 20+ (via nvm or brew)
-node --version  # must be >= 20
-
-# 2. Clone / enter project
-cd /path/to/Xposter
-
-# 3. Install dependencies + Playwright browser
 npm run setup
+```
 
-# 4. Configure environment
+### Configure
+
+Copy the example env file:
+
+```bash
 cp .env.example .env
-# Edit .env with your GROQ_API_KEY, NTFY_TOPIC, CALLBACK_BASE_URL
 ```
 
----
+Set at least:
 
-## 5. First-time X login
+```env
+GROQ_API_KEY=replace_me_with_groq_api_key
+API_KEY=replace_with_openssl_rand_hex_32
+NTFY_TOPIC=your-private-ntfy-topic
+CALLBACK_BASE_URL=http://<your-mac-lan-ip>:3000
+BROWSER_HEADLESS=false
+```
 
-The browser session is stored in `./browser-profile/` and persists across restarts.
-You only need to do this once.
+Generate a strong API key:
 
 ```bash
-# Step 1: open browser visibly
-echo "BROWSER_HEADLESS=false" >> .env  # or edit .env manually
-
-# Step 2: start the app — a browser window opens
-npm run dev
-
-# Step 3: in the browser that opens, go to x.com and log in normally
-# Step 4: once logged in, close the app (Ctrl+C)
-
-# Step 5: switch back to headless
-# Edit .env: set BROWSER_HEADLESS=true
-npm run dev  # runs silently in background from now on
+openssl rand -hex 32
 ```
 
----
+Find your Mac LAN IP:
 
-## 7. Run instructions
+```bash
+route -n get default 2>/dev/null | awk '/interface:/{print $2}' | xargs -I{} ipconfig getifaddr {}
+```
 
-### Development (with live reload)
+### First X Login
+
+Run once with a visible browser:
+
+```bash
+BROWSER_HEADLESS=false npm run dev
+```
+
+Log in to `x.com` in the Playwright-controlled Chromium window. The session is stored under `browser-profile/`, which is intentionally ignored by Git.
+
+### Run
+
 ```bash
 npm run dev
 ```
 
-### Production
+Open the dashboard:
+
+```text
+http://localhost:3000
+```
+
+From your iPhone on the same WiFi:
+
+```text
+http://<your-mac-lan-ip>:3000
+```
+
+### Production-Style Run
+
 ```bash
 npm run build
 npm start
 ```
 
-### Dashboard
-Open <http://localhost:3000> in your browser.
+## Scheduling
 
-### Run as a macOS background service (launchd)
+By default, Xposter runs five automatic ingestion/generation cycles per day:
 
-Create `~/Library/LaunchAgents/com.xposter.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>             <string>com.xposter</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/node</string>
-    <string>/Users/YOUR_USERNAME/Xposter/dist/index.js</string>
-  </array>
-  <key>WorkingDirectory</key>  <string>/Users/YOUR_USERNAME/Xposter</string>
-  <key>RunAtLoad</key>         <true/>
-  <key>KeepAlive</key>         <true/>
-  <key>StandardOutPath</key>   <string>/Users/YOUR_USERNAME/Xposter/logs/launchd.log</string>
-  <key>StandardErrorPath</key> <string>/Users/YOUR_USERNAME/Xposter/logs/launchd-err.log</string>
-</dict>
-</plist>
+```cron
+0 9,12,15,18,21 * * *
 ```
+
+Override this with `INGEST_CRON` in `.env`.
+
+## ntfy Approval Flow
+
+Xposter sends ntfy notifications with iOS-safe `view` actions by default:
+
+```env
+NTFY_ACTION_MODE=view
+```
+
+The action buttons open signed local callback URLs. The signed token is scoped to one post and one action, expires automatically, and avoids putting the full API key in notification URLs.
+
+If you prefer silent background callbacks and your network/device supports them, set:
+
+```env
+NTFY_ACTION_MODE=http
+```
+
+## Architecture
+
+```mermaid
+flowchart LR
+  User["Human reviewer"] --> Dashboard["Web dashboard"]
+  Scheduler["node-cron scheduler"] --> Ingestion["Playwright X ingestion"]
+  Dashboard --> API["Express API"]
+  API --> Pipeline["Filter, score, generate"]
+  Scheduler --> Pipeline
+  Pipeline --> Groq["Groq LLM"]
+  Pipeline --> SQLite[("SQLite database")]
+  Pipeline --> Ntfy["ntfy push notification"]
+  Ntfy --> User
+  User --> Callback["Signed approve/skip callback"]
+  Callback --> API
+  API --> Posting["Playwright reply posting"]
+  Posting --> X["x.com"]
+```
+
+More Mermaid source files live in [docs/diagrams](./docs/diagrams):
+
+- [system-architecture.mmd](./docs/diagrams/system-architecture.mmd)
+- [pipeline-flow.mmd](./docs/diagrams/pipeline-flow.mmd)
+- [approval-sequence.mmd](./docs/diagrams/approval-sequence.mmd)
+- [ntfy-action-sequence.mmd](./docs/diagrams/ntfy-action-sequence.mmd)
+- [posting-sequence.mmd](./docs/diagrams/posting-sequence.mmd)
+- [security-model.mmd](./docs/diagrams/security-model.mmd)
+
+The security review and remediation notes are in [docs/security-review.md](./docs/security-review.md).
+
+## Project Structure
+
+```text
+src/
+  api/                 Express server, API routes, auth helpers
+  browser/             Playwright session, ingestion, reply posting
+  notifications/       ntfy notification publisher
+  pipeline/            filtering, scoring, reply generation
+  scheduler/           cron orchestration
+  storage/             SQLite schema and queries
+  utils/               logging, network, tweet URL helpers
+public/                dashboard UI
+tests/                 unit and integration tests
+docs/diagrams/         Mermaid architecture and sequence diagrams
+```
+
+## Security Notes
+
+- `.env`, browser profiles, SQLite data, logs, build output, and dependencies are ignored by Git.
+- Mutation endpoints require the API key unless called from loopback.
+- Off-Mac dashboard mutations prompt for the API key and store it in that browser's localStorage.
+- ntfy `view` links use signed action tokens instead of exposing the full API key.
+- Request logs redact `key` and `token` query parameters.
+- JSON request bodies are size-limited.
+- CORS is restricted to localhost and configured local callback origins.
+- Generated replies remain pending until human approval.
+
+## Useful Commands
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.xposter.plist
-launchctl start com.xposter
+npm run build
+npm test
+npm run dev
+npm start
 ```
 
----
+## Operational Checklist
 
-## Approval workflow
-
-1. Xposter ingests your X timeline every 15 minutes (configurable)
-2. Relevant posts → scored → top 3 sent to Groq for reply generation
-3. iPhone receives ntfy notification:
-   - Shows original tweet + generated reply
-   - Two action buttons: **✅ Approve** / **❌ Skip**
-4. Tap **Approve** → reply is posted via browser automation with human-like delays
-5. Tap **Skip** → post is discarded
-6. Alternatively: use the web dashboard at `http://localhost:3000`
-
----
-
-## Tests
-
-```bash
-npm test                  # run all tests
-npm run test:watch        # watch mode
-npm run test:coverage     # with coverage report
-```
-
----
-
-## 8. Future improvements
-
-- **Tailscale integration**: auto-detect Tailscale IP for always-reachable callbacks
-- **Multiple LLM fallbacks**: try Groq → OpenRouter → Hugging Face in sequence
-- **Reply tone settings**: formal / casual / humorous selector per topic type
-- **Engagement tracking**: track which posted replies got liked/replied to, feed back into scoring
-- **Smart deduplication**: semantic similarity via embeddings (not just Jaccard)
-- **macOS menu bar app**: status indicator + quick approve from menu bar
-- **X API v2 integration**: supplement browser ingestion with official API for reliability
-- **Multi-account support**: route different topics to different accounts
+- Confirm `http://localhost:3000/health` returns `ok`.
+- Confirm your iPhone can open `http://<your-mac-lan-ip>:3000`.
+- Send a test ntfy notification from the dashboard settings tab.
+- Confirm Approve opens a local confirmation page and then posts.
+- Keep `API_KEY`, `GROQ_API_KEY`, `browser-profile/`, and `data/` private.

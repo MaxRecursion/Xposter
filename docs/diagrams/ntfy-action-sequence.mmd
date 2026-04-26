@@ -1,0 +1,16 @@
+sequenceDiagram
+  autonumber
+  participant App as Xposter
+  participant Auth as Action token helper
+  participant Ntfy as ntfy.sh
+  participant Phone as iPhone ntfy app
+  participant API as Express API
+
+  App->>Auth: createActionToken("approve", postId)
+  Auth-->>App: exp.signature
+  App->>Ntfy: Publish notification with view action URL
+  Ntfy-->>Phone: Display Approve / Skip buttons
+  Phone->>API: Open signed URL in browser
+  API->>Auth: verifyActionToken(action, postId, token)
+  Auth-->>API: valid or invalid
+  API-->>Phone: Confirmation or unauthorized page

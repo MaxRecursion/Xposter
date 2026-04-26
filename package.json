@@ -2,6 +2,7 @@
   "name": "xposter",
   "version": "1.0.0",
   "description": "Human-in-the-loop X timeline reply automation for Pune/Marathi topics",
+  "license": "GPL-3.0-or-later",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -22,7 +23,7 @@
     "franc": "^6.2.0",
     "groq-sdk": "^0.9.1",
     "morgan": "^1.10.0",
-    "node-cron": "^3.0.3",
+    "node-cron": "^4.2.1",
     "playwright": "^1.49.1",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0",
@@ -34,10 +35,9 @@
     "@types/express": "^5.0.0",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.10.5",
-    "@types/node-cron": "^3.0.11",
-    "@vitest/coverage-v8": "^2.1.8",
+    "@vitest/coverage-v8": "^4.1.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.5"
   }
 }

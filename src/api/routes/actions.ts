@@ -5,51 +5,11 @@ import {
 import { postReply } from '../../browser/posting.js';
 import { logger } from '../../utils/logger.js';
 import { getDb } from '../../storage/db.js';
+import { callerLabel, requireActionAuth, requireApiKey } from '../auth.js';
 
 export const actionsRouter = Router();
 
 function id(req: Request): string { return String(req.params['id']); }
-
-/** Returns true if the request originated from this machine (loopback). */
-function isLoopback(req: Request): boolean {
-  const raw =
-    (req.socket?.remoteAddress ?? '') ||
-    (req.ip ?? '');
-  const ip = raw.replace('::ffff:', '');
-  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost' || ip === '';
-}
-
-/**
- * Auth rule:
- *   - Same-machine requests (the web UI on localhost) → always allowed.
- *   - Off-machine requests (ntfy phone callback, LAN browser) → must include API_KEY.
- *   - If API_KEY is unset / placeholder, auth is disabled entirely (single-user dev mode).
- */
-function requireApiKey(req: Request, res: Response, next: () => void): void {
-  const expected = process.env.API_KEY;
-  const placeholder = !expected ||
-    expected === 'change_me_generate_with_openssl_rand_hex_32';
-
-  if (placeholder) { next(); return; }
-  if (isLoopback(req)) { next(); return; }
-
-  const provided = String(req.headers['x-api-key'] ?? req.query['key'] ?? '');
-  if (provided !== expected) {
-    logger.warn('Action endpoint rejected — missing/invalid API key', {
-      ip: req.ip, path: req.path,
-    });
-    res.status(401).json({ error: 'unauthorized' });
-    return;
-  }
-  next();
-}
-
-function callerLabel(req: Request): string {
-  if (isLoopback(req)) return 'web';
-  if (req.headers['x-api-key']) return 'ntfy';
-  if (req.query['key']) return 'ntfy';
-  return 'lan';
-}
 
 function wantsHtml(req: Request): boolean {
   return req.method === 'GET' || req.accepts(['html', 'json']) === 'html';
@@ -152,11 +112,11 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
 }
 
 // POST /api/actions/approve/:id
-actionsRouter.post('/approve/:id', requireApiKey, handleApprove);
+actionsRouter.post('/approve/:id', requireActionAuth('approve'), handleApprove);
 
 // GET /api/actions/approve/:id
 // Used by ntfy iOS view actions, which are more reliable than background HTTP actions on local LAN URLs.
-actionsRouter.get('/approve/:id', requireApiKey, handleApprove);
+actionsRouter.get('/approve/:id', requireActionAuth('approve'), handleApprove);
 
 // POST /api/actions/skip/:id
 function handleSkip(req: Request, res: Response): void {
@@ -173,11 +133,11 @@ function handleSkip(req: Request, res: Response): void {
   sendActionResponse(req, res, 200, 'Skipped', 'Candidate skipped. You can close this tab.');
 }
 
-actionsRouter.post('/skip/:id', requireApiKey, handleSkip);
+actionsRouter.post('/skip/:id', requireActionAuth('skip'), handleSkip);
 
 // GET /api/actions/skip/:id
 // Used by ntfy iOS view actions, which are more reliable than background HTTP actions on local LAN URLs.
-actionsRouter.get('/skip/:id', requireApiKey, handleSkip);
+actionsRouter.get('/skip/:id', requireActionAuth('skip'), handleSkip);
 
 // GET /api/actions/status — system health check
 actionsRouter.get('/status', (_req: Request, res: Response) => {
@@ -185,8 +145,8 @@ actionsRouter.get('/status', (_req: Request, res: Response) => {
   res.json({ system_running: running, timestamp: Date.now() });
 });
 
-// POST /api/actions/toggle — start/stop system
-actionsRouter.post('/toggle', (_req: Request, res: Response) => {
+// POST /api/actions/toggle - start/stop system
+actionsRouter.post('/toggle', requireApiKey, (_req: Request, res: Response) => {
   const current = getSetting('system_running', 'true') === 'true';
   setSetting('system_running', String(!current));
   res.json({ system_running: !current });

@@ -2,6 +2,7 @@ import axios, { AxiosError } from 'axios';
 import { Post } from '../storage/queries.js';
 import { getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
+import { createActionToken } from '../api/auth.js';
 
 export interface NtfyResult {
   ok: boolean;
@@ -27,9 +28,13 @@ export async function sendApprovalNotification(post: Post): Promise<NtfyResult> 
   const base = getCallbackBase();
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
   const lang = post.language === 'marathi' ? 'Marathi' : 'English';
-  const approveUrl = withApiKey(`${base}/api/actions/approve/${post.id}`, apiKey);
-  const skipUrl = withApiKey(`${base}/api/actions/skip/${post.id}`, apiKey);
   const actionMode = (process.env.NTFY_ACTION_MODE ?? 'view').toLowerCase();
+  const approveUrl = actionMode === 'http'
+    ? `${base}/api/actions/approve/${post.id}`
+    : withActionToken(`${base}/api/actions/approve/${post.id}`, createActionToken('approve', post.id));
+  const skipUrl = actionMode === 'http'
+    ? `${base}/api/actions/skip/${post.id}`
+    : withActionToken(`${base}/api/actions/skip/${post.id}`, createActionToken('skip', post.id));
 
   const message = [
     `@${post.author_handle} (${ageMin}m ago) [${lang}]`,
@@ -167,8 +172,8 @@ function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + '…';
 }
 
-function withApiKey(url: string, apiKey: string): string {
-  if (!apiKey) return url;
+function withActionToken(url: string, token: string): string {
+  if (!token) return url;
   const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}key=${encodeURIComponent(apiKey)}`;
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
 }

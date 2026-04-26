@@ -1,0 +1,21 @@
+sequenceDiagram
+  autonumber
+  participant Pipeline as Scheduler/Pipeline
+  participant DB as SQLite
+  participant Ntfy as ntfy.sh
+  participant Phone as iPhone
+  participant API as Express API
+  participant Browser as Playwright
+  participant X as x.com
+
+  Pipeline->>DB: Store PENDING_APPROVAL reply
+  Pipeline->>Ntfy: Publish notification with signed action URLs
+  Ntfy-->>Phone: Push notification
+  Phone->>API: GET /api/actions/approve/:id?token=...
+  API->>API: Verify scoped HMAC action token
+  API->>DB: Mark POSTING and log APPROVE
+  API-->>Phone: HTML confirmation page
+  API->>Browser: Open tweet and submit reply
+  Browser->>X: Post reply
+  Browser-->>API: Success or error
+  API->>DB: Mark POSTED or ERROR

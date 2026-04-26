@@ -5,9 +5,11 @@ import type { Post } from '../../src/storage/queries.js';
 vi.mock('groq-sdk', () => {
   const mockCreate = vi.fn();
   return {
-    default: vi.fn().mockImplementation(() => ({
+    default: vi.fn().mockImplementation(function GroqMock() {
+      return {
       chat: { completions: { create: mockCreate } },
-    })),
+      };
+    }),
     __mockCreate: mockCreate,
   };
 });

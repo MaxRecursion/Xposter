@@ -27,15 +27,17 @@ afterAll(() => {
 // ── Mock LLM ──────────────────────────────────────────────────────────────────
 
 vi.mock('groq-sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    chat: {
-      completions: {
-        create: vi.fn().mockResolvedValue({
-          choices: [{ message: { content: 'Try Baner road — usually lighter at this time.' } }],
-        }),
+  default: vi.fn().mockImplementation(function GroqMock() {
+    return {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: 'Try Baner road — usually lighter at this time.' } }],
+          }),
+        },
       },
-    },
-  })),
+    };
+  }),
 }));
 
 // ── Sample tweets ─────────────────────────────────────────────────────────────

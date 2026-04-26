@@ -6,6 +6,7 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 const API = '';
+const API_KEY_STORAGE = 'xposter:apiKey';
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -20,15 +21,38 @@ function toast(msg, type = 'info') {
 }
 
 async function apiFetch(path, opts = {}) {
-  const res = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
+  const headers = authHeaders(opts.headers);
+  let res = await fetch(API + path, {
+    headers,
     ...opts,
   });
+
+  if (res.status === 401) {
+    localStorage.removeItem(API_KEY_STORAGE);
+    const key = prompt('Enter Xposter API key for this device');
+    if (key?.trim()) {
+      localStorage.setItem(API_KEY_STORAGE, key.trim());
+      res = await fetch(API + path, {
+        headers: authHeaders(opts.headers),
+        ...opts,
+      });
+    }
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error ?? res.statusText);
   }
   return res.json();
+}
+
+function authHeaders(headers = {}) {
+  const apiKey = localStorage.getItem(API_KEY_STORAGE);
+  return {
+    'Content-Type': 'application/json',
+    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    ...headers,
+  };
 }
 
 function timeAgo(unixSec) {

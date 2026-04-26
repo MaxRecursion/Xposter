@@ -1,6 +1,4 @@
-import { Router, Request, Response, RequestHandler } from 'express';
-
-function id(req: Request): string { return String(req.params['id']); }
+import { Router, Request, Response } from 'express';
 import {
   getRecentPosts, getPendingApproval, getDashboardStats,
   getActivityLog, getAllSettings, setSetting, updateFinalReply,
@@ -10,8 +8,17 @@ import { generateReply } from '../../pipeline/generator.js';
 import { updateGeneratedReply, updatePostStatus } from '../../storage/queries.js';
 import { sendApprovalNotification } from '../../notifications/ntfy.js';
 import { logger } from '../../utils/logger.js';
+import { requireApiKey } from '../auth.js';
 
 export const postsRouter = Router();
+
+function id(req: Request): string { return String(req.params['id']); }
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = parseInt(String(value ?? fallback), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
 
 // Dashboard stats
 postsRouter.get('/stats', (_req: Request, res: Response) => {
@@ -20,7 +27,7 @@ postsRouter.get('/stats', (_req: Request, res: Response) => {
 
 // Recent posts (last 24h)
 postsRouter.get('/', (req: Request, res: Response) => {
-  const hours = parseInt(String(req.query['hours'] ?? '24'), 10);
+  const hours = clampInt(req.query['hours'], 24, 1, 168);
   res.json(getRecentPosts(hours));
 });
 
@@ -37,10 +44,13 @@ postsRouter.get('/:id', (req: Request, res: Response) => {
 });
 
 // Edit the final reply text before approving
-postsRouter.patch('/:id/reply', (req: Request, res: Response) => {
+postsRouter.patch('/:id/reply', requireApiKey, (req: Request, res: Response) => {
   const { reply } = req.body as { reply?: string };
   if (!reply || typeof reply !== 'string' || reply.trim().length === 0) {
     return res.status(400).json({ error: 'reply text required' });
+  }
+  if (reply.length > 280) {
+    return res.status(400).json({ error: 'reply must be 280 characters or less' });
   }
   const post = getPost(id(req));
   if (!post) return res.status(404).json({ error: 'not found' });
@@ -50,7 +60,7 @@ postsRouter.patch('/:id/reply', (req: Request, res: Response) => {
 });
 
 // Regenerate reply
-postsRouter.post('/:id/regenerate', async (req: Request, res: Response) => {
+postsRouter.post('/:id/regenerate', requireApiKey, async (req: Request, res: Response) => {
   const post = getPost(id(req));
   if (!post) return res.status(404).json({ error: 'not found' });
 
@@ -73,7 +83,7 @@ postsRouter.post('/:id/regenerate', async (req: Request, res: Response) => {
 
 // Activity log
 postsRouter.get('/log/activity', (req: Request, res: Response) => {
-  const limit = parseInt(String(req.query['limit'] ?? '100'), 10);
+  const limit = clampInt(req.query['limit'], 100, 1, 500);
   res.json(getActivityLog(limit));
 });
 
@@ -82,14 +92,28 @@ postsRouter.get('/settings/all', (_req: Request, res: Response) => {
   res.json(getAllSettings());
 });
 
-postsRouter.patch('/settings/update', (req: Request, res: Response) => {
+postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {
   const updates = req.body as Record<string, string>;
-  const allowed = [
-    'topic_keywords', 'min_score', 'max_candidates_per_run',
-    'approval_timeout_min', 'system_running',
-  ];
-  for (const [k, v] of Object.entries(updates)) {
-    if (allowed.includes(k)) setSetting(k, String(v));
+  const normalized: Record<string, string> = {};
+
+  if (updates['topic_keywords'] !== undefined) {
+    normalized['topic_keywords'] = String(updates['topic_keywords']).slice(0, 500);
+  }
+  if (updates['min_score'] !== undefined) {
+    normalized['min_score'] = String(clampInt(updates['min_score'], 40, 0, 100));
+  }
+  if (updates['max_candidates_per_run'] !== undefined) {
+    normalized['max_candidates_per_run'] = String(clampInt(updates['max_candidates_per_run'], 3, 1, 10));
+  }
+  if (updates['approval_timeout_min'] !== undefined) {
+    normalized['approval_timeout_min'] = String(clampInt(updates['approval_timeout_min'], 30, 5, 1440));
+  }
+  if (updates['system_running'] !== undefined) {
+    normalized['system_running'] = String(updates['system_running'] === 'true');
+  }
+
+  for (const [k, v] of Object.entries(normalized)) {
+    setSetting(k, v);
   }
   res.json({ ok: true });
 });

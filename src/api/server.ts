@@ -8,13 +8,42 @@ import { runPipeline, isPipelineRunning } from '../scheduler/cron.js';
 import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
+import { requireApiKey } from './auth.js';
 
 export function createServer(): express.Express {
   const app = express();
 
-  app.use(cors());
-  app.use(express.json());
-  app.use(morgan('dev', {
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    next();
+  });
+
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin) { callback(null, true); return; }
+      try {
+        const allowed = [
+          'http://localhost',
+          'http://127.0.0.1',
+          getCallbackBase(),
+          getBrowserUrls().lan,
+          getBrowserUrls().tailscale,
+        ].filter(Boolean) as string[];
+        const parsed = new URL(origin);
+        const ok = allowed.some((allowedOrigin) => origin === allowedOrigin) ||
+          (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+        callback(ok ? null : new Error('CORS origin not allowed'), ok);
+      } catch {
+        callback(new Error('Invalid CORS origin'), false);
+      }
+    },
+  }));
+  app.use(express.json({ limit: '64kb' }));
+  morgan.token('safe-url', (req) => sanitizeUrl(req.url ?? ''));
+  app.use(morgan(':method :safe-url :status :response-time ms - :res[content-length]', {
     stream: { write: (msg) => logger.http(msg.trim()) },
   }));
 
@@ -26,7 +55,7 @@ export function createServer(): express.Express {
   app.use('/api/actions', actionsRouter);
 
   // Trigger manual run
-  app.post('/api/run', async (_req, res) => {
+  app.post('/api/run', requireApiKey, async (_req, res) => {
     if (isPipelineRunning()) {
       return res.status(409).json({ error: 'pipeline already running' });
     }
@@ -44,7 +73,7 @@ export function createServer(): express.Express {
   });
 
   // Test notification — verifies ntfy delivery to user's iPhone
-  app.post('/api/test/notification', async (_req, res) => {
+  app.post('/api/test/notification', requireApiKey, async (_req, res) => {
     const result = await sendTestNotification();
     res.json(result);
   });
@@ -73,4 +102,10 @@ export function createServer(): express.Express {
   });
 
   return app;
+}
+
+function sanitizeUrl(url: string): string {
+  return url
+    .replace(/([?&](?:key|token)=)[^&]+/gi, '$1[REDACTED]')
+    .replace(/([?&]api_key=)[^&]+/gi, '$1[REDACTED]');
 }

@@ -1,0 +1,18 @@
+flowchart TD
+  Secrets["Secrets\n.env only, ignored by Git"]
+  APIKey["API_KEY"]
+  Token["Scoped signed action token\nHMAC(action, postId, exp)"]
+  NtfyUrl["ntfy view URL\ncontains token, not API key"]
+  Auth["Auth middleware"]
+  Mutations["Mutation endpoints\nrun, settings, regenerate, approve, skip"]
+  Logs["HTTP logs\nkey/token redacted"]
+  DB[("SQLite local data\nignored by Git")]
+
+  Secrets --> APIKey
+  APIKey --> Token
+  Token --> NtfyUrl
+  NtfyUrl --> Auth
+  APIKey --> Auth
+  Auth --> Mutations
+  Mutations --> DB
+  Mutations --> Logs

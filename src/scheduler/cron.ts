@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import cron, { ScheduledTask } from 'node-cron';
 import { ingestTimeline } from '../browser/ingestion.js';
 import { DetectedLanguage, filterPost } from '../pipeline/filter.js';
 import { ScoredPost, scorePost, rankCandidates } from '../pipeline/scorer.js';
@@ -13,11 +13,11 @@ import {
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 
-let _task: cron.ScheduledTask | null = null;
+let _task: ScheduledTask | null = null;
 let _running = false;
 
 export function startScheduler(): void {
-  const expr = process.env.INGEST_CRON ?? '*/15 * * * *';
+  const expr = process.env.INGEST_CRON ?? '0 9,12,15,18,21 * * *';
   logger.info('Starting scheduler', { cron: expr });
 
   _task = cron.schedule(expr, async () => {

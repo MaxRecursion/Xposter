@@ -1,0 +1,20 @@
+sequenceDiagram
+  autonumber
+  participant API as Express API
+  participant Session as Browser session
+  participant Page as Playwright page
+  participant X as x.com
+  participant DB as SQLite
+
+  API->>Session: getBrowserContext()
+  Session-->>API: Persistent Chromium context
+  API->>Page: newPage()
+  Page->>X: goto(tweetUrl)
+  Page->>Page: Find tweet article
+  Page->>Page: Find compose box or reply button
+  Page->>Page: Type reply with human-like delays
+  Page->>Page: Wait for enabled submit button
+  Page->>X: Click submit
+  Page->>Page: Check error toast
+  Page-->>API: Posted successfully
+  API->>DB: status = POSTED
