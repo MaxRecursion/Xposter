@@ -201,7 +201,54 @@ function applyMigrations(db: Database.Database): void {
       ON scheduled_runs(run_date, run_at, kind);
     CREATE INDEX IF NOT EXISTS idx_scheduled_runs_pending
       ON scheduled_runs(status, run_at);
+
+    -- ──────────────────────────────────────────────────────────────────────
+    -- original_posts: brand-new tweets we authored (not replies)
+    -- ──────────────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS original_posts (
+      id               TEXT PRIMARY KEY,
+      content          TEXT NOT NULL,
+      language         TEXT NOT NULL DEFAULT 'english',
+      topic            TEXT NOT NULL,
+      status           TEXT NOT NULL DEFAULT 'GENERATING'
+                       CHECK(status IN ('GENERATING','POSTED','ERROR','SKIPPED')),
+      tweet_id         TEXT,
+      tweet_url        TEXT,
+      research_context TEXT,
+      posted_at        INTEGER,
+      created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at       INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_original_posts_status  ON original_posts(status);
+    CREATE INDEX IF NOT EXISTS idx_original_posts_topic   ON original_posts(topic);
+    CREATE INDEX IF NOT EXISTS idx_original_posts_created ON original_posts(created_at DESC);
+
+    -- ──────────────────────────────────────────────────────────────────────
+    -- post_impressions: periodic engagement checks on our original tweets
+    -- ──────────────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS post_impressions (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      original_post_id TEXT NOT NULL REFERENCES original_posts(id),
+      tweet_id         TEXT NOT NULL,
+      impressions      INTEGER DEFAULT 0,
+      likes            INTEGER DEFAULT 0,
+      replies          INTEGER DEFAULT 0,
+      retweets         INTEGER DEFAULT 0,
+      checked_at       INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_post_impressions_post    ON post_impressions(original_post_id);
+    CREATE INDEX IF NOT EXISTS idx_post_impressions_checked ON post_impressions(checked_at DESC);
   `);
+
+  // Insert default settings for original posts feature
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('original_posts_per_day',    '5'),
+      ('original_post_marathi_ratio','40'),
+      ('impression_sync_interval_h', '2')
+  `).run();
 
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');

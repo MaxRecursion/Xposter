@@ -6,12 +6,14 @@ import { postsRouter } from './routes/posts.js';
 import { actionsRouter } from './routes/actions.js';
 import { accountsRouter } from './routes/accounts.js';
 import { followRouter } from './routes/follow.js';
+import { originalPostsRouter } from './routes/original_posts.js';
 import { runPipeline, isPipelineRunning } from '../scheduler/cron.js';
 import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
 import { getNextRuns, getTodayPlan, ensureTodayPlan } from '../scheduler/random_runs.js';
+import { getTodayOriginalPlan, getNextOriginalRuns } from '../scheduler/original_posts.js';
 
 export function createServer(): express.Express {
   const app = express();
@@ -58,12 +60,13 @@ export function createServer(): express.Express {
   app.use('/api/actions', actionsRouter);
   app.use('/api/accounts', accountsRouter);
   app.use('/api/follow', followRouter);
+  app.use('/api/original-posts', originalPostsRouter);
 
   // Schedule visibility
   app.get('/api/schedule/today', (_req, res) => {
     res.json({
-      today: ensureTodayPlan(),
-      upcoming: getNextRuns(10),
+      pipeline: { today: ensureTodayPlan(), upcoming: getNextRuns(10) },
+      original_posts: { today: getTodayOriginalPlan(), upcoming: getNextOriginalRuns(10) },
     });
   });
   app.get('/api/schedule/upcoming', (_req, res) => {

@@ -132,6 +132,12 @@ postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Respons
   if (updates['blocklist_classifications'] !== undefined) {
     normalized['blocklist_classifications'] = String(updates['blocklist_classifications']).slice(0, 200);
   }
+  if (updates['original_posts_per_day'] !== undefined) {
+    normalized['original_posts_per_day'] = String(clampInt(updates['original_posts_per_day'], 5, 0, 12));
+  }
+  if (updates['original_post_marathi_ratio'] !== undefined) {
+    normalized['original_post_marathi_ratio'] = String(clampInt(updates['original_post_marathi_ratio'], 40, 0, 100));
+  }
 
   for (const [k, v] of Object.entries(normalized)) {
     setSetting(k, v);

@@ -50,6 +50,7 @@ function authHeaders(headers = {}) {
   const apiKey = localStorage.getItem(API_KEY_STORAGE);
   return {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
     ...(apiKey ? { 'X-API-Key': apiKey } : {}),
     ...headers,
   };
@@ -307,8 +308,10 @@ async function loadSettings() {
     if ($('s-window-start'))   $('s-window-start').value   = s.active_window_start_hour ?? '9';
     if ($('s-window-end'))     $('s-window-end').value     = s.active_window_end_hour ?? '22';
     if ($('s-class-ttl'))      $('s-class-ttl').value      = s.classification_ttl_days ?? '7';
-    if ($('s-max-fb'))         $('s-max-fb').value         = s.max_follow_backs_per_day ?? '15';
-    if ($('s-blocklist'))      $('s-blocklist').value      = s.blocklist_classifications ?? '';
+    if ($('s-max-fb'))              $('s-max-fb').value              = s.max_follow_backs_per_day ?? '15';
+    if ($('s-blocklist'))           $('s-blocklist').value           = s.blocklist_classifications ?? '';
+    if ($('s-orig-per-day'))        $('s-orig-per-day').value        = s.original_posts_per_day ?? '5';
+    if ($('s-orig-marathi-ratio'))  $('s-orig-marathi-ratio').value  = s.original_post_marathi_ratio ?? '40';
   } catch { /* ignore */ }
   await loadDiagnostics();
 }
@@ -649,29 +652,112 @@ window.reclassifyAccount = reclassifyAccount;
 
 // ── Schedule strip ────────────────────────────────────────────────────────────
 
+function renderScheduleTimes(runs, containerId, stripId) {
+  const strip = $(stripId);
+  const container = $(containerId);
+  if (!strip || !container) return;
+  if (!runs || runs.length === 0) { strip.style.display = 'none'; return; }
+  const now = Math.floor(Date.now() / 1000);
+  const sorted = [...runs].sort((a, b) => a.run_at - b.run_at);
+  const upcomingId = sorted.find((r) => r.status === 'SCHEDULED' && r.run_at >= now)?.id;
+  container.innerHTML = sorted.map((r) => {
+    const t = new Date(r.run_at * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    let cls = 'schedule-time';
+    if (r.status === 'FIRED' || r.status === 'SKIPPED') cls += ' fired';
+    else if (r.id === upcomingId) cls += ' next';
+    return `<span class="${cls}">${t}</span>`;
+  }).join(' ');
+  strip.style.display = 'flex';
+}
+
 async function loadSchedule() {
   try {
     const data = await apiFetch('/api/schedule/today');
-    const today = data.today ?? [];
-    if (today.length === 0) {
-      $('schedule-strip').style.display = 'none';
+    // API now returns { pipeline: { today, upcoming }, original_posts: { today, upcoming } }
+    const pipelineToday = data.pipeline?.today ?? data.today ?? [];
+    const originalsToday = data.original_posts?.today ?? [];
+    renderScheduleTimes(pipelineToday, 'schedule-times', 'schedule-strip');
+    renderScheduleTimes(originalsToday, 'originals-schedule-times', 'originals-schedule');
+  } catch { /* ignore */ }
+}
+
+// ── Original Posts tab ────────────────────────────────────────────────────────
+
+async function loadOriginals() {
+  try {
+    const [posts, performance] = await Promise.all([
+      apiFetch('/api/original-posts'),
+      apiFetch('/api/original-posts/topic-performance'),
+    ]);
+
+    // Topic performance mini-table
+    const perfEl = $('originals-topic-perf');
+    if (perfEl) {
+      if (performance.length === 0) {
+        perfEl.innerHTML = '';
+      } else {
+        perfEl.innerHTML = `
+          <div class="diag-table">
+            <div class="diag-row diag-header">
+              <span>Topic</span><span>Posts</span><span>Avg Likes</span>
+              <span>Avg Replies</span><span>Avg Views</span>
+            </div>
+            ${performance.slice(0, 8).map((p) => `
+              <div class="diag-row">
+                <span>${escHtml(p.topic)}</span>
+                <span>${p.total_posts}</span>
+                <span>${Math.round(p.avg_likes)}</span>
+                <span>${Math.round(p.avg_replies)}</span>
+                <span>${Math.round(p.avg_impressions).toLocaleString()}</span>
+              </div>
+            `).join('')}
+          </div>`;
+      }
+    }
+
+    // Posts list
+    const listEl = $('originals-list');
+    if (!listEl) return;
+    if (posts.length === 0) {
+      listEl.innerHTML = '<div class="empty-state">No original posts yet. Click "Post now" to generate one.</div>';
       return;
     }
-    const now = Math.floor(Date.now() / 1000);
-    const sorted = [...today].sort((a, b) => a.run_at - b.run_at);
-    const upcomingId = sorted.find((r) => r.status === 'SCHEDULED' && r.run_at >= now)?.id;
+    listEl.innerHTML = posts.map(renderOriginalPost).join('');
+  } catch (e) {
+    const listEl = $('originals-list');
+    if (listEl) listEl.innerHTML = `<div class="empty-state" style="color:var(--error)">Failed to load: ${escHtml(e.message)}</div>`;
+  }
+}
 
-    const html = sorted.map((r) => {
-      const t = new Date(r.run_at * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-      let cls = 'schedule-time';
-      if (r.status === 'FIRED' || r.status === 'SKIPPED') cls += ' fired';
-      else if (r.id === upcomingId) cls += ' next';
-      return `<span class="${cls}">${t}</span>`;
-    }).join(' ');
+function renderOriginalPost(post) {
+  const statusCls = post.status === 'POSTED' ? 'posted' : post.status === 'ERROR' ? 'error' : '';
+  const langBadge = post.language === 'marathi'
+    ? `<span class="marathi-badge">मराठी</span>`
+    : `<span class="lang-badge-en">EN</span>`;
+  const when = post.posted_at ? timeAgo(post.posted_at) : timeAgo(post.created_at);
+  const engHtml = post.status === 'POSTED' ? `
+    <span title="Views">👁 ${(post.latest_impressions || 0).toLocaleString()}</span>
+    <span title="Likes">❤️ ${post.latest_likes || 0}</span>
+    <span title="Replies">💬 ${post.latest_replies || 0}</span>
+    <span title="Retweets">🔁 ${post.latest_retweets || 0}</span>` : '';
+  const viewLink = post.tweet_url
+    ? `<a class="btn btn-ghost" href="${escAttr(post.tweet_url)}" target="_blank" rel="noopener">🔗 View</a>`
+    : '';
 
-    $('schedule-times').innerHTML = html;
-    $('schedule-strip').style.display = 'flex';
-  } catch { /* ignore */ }
+  return `
+    <div class="original-post-card ${statusCls}">
+      <div class="op-header">
+        <span class="op-topic">#${escHtml(post.topic)}</span>
+        ${langBadge}
+        <span class="op-status op-status-${post.status.toLowerCase()}">${post.status}</span>
+        <span class="op-time">${when}</span>
+      </div>
+      <div class="op-content">${escHtml(post.content)}</div>
+      <div class="op-footer">
+        <div class="op-engagement">${engHtml}</div>
+        <div class="op-actions">${viewLink}</div>
+      </div>
+    </div>`;
 }
 
 // ── Full refresh ──────────────────────────────────────────────────────────────
@@ -684,6 +770,7 @@ async function refresh() {
   if (activeTab === 'settings')  await loadSettings();
   if (activeTab === 'followers') await loadFollowers();
   if (activeTab === 'accounts')  await loadAccounts();
+  if (activeTab === 'originals') await loadOriginals();
   // Console runs its own loop independently
 }
 
@@ -759,8 +846,10 @@ document.addEventListener('DOMContentLoaded', () => {
           active_window_start_hour: $('s-window-start')?.value,
           active_window_end_hour:   $('s-window-end')?.value,
           classification_ttl_days:  $('s-class-ttl')?.value,
-          max_follow_backs_per_day: $('s-max-fb')?.value,
-          blocklist_classifications:$('s-blocklist')?.value,
+          max_follow_backs_per_day:     $('s-max-fb')?.value,
+          blocklist_classifications:    $('s-blocklist')?.value,
+          original_posts_per_day:       $('s-orig-per-day')?.value,
+          original_post_marathi_ratio:  $('s-orig-marathi-ratio')?.value,
         }),
       });
       toast('Settings saved', 'success');
@@ -797,6 +886,45 @@ document.addEventListener('DOMContentLoaded', () => {
   if ($('btn-reload-accounts')) $('btn-reload-accounts').addEventListener('click', loadAccounts);
   if ($('acc-filter-class'))    $('acc-filter-class').addEventListener('change', loadAccounts);
   if ($('acc-filter-marathi'))  $('acc-filter-marathi').addEventListener('change', loadAccounts);
+
+  // Original Posts tab buttons
+  if ($('btn-post-now')) {
+    $('btn-post-now').addEventListener('click', async () => {
+      const btn = $('btn-post-now');
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating…';
+      try {
+        const result = await apiFetch('/api/original-posts/trigger', { method: 'POST' });
+        if (result.ok) {
+          toast('Original post queued — posting to X now!', 'success');
+          setTimeout(loadOriginals, 8000);
+        } else {
+          toast(`Post failed: ${result.error}`, 'error');
+        }
+      } catch (e) {
+        toast(`Post failed: ${e.message}`, 'error');
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = '✍️ Post now'; }, 6000);
+      }
+    });
+  }
+
+  if ($('btn-sync-impressions')) {
+    $('btn-sync-impressions').addEventListener('click', async () => {
+      const btn = $('btn-sync-impressions');
+      btn.disabled = true;
+      btn.textContent = '⏳ Syncing…';
+      try {
+        const result = await apiFetch('/api/original-posts/sync-impressions', { method: 'POST' });
+        toast(`Impression sync done — ${result.synced} updated`, 'success');
+        setTimeout(loadOriginals, 2000);
+      } catch (e) {
+        toast(`Sync failed: ${e.message}`, 'error');
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = '📊 Sync impressions'; }, 4000);
+      }
+    });
+  }
 
   // Test notification
   $('btn-test-notif').addEventListener('click', async () => {

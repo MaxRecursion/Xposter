@@ -13,7 +13,13 @@ export const actionsRouter = Router();
 function id(req: Request): string { return String(req.params['id']); }
 
 function wantsHtml(req: Request): boolean {
-  return req.method === 'GET' || req.accepts(['html', 'json']) === 'html';
+  // ntfy view actions are GETs and want a human-readable HTML confirmation page.
+  // POSTs always come from the dashboard's fetch() and must get JSON, even if
+  // the browser's default Accept header is `*/*`.
+  if (req.method !== 'GET') return false;
+  const accept = String(req.headers['accept'] ?? '');
+  if (accept.includes('application/json') && !accept.includes('text/html')) return false;
+  return true;
 }
 
 function sendActionResponse(

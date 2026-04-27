@@ -373,22 +373,22 @@ export function insertScheduledRun(date: string, runAt: number, kind = 'PIPELINE
   `).run(date, runAt, kind);
 }
 
-export function getScheduledRunsForDate(date: string): ScheduledRun[] {
+export function getScheduledRunsForDate(date: string, kind = 'PIPELINE'): ScheduledRun[] {
   return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE run_date = ? ORDER BY run_at`)
-    .all(date) as ScheduledRun[];
+    .prepare(`SELECT * FROM scheduled_runs WHERE run_date = ? AND kind = ? ORDER BY run_at`)
+    .all(date, kind) as ScheduledRun[];
 }
 
-export function getDuePendingRuns(now: number): ScheduledRun[] {
+export function getDuePendingRuns(now: number, kind = 'PIPELINE'): ScheduledRun[] {
   return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at <= ? ORDER BY run_at`)
-    .all(now) as ScheduledRun[];
+    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at <= ? AND kind = ? ORDER BY run_at`)
+    .all(now, kind) as ScheduledRun[];
 }
 
-export function getUpcomingRuns(now: number, limit = 10): ScheduledRun[] {
+export function getUpcomingRuns(now: number, limit = 10, kind = 'PIPELINE'): ScheduledRun[] {
   return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at >= ? ORDER BY run_at LIMIT ?`)
-    .all(now, limit) as ScheduledRun[];
+    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at >= ? AND kind = ? ORDER BY run_at LIMIT ?`)
+    .all(now, kind, limit) as ScheduledRun[];
 }
 
 export function markRunFired(id: number, detail?: string): void {

@@ -17,6 +17,7 @@ import {
   configureRandomRuns, startRandomScheduler, stopRandomScheduler,
 } from './random_runs.js';
 import { startFollowerSync, stopFollowerSync } from './follower_sync.js';
+import { startOriginalPostScheduler, stopOriginalPostScheduler } from './original_posts.js';
 
 let _running = false;
 
@@ -25,6 +26,7 @@ export function startScheduler(): void {
   configureRandomRuns(async () => { await runPipeline(); });
   startRandomScheduler();
   startFollowerSync();
+  startOriginalPostScheduler();
 
   // Expiry sweep: every 5 minutes
   setInterval(() => {
@@ -38,6 +40,7 @@ export function startScheduler(): void {
 export function stopScheduler(): void {
   stopRandomScheduler();
   stopFollowerSync();
+  stopOriginalPostScheduler();
   logger.info('Scheduler stopped');
 }
 
