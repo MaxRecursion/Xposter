@@ -70,7 +70,7 @@ describe('generateReply', () => {
     expect(result).toBe('Try Wakad bridge route instead.');
   });
 
-  it('asks for gentle Puneri wit without personal insults', async () => {
+  it('asks for satirical Puneri voice without personal insults', async () => {
     const { __mockCreate } = await import('groq-sdk') as any;
     __mockCreate.mockResolvedValue({
       choices: [{ message: { content: 'Pune traffic doing its daily stand-up set.' } }],
@@ -81,24 +81,26 @@ describe('generateReply', () => {
 
     const callArgs = __mockCreate.mock.calls[0][0];
     const systemMsg = callArgs.messages.find((m: any) => m.role === 'system').content;
-    expect(systemMsg).toContain('gentle Puneri wit');
-    expect(systemMsg).toContain('Make the situation the joke, not the person');
+    expect(systemMsg).toContain('sharp, satirical Punekar');
+    expect(systemMsg).toContain('Make the SITUATION the joke');
+    expect(systemMsg).toContain('ONE-LINE PUNCH');
+    expect(systemMsg).toContain('3-4 LINE TAKE');
   });
 
-  it('keeps generated replies within 200 characters', async () => {
+  it('keeps generated replies within 280 characters', async () => {
     const { __mockCreate } = await import('groq-sdk') as any;
     __mockCreate.mockResolvedValue({
       choices: [{
         message: {
           content:
-            'Pune traffic is doing such a committed performance today that even Google Maps must be sitting quietly with cutting chai and rethinking its career choices near Hinjewadi, because this plot twist has gone on too long.',
+            'Pune traffic is doing such a committed performance today that even Google Maps must be sitting quietly with cutting chai and rethinking its career choices near Hinjewadi, because this plot twist has gone on too long. Honestly at this point we deserve a writing credit for the chaos.',
         },
       }],
     });
 
     const { generateReply } = await import('../../src/pipeline/generator.js');
     const result = await generateReply(makePost());
-    expect(Array.from(result).length).toBeLessThanOrEqual(200);
+    expect(Array.from(result).length).toBeLessThanOrEqual(280);
   });
 
   it('throws when API key is missing', async () => {
