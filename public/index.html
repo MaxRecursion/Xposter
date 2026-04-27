@@ -44,11 +44,20 @@
         <div class="stat-card"><div class="value" id="stat-posted">–</div><div class="label">Posted</div></div>
         <div class="stat-card"><div class="value" id="stat-skipped">–</div><div class="label">Skipped</div></div>
         <div class="stat-card"><div class="value" id="stat-total">–</div><div class="label">Total (24h)</div></div>
+        <div class="stat-card"><div class="value" id="stat-followers">–</div><div class="label">New Followers</div></div>
+      </div>
+
+      <!-- Schedule strip -->
+      <div class="schedule-strip" id="schedule-strip" style="display:none;">
+        <span class="schedule-label">Today's runs:</span>
+        <span id="schedule-times">–</span>
       </div>
 
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab-btn active" data-tab="queue">Queue</button>
+        <button class="tab-btn" data-tab="followers">Followers</button>
+        <button class="tab-btn" data-tab="accounts">Accounts</button>
         <button class="tab-btn" data-tab="history">History</button>
         <button class="tab-btn" data-tab="console">⏵ Console</button>
         <button class="tab-btn" data-tab="settings">Settings</button>
@@ -57,6 +66,43 @@
       <!-- Queue Tab -->
       <div class="tab-content active" id="tab-queue">
         <div id="queue-list"></div>
+      </div>
+
+      <!-- Followers Tab -->
+      <div class="tab-content" id="tab-followers">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+          <h3 style="font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;">Pending Follow-Backs</h3>
+          <button class="btn btn-ghost" id="btn-sync-followers">🔄 Sync followers now</button>
+        </div>
+        <div id="followers-list"></div>
+      </div>
+
+      <!-- Accounts Tab -->
+      <div class="tab-content" id="tab-accounts">
+        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <select id="acc-filter-class" class="select-input">
+            <option value="">All classifications</option>
+            <option value="SERIOUS">Serious</option>
+            <option value="NEWS">News</option>
+            <option value="PARODY">Parody</option>
+            <option value="COMEDY">Comedy</option>
+            <option value="INFLUENCER">Influencer</option>
+            <option value="REGULAR">Regular</option>
+            <option value="BOT">Bot</option>
+            <option value="BRAND_PROMO">Brand/Promo</option>
+            <option value="UNKNOWN">Unknown</option>
+          </select>
+          <label class="toggle-group">
+            <span>Marathi creators only</span>
+            <span class="ios-switch">
+              <input type="checkbox" id="acc-filter-marathi" />
+              <span class="ios-slider"></span>
+            </span>
+          </label>
+          <button class="btn btn-ghost" id="btn-reload-accounts">↻ Reload</button>
+        </div>
+        <div id="accounts-stats" class="diag-table" style="margin-bottom:14px;"></div>
+        <div id="accounts-list"></div>
       </div>
 
       <!-- History Tab -->
@@ -88,7 +134,26 @@
 
       <!-- Settings Tab -->
       <div class="tab-content" id="tab-settings">
-        <div class="settings-grid" id="settings-form">
+
+        <!-- Wit Slider -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <span class="settings-card-title">Reply Tone</span>
+            <span class="wit-tier-badge" id="wit-tier">balanced</span>
+          </div>
+          <div class="wit-row">
+            <span class="wit-end">Serious</span>
+            <input type="range" id="s-wit" min="0" max="100" step="1" class="slider" />
+            <span class="wit-end">Sharp & Funny</span>
+          </div>
+          <div class="wit-value-row">
+            <span class="wit-value" id="wit-value">55</span>
+            <span class="wit-help" id="wit-help">balanced — light Puneri wit when it fits</span>
+          </div>
+        </div>
+
+        <h3 class="section-h">Pipeline</h3>
+        <div class="settings-grid">
           <div class="settings-field">
             <label>Topic Keywords (comma-separated)</label>
             <input type="text" id="s-keywords" placeholder="pune,rain,traffic" />
@@ -106,13 +171,46 @@
             <input type="number" id="s-timeout" min="5" max="1440" />
           </div>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+
+        <h3 class="section-h">Random Schedule (5x per day by default)</h3>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label>Runs Per Day</label>
+            <input type="number" id="s-runs-per-day" min="1" max="12" />
+          </div>
+          <div class="settings-field">
+            <label>Active Window Start (hour, 0–23)</label>
+            <input type="number" id="s-window-start" min="0" max="23" />
+          </div>
+          <div class="settings-field">
+            <label>Active Window End (hour, 1–24)</label>
+            <input type="number" id="s-window-end" min="1" max="24" />
+          </div>
+          <div class="settings-field">
+            <label>Classification TTL (days)</label>
+            <input type="number" id="s-class-ttl" min="1" max="90" />
+          </div>
+        </div>
+
+        <h3 class="section-h">Follow-back</h3>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label>Max Follow-Backs Per Day</label>
+            <input type="number" id="s-max-fb" min="0" max="100" />
+          </div>
+          <div class="settings-field">
+            <label>Blocklist Classifications (comma-separated)</label>
+            <input type="text" id="s-blocklist" placeholder="BOT,SPAM,BRAND_PROMO" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:18px;">
           <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
           <button class="btn btn-ghost" id="btn-test-notif">📱 Send Test Notification</button>
         </div>
 
         <!-- Diagnostics -->
-        <h3 style="margin-top:32px;margin-bottom:8px;font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;">Diagnostics</h3>
+        <h3 class="section-h">Diagnostics</h3>
         <div class="diag-table" id="diag-table">
           <div class="diag-row"><div class="key">loading…</div><div class="value"></div></div>
         </div>

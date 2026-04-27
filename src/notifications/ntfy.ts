@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { Post } from '../storage/queries.js';
+import { Account } from '../storage/accounts.js';
 import { getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { createActionToken } from '../api/auth.js';
@@ -176,4 +177,66 @@ function withActionToken(url: string, token: string): string {
   if (!token) return url;
   const sep = url.includes('?') ? '&' : '?';
   return `${url}${sep}token=${encodeURIComponent(token)}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Follower-back notification
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Sends a notification asking the user to approve/skip following a new follower back. */
+export async function sendFollowerNotification(
+  eventId: number,
+  handle: string,
+  account: Account | null,
+): Promise<NtfyResult> {
+  const topic = process.env.NTFY_TOPIC;
+  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '');
+
+  if (!topic || topic === 'xposter-your-secret-topic') {
+    return { ok: false, error: 'NTFY_TOPIC not configured' };
+  }
+
+  const base = getCallbackBase();
+  const followUrl = `${base}/api/follow/approve/${eventId}`;
+  const skipUrl = `${base}/api/follow/skip/${eventId}`;
+
+  const cls = account?.classification ?? 'UNKNOWN';
+  const followers = account?.follower_count_seen ?? 0;
+  const isMar = account?.is_marathi_creator ? ' · Marathi creator' : '';
+
+  const message = [
+    `@${handle} just followed you.`,
+    '',
+    `Class: ${cls}${isMar}`,
+    `Followers: ${followers.toLocaleString()}`,
+    account?.bio ? '' : '',
+    account?.bio ? `Bio: ${truncate(account.bio, 200)}` : '',
+  ].filter(Boolean).join('\n');
+
+  const payload = {
+    topic,
+    title: 'Xposter: New Follower',
+    message,
+    priority: 3,
+    tags: ['handshake'],
+    actions: [
+      { action: 'view', label: 'Follow back', url: followUrl, clear: true },
+      { action: 'view', label: 'Skip',        url: skipUrl,   clear: true },
+      { action: 'view', label: 'Open profile', url: `https://x.com/${encodeURIComponent(handle)}` },
+    ],
+  };
+
+  try {
+    const res = await axios.post(server, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10_000,
+      validateStatus: () => true,
+    });
+    if (res.status >= 200 && res.status < 300) {
+      return { ok: true, status: res.status, topic, callback: base };
+    }
+    return { ok: false, status: res.status, error: `HTTP ${res.status}: ${JSON.stringify(res.data)}`, topic };
+  } catch (err) {
+    return { ok: false, error: (err as AxiosError).message, topic };
+  }
 }

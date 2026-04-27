@@ -3,42 +3,131 @@ import { Post, RawTweet } from '../storage/queries.js';
 
 // ── Language Detection ────────────────────────────────────────────────────────
 
-export type DetectedLanguage = 'marathi' | 'hindi' | 'english' | 'unknown';
+/**
+ * Languages we recognise:
+ *   - marathi:       Devanagari-script Marathi
+ *   - marathi-roman: Marathi written in Latin/Roman script ("majhya punyat aaj khup paus aahe")
+ *   - hindi:         Devanagari Hindi (skipped)
+ *   - english:       Pure English
+ *   - unknown:       Anything else / too short
+ */
+export type DetectedLanguage = 'marathi' | 'marathi-roman' | 'hindi' | 'english' | 'unknown';
 
-// Marathi-specific words that help distinguish from Hindi
+// Marathi-specific Devanagari words that help distinguish from Hindi
 const MARATHI_MARKERS = [
   'आहे', 'आहेत', 'नाही', 'होता', 'होती', 'केला', 'केली', 'केलं', 'आलो', 'गेलो',
   'पुणे', 'मुंबई', 'महाराष्ट्र', 'मराठी', 'असं', 'तसं', 'म्हणजे', 'बघा', 'बघ',
   'पाऊस', 'रस्ता', 'वाहतूक', 'कसं', 'करतो', 'येतो', 'जातो', 'सांगा',
+  'काय', 'कुठे', 'कधी', 'कोण', 'कशी', 'कसा', 'अरे', 'बाबा', 'दादा',
+  'पुण्यात', 'मुंबईत', 'पाहिलं', 'झालं', 'झाला', 'झाली', 'व्हा', 'व्हायला',
 ];
 
 // Hindi-specific markers (to reduce false Marathi hits)
 const HINDI_MARKERS = [
   'है', 'हैं', 'था', 'थी', 'होगा', 'करना', 'जाना', 'आना', 'नहीं',
-  'बहुत', 'अच्छा', 'ठीक', 'यहाँ', 'वहाँ',
+  'बहुत', 'अच्छा', 'ठीक', 'यहाँ', 'वहाँ', 'मेरा', 'तुम्हारा',
 ];
 
+/**
+ * Roman-script Marathi tokens. These are common, distinctive Marathi words that
+ * appear when Marathi speakers type in Latin script. They are chosen to NOT
+ * collide with regular English words.
+ *
+ * Detection rule: if franc thinks a Latin-script tweet is "english" but we see
+ * 2+ of these tokens, it's almost certainly transliterated Marathi.
+ */
+const ROMAN_MARATHI_MARKERS = [
+  // verb endings
+  /\b(ahe|ahet|hota|hoti|hote|zala|zali|zale|jhala|jhali)\b/i,
+  /\b(karto|karte|karat|kartoy|kartiy|karaycha)\b/i,
+  /\b(jato|jate|jaycha|gele|geli|aalo|aali|aalay)\b/i,
+  // pronouns
+  /\b(majha|majhi|majhya|tujha|tujhi|tyacha|tyachi|aamhi|tumhi|aaplya|aaplyala)\b/i,
+  /\b(mala|tula|tyala|tila|aamhala|tumhala)\b/i,
+  // common adverbs/connectors
+  /\b(khup|thoda|thodi|thodke|kharach|nakki|barobar|chukla|chukli)\b/i,
+  /\b(mhanaje|mhanun|mhanje|tar|pan|ani|kinva|nahitar)\b/i,
+  // negation / question words
+  /\b(nahi|nai|naai|nako|naka|nakos|kashala|kashasathi|ka\?)/i,
+  /\b(kasa|kashi|kase|kuthe|kadhi|kuthun|kahi|kay)\b/i,
+  // place / context (very Marathi)
+  /\b(punyat|mumbait|punyala|mumbaila|maharastrat|maharashtrat)\b/i,
+  // weather / civic vocabulary
+  /\b(paus|pavasala|pavsat|pani|tumbla|tumblay|rasta|vahatuk)\b/i,
+  // exclamations
+  /\b(arre|ho na|hoy ka|baghu ya|baghaycha|chala|chal)\b/i,
+];
+
+const HINDI_ROMAN_MARKERS = [
+  /\b(hai|hain|tha|thi|the|hoga|hogi|honge)\b/i,
+  /\b(mera|tera|uska|hamara|tumhara|unka)\b/i,
+  /\b(kya|kahan|kab|kaun|kaise|kyun)\b/i,
+  /\b(nahi|nahin|haan|theek|bahut|accha|kuch)\b/i,
+];
+
+export interface LanguageDetail {
+  language: DetectedLanguage;
+  confidence: number;
+  signal: string;
+}
+
 export function detectLanguage(text: string): DetectedLanguage {
-  if (!text || text.trim().length < 5) return 'unknown';
+  return detectLanguageDetail(text).language;
+}
 
-  // Check for explicit Marathi markers first (high precision)
-  const marathiHits = MARATHI_MARKERS.filter((w) => text.includes(w)).length;
-  const hindiHits = HINDI_MARKERS.filter((w) => text.includes(w)).length;
+export function detectLanguageDetail(text: string): LanguageDetail {
+  if (!text || text.trim().length < 5) {
+    return { language: 'unknown', confidence: 0, signal: 'too-short' };
+  }
 
-  if (marathiHits > 0 && marathiHits >= hindiHits) return 'marathi';
+  // 1. Devanagari path
+  if (/[ऀ-ॿ]/.test(text)) {
+    const marathiHits = MARATHI_MARKERS.filter((w) => text.includes(w)).length;
+    const hindiHits = HINDI_MARKERS.filter((w) => text.includes(w)).length;
 
-  // Fall back to franc for statistical detection
-  // Allowlist to speed up and avoid wrong Latin-script guesses
-  const guess = franc(text, { minLength: 10, only: ['mar', 'hin', 'eng'] });
+    if (marathiHits > 0 && marathiHits >= hindiHits) {
+      return { language: 'marathi', confidence: 0.9, signal: `marathi-markers=${marathiHits}` };
+    }
+    if (hindiHits > marathiHits) {
+      return { language: 'hindi', confidence: 0.85, signal: `hindi-markers=${hindiHits}` };
+    }
+    const guess = franc(text, { minLength: 10, only: ['mar', 'hin'] });
+    if (guess === 'hin') return { language: 'hindi', confidence: 0.7, signal: 'franc=hin' };
+    // Default to marathi for Devanagari (we're a Marathi-first app)
+    return { language: 'marathi', confidence: 0.6, signal: 'devanagari-fallback' };
+  }
 
-  if (guess === 'mar') return 'marathi';
-  if (guess === 'hin') return 'hindi';
-  if (guess === 'eng') return 'english';
+  // 2. Latin-script path: distinguish English / Marathi-Roman / Hindi-Roman
+  const marathiRomanHits = ROMAN_MARATHI_MARKERS.filter((re) => re.test(text)).length;
+  const hindiRomanHits = HINDI_ROMAN_MARKERS.filter((re) => re.test(text)).length;
 
-  // Last resort: if Devanagari present and no clear guess, lean marathi for Pune context
-  if (/[ऀ-ॿ]/.test(text)) return 'marathi';
+  if (marathiRomanHits >= 2 && marathiRomanHits >= hindiRomanHits) {
+    return {
+      language: 'marathi-roman',
+      confidence: Math.min(0.6 + marathiRomanHits * 0.05, 0.95),
+      signal: `roman-marathi-hits=${marathiRomanHits}`,
+    };
+  }
+  if (hindiRomanHits >= 2 && hindiRomanHits > marathiRomanHits) {
+    return {
+      language: 'hindi',
+      confidence: 0.7,
+      signal: `roman-hindi-hits=${hindiRomanHits}`,
+    };
+  }
 
-  return 'unknown';
+  // 3. Pure Latin-script: trust franc
+  const guess = franc(text, { minLength: 10, only: ['eng', 'mar', 'hin'] });
+  if (guess === 'eng') return { language: 'english', confidence: 0.8, signal: 'franc=eng' };
+  if (guess === 'mar') return { language: 'marathi-roman', confidence: 0.55, signal: 'franc=mar-on-latin' };
+  if (guess === 'hin') return { language: 'hindi', confidence: 0.6, signal: 'franc=hin-on-latin' };
+
+  // 4. Last resort: if mostly ASCII + has 1 marathi-roman marker, lean toward marathi-roman
+  if (marathiRomanHits === 1) {
+    return { language: 'marathi-roman', confidence: 0.45, signal: 'roman-marathi-hits=1' };
+  }
+
+  return { language: 'unknown', confidence: 0, signal: 'no-strong-signal' };
 }
 
 // ── Topic Keyword Filtering ───────────────────────────────────────────────────
@@ -74,7 +163,7 @@ export function filterPost(
   const language = detectLanguage(text);
   const lower = text.toLowerCase();
 
-  // Language gate: we only process marathi or english (skip hindi, unknown, etc.)
+  // Language gate: we accept marathi (Devanagari + Roman) and english only.
   if (language === 'unknown' || language === 'hindi') {
     return { pass: false, language, matchedKeywords: [], reason: `unsupported language: ${language}` };
   }
@@ -89,9 +178,9 @@ export function filterPost(
     (kw) => lower.includes(kw.toLowerCase()) || text.includes(kw),
   );
 
-  // Marathi is the PRIMARY target language: any Marathi post passes regardless
-  // of explicit topic keywords — we want to reply to Marathi speakers broadly.
-  if (language === 'marathi') {
+  // Marathi (any script) is the PRIMARY target language: pass regardless of
+  // explicit topic keywords — we want to reply to Marathi speakers broadly.
+  if (language === 'marathi' || language === 'marathi-roman') {
     return { pass: true, language, matchedKeywords };
   }
 

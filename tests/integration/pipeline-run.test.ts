@@ -23,6 +23,7 @@ describe('runPipeline', () => {
 
   afterEach(() => {
     vi.doUnmock('../../src/browser/ingestion.js');
+    vi.doUnmock('../../src/pipeline/classifier.js');
     vi.doUnmock('../../src/pipeline/generator.js');
     vi.doUnmock('../../src/notifications/ntfy.js');
     delete process.env.DB_PATH_OVERRIDE;
@@ -45,6 +46,34 @@ describe('runPipeline', () => {
 
     vi.doMock('../../src/browser/ingestion.js', () => ({
       ingestTimeline: vi.fn().mockResolvedValue([tweet]),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockResolvedValue({
+        handle: 'movie_user',
+        display_name: 'Movie User',
+        bio: null,
+        bio_fetched_at: null,
+        classification: 'REGULAR',
+        classification_confidence: 0.8,
+        classification_reasoning: 'mocked',
+        classified_at: Math.floor(Date.now() / 1000),
+        classification_model: 'mock',
+        is_marathi_creator: 0,
+        verified: 0,
+        follower_count_seen: 100,
+        following_count_seen: 50,
+        followed_by_us: 0,
+        following_us: 0,
+        mutual_follow: 0,
+        blocked_or_muted: 0,
+        total_replies_sent: 0,
+        total_engagement: 0,
+        avg_reply_score: 0,
+        successful_replies: 0,
+        first_seen_at: Math.floor(Date.now() / 1000),
+        last_seen_at: Math.floor(Date.now() / 1000),
+        updated_at: Math.floor(Date.now() / 1000),
+      }),
     }));
     vi.doMock('../../src/pipeline/generator.js', () => ({
       generateReply: vi.fn().mockResolvedValue('That sounds like a fun watch.'),

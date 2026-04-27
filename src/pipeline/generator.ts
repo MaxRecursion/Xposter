@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk';
-import { Post } from '../storage/queries.js';
+import { Post, getSetting } from '../storage/queries.js';
+import { Account, Classification } from '../storage/accounts.js';
 import { logger } from '../utils/logger.js';
 
 let _groq: Groq | null = null;
@@ -11,6 +12,43 @@ function getGroqClient(): Groq {
   if (!apiKey) throw new Error('GROQ_API_KEY is not set');
   _groq = new Groq({ apiKey });
   return _groq;
+}
+
+/**
+ * Reads wit_level setting (0-100) and returns:
+ *   0-19  → SERIOUS  : factual, helpful, no humour
+ *   20-39 → MEASURED : light warmth, no jokes
+ *   40-59 → BALANCED : occasional dry observation, gentle Puneri wit
+ *   60-79 → WITTY    : steady comedic timing, observational humour
+ *   80-100→ SHARP    : punchy, satirical, very funny — situation-as-joke only
+ */
+type WitTier = 'SERIOUS' | 'MEASURED' | 'BALANCED' | 'WITTY' | 'SHARP';
+
+function readWitLevel(): { level: number; tier: WitTier } {
+  const raw = parseInt(getSetting('wit_level', '55'), 10);
+  const level = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 55;
+  let tier: WitTier;
+  if (level < 20) tier = 'SERIOUS';
+  else if (level < 40) tier = 'MEASURED';
+  else if (level < 60) tier = 'BALANCED';
+  else if (level < 80) tier = 'WITTY';
+  else tier = 'SHARP';
+  return { level, tier };
+}
+
+function witInstructions(tier: WitTier): string {
+  switch (tier) {
+    case 'SERIOUS':
+      return 'TONE: Strictly serious, helpful, and factual. No jokes, no irony, no wit. Treat every post sincerely.';
+    case 'MEASURED':
+      return 'TONE: Warm and sincere with measured restraint. No jokes. Light empathy and useful information only.';
+    case 'BALANCED':
+      return 'TONE: Conversational with occasional gentle Puneri observation. Wit only if it genuinely fits — never forced.';
+    case 'WITTY':
+      return 'TONE: Steady Puneri wit. Dry, observational, lightly satirical. Make the SITUATION the joke (not the person). Comic timing matters — short setup, sharper payoff.';
+    case 'SHARP':
+      return 'TONE: SHARP and very funny. Confident comedic timing, satirical edge, punchy phrasing. Still: situation-as-joke only — never insult the author or any group. Never punch down.';
+  }
 }
 
 const SYSTEM_PROMPT_BASE = `You are helping a real person from Pune, Maharashtra engage authentically on X (Twitter).
@@ -47,31 +85,81 @@ const ENGLISH_RULES = `
 
 LANGUAGE RULE: The tweet is in English. Reply in natural conversational English.`;
 
-function systemPrompt(language: string): string {
-  if (language === 'marathi') return SYSTEM_PROMPT_BASE + MARATHI_RULES;
-  return SYSTEM_PROMPT_BASE + ENGLISH_RULES;
+function systemPrompt(language: string, tier: WitTier, classification: Classification | null): string {
+  const langRules =
+    language === 'marathi' ? MARATHI_RULES :
+    language === 'marathi-roman' ? MARATHI_ROMAN_RULES :
+    ENGLISH_RULES;
+
+  const classificationGuidance = classificationGuidanceFor(classification);
+  return [
+    SYSTEM_PROMPT_BASE,
+    witInstructions(tier),
+    classificationGuidance,
+    langRules,
+  ].filter(Boolean).join('\n\n');
 }
 
-export async function generateReply(post: Post): Promise<string> {
+const MARATHI_ROMAN_RULES = `LANGUAGE RULE — ROMAN MARATHI:
+The tweet is Marathi typed in Roman/Latin script (e.g. "majhya punyat khup paus aahe").
+Reply in the same style: natural Marathi typed in Roman/Latin script.
+- Match the casual code-mixed feel of the original.
+- Do NOT switch to Devanagari unless the original used it.
+- Do NOT switch to pure English.
+- Use authentic Marathi-ish Roman spellings (ahe, nahi, khup, ka re, mhanaje).`;
+
+function classificationGuidanceFor(c: Classification | null): string {
+  switch (c) {
+    case 'NEWS':
+      return 'AUTHOR CONTEXT: This is a NEWS account. Be factual and respectful. Add value (a question, local context, missing detail). Skip humour entirely on hard news.';
+    case 'PARODY':
+    case 'COMEDY':
+      return 'AUTHOR CONTEXT: This is a PARODY/COMEDY account. Match their energy with playful banter. Riff on the joke; do not explain it.';
+    case 'INFLUENCER':
+      return 'AUTHOR CONTEXT: This is a high-following INFLUENCER. Be confident and concise — your reply competes for visibility. Add a fresh angle, not agreement.';
+    case 'SERIOUS':
+      return 'AUTHOR CONTEXT: This author is serious in tone. Default to substance. Keep wit minimal even if wit_level is high.';
+    case 'BRAND_PROMO':
+    case 'BOT':
+      return 'AUTHOR CONTEXT: This author appears promotional/bot-like. Reply briefly, neutrally, or skip humour. Avoid sounding like an endorsement.';
+    case 'REGULAR':
+      return 'AUTHOR CONTEXT: This is a regular individual. Reply human-to-human, friendly.';
+    default:
+      return '';
+  }
+}
+
+export async function generateReply(
+  post: Post,
+  authorAccount: Account | null = null,
+): Promise<string> {
   const client = getGroqClient();
   const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
 
-  const userPrompt = buildUserPrompt(post);
+  const { level, tier } = readWitLevel();
+  const classification = (authorAccount?.classification as Classification | null) ?? null;
+  const userPrompt = buildUserPrompt(post, authorAccount);
 
   logger.info('Calling Groq for reply generation', {
     postId: post.id,
     model,
     lang: post.language,
+    witLevel: level,
+    witTier: tier,
+    classification: classification ?? 'unknown',
   });
+
+  // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
+  const temp = tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
 
   const completion = await client.chat.completions.create({
     model,
     messages: [
-      { role: 'system', content: systemPrompt(post.language) },
+      { role: 'system', content: systemPrompt(post.language, tier, classification) },
       { role: 'user', content: userPrompt },
     ],
-    max_tokens: 160,
-    temperature: 0.85,
+    max_tokens: 200,
+    temperature: temp,
     top_p: 0.95,
   });
 
@@ -88,7 +176,7 @@ export async function generateReply(post: Post): Promise<string> {
     const retry = await client.chat.completions.create({
       model,
       messages: [
-        { role: 'system', content: systemPrompt('marathi') },
+        { role: 'system', content: systemPrompt('marathi', tier, classification) },
         { role: 'user', content: userPrompt },
         { role: 'assistant', content: cleaned },
         {
@@ -116,19 +204,36 @@ export async function generateReply(post: Post): Promise<string> {
   return cleaned;
 }
 
-function buildUserPrompt(post: Post): string {
-  const lang = post.language === 'marathi' ? 'Marathi' : 'English';
+function buildUserPrompt(post: Post, account: Account | null): string {
+  const langLabel =
+    post.language === 'marathi' ? 'Marathi (Devanagari)' :
+    post.language === 'marathi-roman' ? 'Marathi (Roman script)' :
+    'English';
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
 
-  return [
-    `Language: ${lang}`,
+  const lines = [
+    `Language: ${langLabel}`,
     `Author: @${post.author_handle}`,
+  ];
+  if (account?.classification) {
+    lines.push(`Author classification: ${account.classification} (confidence ${account.classification_confidence.toFixed(2)})`);
+  }
+  if (account?.bio) {
+    lines.push(`Author bio: ${truncateForPrompt(account.bio, 220)}`);
+  }
+  lines.push(
     `Posted: ${ageMin} minutes ago`,
     `Likes: ${post.likes} | Replies: ${post.replies}`,
     '',
-    `Tweet:`,
+    'Tweet:',
     post.text,
-  ].join('\n');
+  );
+
+  return lines.join('\n');
+}
+
+function truncateForPrompt(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
 function enforceReplyLimit(reply: string): string {

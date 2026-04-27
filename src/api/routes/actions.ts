@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import {
   getPost, updatePostStatus, logEvent, getSetting, setSetting,
 } from '../../storage/queries.js';
+import { recordInteraction } from '../../storage/accounts.js';
 import { postReply } from '../../browser/posting.js';
 import { logger } from '../../utils/logger.js';
 import { getDb } from '../../storage/db.js';
@@ -102,6 +103,7 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
   try {
     await postReply(post.tweet_url, replyText);
     updatePostStatus(post.id, 'POSTED');
+    recordInteraction(post.id, post.author_handle, replyText, { tweetUrl: post.tweet_url });
     logEvent('POSTED', replyText, post.id);
     logger.info('Reply posted', { postId: post.id });
   } catch (err) {

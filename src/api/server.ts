@@ -4,11 +4,14 @@ import morgan from 'morgan';
 import path from 'path';
 import { postsRouter } from './routes/posts.js';
 import { actionsRouter } from './routes/actions.js';
+import { accountsRouter } from './routes/accounts.js';
+import { followRouter } from './routes/follow.js';
 import { runPipeline, isPipelineRunning } from '../scheduler/cron.js';
 import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
+import { getNextRuns, getTodayPlan, ensureTodayPlan } from '../scheduler/random_runs.js';
 
 export function createServer(): express.Express {
   const app = express();
@@ -53,6 +56,19 @@ export function createServer(): express.Express {
   // API routes
   app.use('/api/posts', postsRouter);
   app.use('/api/actions', actionsRouter);
+  app.use('/api/accounts', accountsRouter);
+  app.use('/api/follow', followRouter);
+
+  // Schedule visibility
+  app.get('/api/schedule/today', (_req, res) => {
+    res.json({
+      today: ensureTodayPlan(),
+      upcoming: getNextRuns(10),
+    });
+  });
+  app.get('/api/schedule/upcoming', (_req, res) => {
+    res.json(getNextRuns(20));
+  });
 
   // Trigger manual run
   app.post('/api/run', requireApiKey, async (_req, res) => {

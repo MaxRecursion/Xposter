@@ -111,6 +111,27 @@ postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Respons
   if (updates['system_running'] !== undefined) {
     normalized['system_running'] = String(updates['system_running'] === 'true');
   }
+  if (updates['wit_level'] !== undefined) {
+    normalized['wit_level'] = String(clampInt(updates['wit_level'], 55, 0, 100));
+  }
+  if (updates['random_runs_per_day'] !== undefined) {
+    normalized['random_runs_per_day'] = String(clampInt(updates['random_runs_per_day'], 5, 1, 12));
+  }
+  if (updates['active_window_start_hour'] !== undefined) {
+    normalized['active_window_start_hour'] = String(clampInt(updates['active_window_start_hour'], 9, 0, 23));
+  }
+  if (updates['active_window_end_hour'] !== undefined) {
+    normalized['active_window_end_hour'] = String(clampInt(updates['active_window_end_hour'], 22, 1, 24));
+  }
+  if (updates['max_follow_backs_per_day'] !== undefined) {
+    normalized['max_follow_backs_per_day'] = String(clampInt(updates['max_follow_backs_per_day'], 15, 0, 100));
+  }
+  if (updates['classification_ttl_days'] !== undefined) {
+    normalized['classification_ttl_days'] = String(clampInt(updates['classification_ttl_days'], 7, 1, 90));
+  }
+  if (updates['blocklist_classifications'] !== undefined) {
+    normalized['blocklist_classifications'] = String(updates['blocklist_classifications']).slice(0, 200);
+  }
 
   for (const [k, v] of Object.entries(normalized)) {
     setSetting(k, v);

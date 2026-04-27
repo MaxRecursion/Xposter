@@ -302,8 +302,35 @@ async function loadSettings() {
     if ($('s-min-score'))      $('s-min-score').value      = s.min_score ?? '40';
     if ($('s-max-candidates')) $('s-max-candidates').value = s.max_candidates_per_run ?? '3';
     if ($('s-timeout'))        $('s-timeout').value        = s.approval_timeout_min ?? '30';
+    if ($('s-wit'))            { $('s-wit').value          = s.wit_level ?? '55'; updateWitDisplay(); }
+    if ($('s-runs-per-day'))   $('s-runs-per-day').value   = s.random_runs_per_day ?? '5';
+    if ($('s-window-start'))   $('s-window-start').value   = s.active_window_start_hour ?? '9';
+    if ($('s-window-end'))     $('s-window-end').value     = s.active_window_end_hour ?? '22';
+    if ($('s-class-ttl'))      $('s-class-ttl').value      = s.classification_ttl_days ?? '7';
+    if ($('s-max-fb'))         $('s-max-fb').value         = s.max_follow_backs_per_day ?? '15';
+    if ($('s-blocklist'))      $('s-blocklist').value      = s.blocklist_classifications ?? '';
   } catch { /* ignore */ }
   await loadDiagnostics();
+}
+
+// ── Wit slider helpers ─────────────────────────────────────────────────────
+function witTier(level) {
+  if (level < 20) return { tier: 'serious',  help: 'serious — strictly factual, no humour' };
+  if (level < 40) return { tier: 'measured', help: 'measured — warm and sincere, no jokes' };
+  if (level < 60) return { tier: 'balanced', help: 'balanced — light Puneri wit when it fits' };
+  if (level < 80) return { tier: 'witty',    help: 'witty — steady dry humour, observational' };
+  return { tier: 'sharp', help: 'sharp & funny — punchy satirical edge (situation-as-joke only)' };
+}
+
+function updateWitDisplay() {
+  const el = $('s-wit');
+  if (!el) return;
+  const v = parseInt(el.value, 10);
+  $('wit-value').textContent = v;
+  const { tier, help } = witTier(v);
+  $('wit-tier').textContent = tier;
+  $('wit-help').textContent = help;
+  el.style.setProperty('--slider-fill', v + '%');
 }
 
 async function loadDiagnostics() {
@@ -474,14 +501,189 @@ const hc = {
   },
 };
 
+// ── Followers tab ─────────────────────────────────────────────────────────────
+
+async function loadFollowers() {
+  try {
+    const events = await apiFetch('/api/follow/pending');
+    const el = $('followers-list');
+    if (!el) return;
+    if (events.length === 0) {
+      el.innerHTML = `<div class="empty-state"><div class="icon">🤝</div><div>No pending follow-back decisions</div></div>`;
+      return;
+    }
+    el.innerHTML = events.map(renderFollowerCard).join('');
+    if ($('stat-followers')) $('stat-followers').textContent = events.length;
+  } catch (e) {
+    if ($('followers-list')) $('followers-list').innerHTML = `<div class="empty-state">Error: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderFollowerCard(event) {
+  const detail = event.detail ?? '';
+  return `
+    <div class="follower-card" id="fevent-${event.id}">
+      <div class="follower-info">
+        <div class="follower-handle">@${escHtml(event.account_handle)}</div>
+        <div class="follower-name">followed you · ${timeAgo(event.detected_at)}</div>
+        <div class="follower-meta">${escHtml(detail)}</div>
+      </div>
+      <div class="follower-actions">
+        <button class="btn btn-success" onclick="approveFollowBack(${event.id})">✅ Follow back</button>
+        <button class="btn btn-ghost"   onclick="skipFollowBack(${event.id})">❌ Skip</button>
+        <a class="btn btn-ghost" target="_blank" rel="noopener"
+           href="https://x.com/${encodeURIComponent(event.account_handle)}">🔗 Profile</a>
+      </div>
+    </div>
+  `;
+}
+
+async function approveFollowBack(eventId) {
+  try {
+    await apiFetch(`/api/follow/approve/${eventId}`, { method: 'POST' });
+    toast('Follow-back queued', 'success');
+    $(`fevent-${eventId}`)?.remove();
+    setTimeout(loadFollowers, 4000);
+  } catch (e) {
+    toast(`Follow-back failed: ${e.message}`, 'error');
+  }
+}
+
+async function skipFollowBack(eventId) {
+  try {
+    await apiFetch(`/api/follow/skip/${eventId}`, { method: 'POST' });
+    toast('Follow-back skipped');
+    $(`fevent-${eventId}`)?.remove();
+  } catch (e) {
+    toast(`Skip failed: ${e.message}`, 'error');
+  }
+}
+
+window.approveFollowBack = approveFollowBack;
+window.skipFollowBack = skipFollowBack;
+
+// ── Accounts tab ──────────────────────────────────────────────────────────────
+
+async function loadAccounts() {
+  try {
+    const cls = $('acc-filter-class')?.value;
+    const marathiOnly = $('acc-filter-marathi')?.checked;
+    const params = new URLSearchParams();
+    if (cls) params.set('classification', cls);
+    if (marathiOnly) params.set('marathiOnly', 'true');
+
+    const [accounts, stats] = await Promise.all([
+      apiFetch('/api/accounts?' + params.toString()),
+      apiFetch('/api/accounts/_/stats').catch(() => null),
+    ]);
+
+    if (stats && $('accounts-stats')) {
+      $('accounts-stats').innerHTML = `
+        <div class="diag-row"><div class="key">Total interactions</div><div class="value">${stats.total}</div></div>
+        <div class="diag-row"><div class="key">Likes received</div><div class="value">${stats.total_likes}</div></div>
+        <div class="diag-row"><div class="key">Replies received</div><div class="value">${stats.total_replies}</div></div>
+        <div class="diag-row"><div class="key">Retweets received</div><div class="value">${stats.total_retweets}</div></div>
+        <div class="diag-row"><div class="key">Avg success score</div><div class="value">${stats.avg_success.toFixed(1)}</div></div>
+      `;
+    }
+
+    const el = $('accounts-list');
+    if (accounts.length === 0) {
+      el.innerHTML = `<div class="empty-state"><div class="icon">👥</div><div>No accounts match this filter</div></div>`;
+      return;
+    }
+    el.innerHTML = accounts.map(renderAccountCard).join('');
+  } catch (e) {
+    if ($('accounts-list')) $('accounts-list').innerHTML = `<div class="empty-state">Error: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderAccountCard(account) {
+  const cls = account.classification ?? 'UNKNOWN';
+  const conf = account.classification_confidence ? Math.round(account.classification_confidence * 100) + '%' : '-';
+  const followers = account.follower_count_seen?.toLocaleString?.() ?? '0';
+  const lastSeen = account.last_seen_at ? timeAgo(account.last_seen_at) : '?';
+  const isMar = account.is_marathi_creator
+    ? `<span class="marathi-badge">मराठी</span>`
+    : '';
+
+  return `
+    <div class="account-card" id="account-${escAttr(account.handle)}">
+      <div class="account-info">
+        <div class="account-handle">
+          @${escHtml(account.handle)} ${isMar}
+          <span class="cls-badge cls-${cls}">${cls}</span>
+        </div>
+        <div class="account-name">${escHtml(account.display_name ?? '')}</div>
+        ${account.bio ? `<div class="account-bio">${escHtml(account.bio)}</div>` : ''}
+        <div class="account-meta">
+          <span>👥 ${followers} followers</span>
+          <span>🎯 conf ${conf}</span>
+          <span>💬 ${account.total_replies_sent ?? 0} replies sent</span>
+          <span>last seen ${lastSeen}</span>
+          ${account.following_us ? '<span style="color:var(--green)">↩ follows you</span>' : ''}
+          ${account.followed_by_us ? '<span style="color:var(--accent)">↪ you follow</span>' : ''}
+        </div>
+      </div>
+      <div class="account-actions">
+        <button class="btn btn-ghost" onclick="reclassifyAccount('${escAttr(account.handle)}')">🔄 Reclassify</button>
+        <a class="btn btn-ghost" target="_blank" rel="noopener"
+           href="https://x.com/${encodeURIComponent(account.handle)}">🔗 Profile</a>
+      </div>
+    </div>
+  `;
+}
+
+async function reclassifyAccount(handle) {
+  try {
+    toast(`Reclassifying @${handle}…`);
+    await apiFetch(`/api/accounts/${encodeURIComponent(handle)}/classify`, { method: 'POST' });
+    toast('Classified ✓', 'success');
+    loadAccounts();
+  } catch (e) {
+    toast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+window.reclassifyAccount = reclassifyAccount;
+
+// ── Schedule strip ────────────────────────────────────────────────────────────
+
+async function loadSchedule() {
+  try {
+    const data = await apiFetch('/api/schedule/today');
+    const today = data.today ?? [];
+    if (today.length === 0) {
+      $('schedule-strip').style.display = 'none';
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const sorted = [...today].sort((a, b) => a.run_at - b.run_at);
+    const upcomingId = sorted.find((r) => r.status === 'SCHEDULED' && r.run_at >= now)?.id;
+
+    const html = sorted.map((r) => {
+      const t = new Date(r.run_at * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      let cls = 'schedule-time';
+      if (r.status === 'FIRED' || r.status === 'SKIPPED') cls += ' fired';
+      else if (r.id === upcomingId) cls += ' next';
+      return `<span class="${cls}">${t}</span>`;
+    }).join(' ');
+
+    $('schedule-times').innerHTML = html;
+    $('schedule-strip').style.display = 'flex';
+  } catch { /* ignore */ }
+}
+
 // ── Full refresh ──────────────────────────────────────────────────────────────
 
 async function refresh() {
-  await Promise.all([loadStats(), loadSystemStatus()]);
+  await Promise.all([loadStats(), loadSystemStatus(), loadSchedule()]);
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-  if (activeTab === 'queue')    await loadQueue();
-  if (activeTab === 'history')  await loadHistory();
-  if (activeTab === 'settings') await loadSettings();
+  if (activeTab === 'queue')     await loadQueue();
+  if (activeTab === 'history')   await loadHistory();
+  if (activeTab === 'settings')  await loadSettings();
+  if (activeTab === 'followers') await loadFollowers();
+  if (activeTab === 'accounts')  await loadAccounts();
   // Console runs its own loop independently
 }
 
@@ -548,17 +750,53 @@ document.addEventListener('DOMContentLoaded', () => {
       await apiFetch('/api/posts/settings/update', {
         method: 'PATCH',
         body: JSON.stringify({
-          topic_keywords:          $('s-keywords').value,
-          min_score:               $('s-min-score').value,
-          max_candidates_per_run:  $('s-max-candidates').value,
-          approval_timeout_min:    $('s-timeout').value,
+          topic_keywords:           $('s-keywords').value,
+          min_score:                $('s-min-score').value,
+          max_candidates_per_run:   $('s-max-candidates').value,
+          approval_timeout_min:     $('s-timeout').value,
+          wit_level:                $('s-wit')?.value,
+          random_runs_per_day:      $('s-runs-per-day')?.value,
+          active_window_start_hour: $('s-window-start')?.value,
+          active_window_end_hour:   $('s-window-end')?.value,
+          classification_ttl_days:  $('s-class-ttl')?.value,
+          max_follow_backs_per_day: $('s-max-fb')?.value,
+          blocklist_classifications:$('s-blocklist')?.value,
         }),
       });
       toast('Settings saved', 'success');
+      await loadSchedule();
     } catch (e) {
       toast(`Save failed: ${e.message}`, 'error');
     }
   });
+
+  // Wit slider live update
+  if ($('s-wit')) {
+    $('s-wit').addEventListener('input', updateWitDisplay);
+  }
+
+  // Followers tab buttons
+  if ($('btn-sync-followers')) {
+    $('btn-sync-followers').addEventListener('click', async () => {
+      const btn = $('btn-sync-followers');
+      btn.disabled = true;
+      btn.textContent = '⏳ Syncing…';
+      try {
+        await apiFetch('/api/follow/sync', { method: 'POST' });
+        toast('Follower sync started', 'success');
+        setTimeout(loadFollowers, 4000);
+      } catch (e) {
+        toast(`Sync failed: ${e.message}`, 'error');
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Sync followers now'; }, 5000);
+      }
+    });
+  }
+
+  // Accounts tab filter
+  if ($('btn-reload-accounts')) $('btn-reload-accounts').addEventListener('click', loadAccounts);
+  if ($('acc-filter-class'))    $('acc-filter-class').addEventListener('change', loadAccounts);
+  if ($('acc-filter-marathi'))  $('acc-filter-marathi').addEventListener('change', loadAccounts);
 
   // Test notification
   $('btn-test-notif').addEventListener('click', async () => {
