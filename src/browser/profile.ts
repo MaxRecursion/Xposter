@@ -37,10 +37,10 @@ export async function fetchProfile(handle: string): Promise<AuthorProfile | null
     }
 
     const data = await page.evaluate(() => {
-      function txt(sel: string): string | null {
+      const txt = (sel: string): string | null => {
         const el = document.querySelector(sel);
         return el?.textContent?.trim() ?? null;
-      }
+      };
 
       const display_name = txt('[data-testid="UserName"] span') ?? null;
       const bio = txt('[data-testid="UserDescription"]') ?? null;
@@ -52,6 +52,19 @@ export async function fetchProfile(handle: string): Promise<AuthorProfile | null
       let follower_count = 0;
       let following_count = 0;
       const links = Array.from(document.querySelectorAll('a[href$="/followers"], a[href$="/verified_followers"], a[href$="/following"]'));
+
+      const parseHumanCount = (input: string): number => {
+        const m = input.match(/([\d.,]+)\s*([KMB])?/i);
+        if (!m) return 0;
+        const n = parseFloat(m[1].replace(/,/g, ''));
+        if (!isFinite(n)) return 0;
+        const unit = (m[2] ?? '').toUpperCase();
+        if (unit === 'K') return Math.round(n * 1_000);
+        if (unit === 'M') return Math.round(n * 1_000_000);
+        if (unit === 'B') return Math.round(n * 1_000_000_000);
+        return Math.round(n);
+      };
+
       for (const a of links) {
         const href = (a as HTMLAnchorElement).href;
         const label = a.getAttribute('aria-label') ?? a.textContent ?? '';
@@ -68,18 +81,6 @@ export async function fetchProfile(handle: string): Promise<AuthorProfile | null
         );
 
       return { display_name, bio, verified, follower_count, following_count, is_pcf_labelled };
-
-      function parseHumanCount(input: string): number {
-        const m = input.match(/([\d.,]+)\s*([KMB])?/i);
-        if (!m) return 0;
-        const n = parseFloat(m[1].replace(/,/g, ''));
-        if (!isFinite(n)) return 0;
-        const unit = (m[2] ?? '').toUpperCase();
-        if (unit === 'K') return Math.round(n * 1_000);
-        if (unit === 'M') return Math.round(n * 1_000_000);
-        if (unit === 'B') return Math.round(n * 1_000_000_000);
-        return Math.round(n);
-      }
     });
 
     return { handle, ...data };
