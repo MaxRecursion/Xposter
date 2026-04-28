@@ -53,11 +53,21 @@ followRouter.get('/all', (_req: Request, res: Response) => {
 
 // Manually trigger a follower sync
 followRouter.post('/sync', requireApiKey, async (_req: Request, res: Response) => {
-  res.json({ ok: true, message: 'Follower sync triggered' });
   try {
-    await runFollowerSync();
+    const result = await runFollowerSync();
+    if (!result.ok) {
+      const status = result.reason === 'system_paused' ? 409 : 400;
+      res.status(status).json({ error: result.message ?? 'Follower sync failed', ...result });
+      return;
+    }
+    res.json({
+      ...result,
+      ok: true,
+      message: `Follower sync complete: ${result.total} followers scanned, ${result.newFollowers} new, ${result.queued} queued.`,
+    });
   } catch (err) {
     logger.error('Manual follower sync failed', { err });
+    res.status(500).json({ error: String(err) });
   }
 });
 

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import {
-  getPost, updatePostStatus, logEvent, getSetting, setSetting,
+  getPost, updatePostStatus, logEvent, getSetting, setSetting, markPostAsPosted,
 } from '../../storage/queries.js';
 import { recordInteraction } from '../../storage/accounts.js';
 import { postReply } from '../../browser/posting.js';
@@ -107,11 +107,14 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
   sendActionResponse(req, res, 202, 'Approved', 'Posting is in progress. You can close this tab.');
 
   try {
-    await postReply(post.tweet_url, replyText);
-    updatePostStatus(post.id, 'POSTED');
-    recordInteraction(post.id, post.author_handle, replyText, { tweetUrl: post.tweet_url });
+    const { replyTweetId } = await postReply(post.tweet_url, replyText);
+    markPostAsPosted(post.id, replyTweetId);
+    recordInteraction(post.id, post.author_handle, replyText, {
+      tweetId: replyTweetId ?? undefined,
+      tweetUrl: replyTweetId ? `https://x.com/i/web/status/${replyTweetId}` : post.tweet_url,
+    });
     logEvent('POSTED', replyText, post.id);
-    logger.info('Reply posted', { postId: post.id });
+    logger.info('Reply posted', { postId: post.id, replyTweetId });
   } catch (err) {
     updatePostStatus(post.id, 'ERROR');
     logEvent('POST_ERROR', String(err), post.id);

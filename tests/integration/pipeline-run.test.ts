@@ -23,6 +23,7 @@ describe('runPipeline', () => {
 
   afterEach(() => {
     vi.doUnmock('../../src/browser/ingestion.js');
+    vi.doUnmock('../../src/browser/posting.js');
     vi.doUnmock('../../src/pipeline/classifier.js');
     vi.doUnmock('../../src/pipeline/generator.js');
     vi.doUnmock('../../src/notifications/ntfy.js');
@@ -31,7 +32,7 @@ describe('runPipeline', () => {
     removeTestDb();
   });
 
-  it('generates one fallback reply when no tweet passes the normal filters', async () => {
+  it('auto-posts the fallback reply and notifies via ntfy', async () => {
     const tweet = {
       tweet_id: '1723456789012347001',
       author_handle: 'movie_user',
@@ -78,8 +79,14 @@ describe('runPipeline', () => {
     vi.doMock('../../src/pipeline/generator.js', () => ({
       generateReply: vi.fn().mockResolvedValue('That sounds like a fun watch.'),
     }));
+    const postReplyMock = vi.fn().mockResolvedValue({ replyTweetId: '9999000011112222' });
+    vi.doMock('../../src/browser/posting.js', () => ({
+      postReply: postReplyMock,
+      deleteReply: vi.fn(),
+    }));
+    const notifyMock = vi.fn().mockResolvedValue({ ok: true, topic: 'test-topic' });
     vi.doMock('../../src/notifications/ntfy.js', () => ({
-      sendApprovalNotification: vi.fn().mockResolvedValue({ ok: true, topic: 'test-topic' }),
+      sendReplyPostedNotification: notifyMock,
     }));
 
     const { runPipeline } = await import('../../src/scheduler/cron.js');
@@ -89,8 +96,16 @@ describe('runPipeline', () => {
     const post = getPostByTweetId(tweet.tweet_id);
 
     expect(result).toEqual({ ingested: 1, candidates: 1 });
-    expect(post?.status).toBe('PENDING_APPROVAL');
+    expect(post?.status).toBe('POSTED');
+    expect(post?.posted_tweet_id).toBe('9999000011112222');
     expect(post?.generated_reply).toBe('That sounds like a fun watch.');
     expect(post?.score).not.toBeNull();
+
+    expect(postReplyMock).toHaveBeenCalledWith(tweet.tweet_url, 'That sounds like a fun watch.');
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    const notifyArgs = notifyMock.mock.calls[0];
+    expect(notifyArgs[1]).toBe('That sounds like a fun watch.');
+    expect(notifyArgs[2]).toBe('9999000011112222');
+    expect(notifyArgs[3]).toBe('REGULAR');
   });
 });

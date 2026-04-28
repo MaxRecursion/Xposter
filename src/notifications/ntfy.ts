@@ -121,6 +121,102 @@ export async function sendApprovalNotification(post: Post): Promise<NtfyResult> 
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Reply-posted notification (auto-post flow)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sent after we auto-post a reply to X. The notification carries the original
+ * tweet, our reply, the live link, and a one-tap "Delete Reply" HTTP action
+ * that calls our local DELETE /api/replies/by-post/:id endpoint.
+ */
+export async function sendReplyPostedNotification(
+  post: Post,
+  replyText: string,
+  replyTweetId: string | null,
+  classification: string | null,
+): Promise<NtfyResult> {
+  const topic = process.env.NTFY_TOPIC;
+  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '');
+  const apiKey = process.env.API_KEY ?? '';
+
+  if (!topic || topic === 'xposter-your-secret-topic') {
+    const msg = 'NTFY_TOPIC not configured (still placeholder) — skipping push';
+    logger.warn(msg);
+    return { ok: false, error: msg };
+  }
+
+  const base = getCallbackBase();
+  const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
+  const lang = post.language === 'marathi' ? 'Marathi' : 'English';
+  const replyAppLink = replyTweetId ? toXAppStatusUrl(replyTweetId) : null;
+  const replyLink = replyTweetId
+    ? `https://x.com/i/web/status/${replyTweetId}`
+    : null;
+  const cls = classification ?? 'UNKNOWN';
+
+  const message = [
+    `Replied to @${post.author_handle} (${ageMin}m ago) [${lang}]`,
+    `Score ${post.score ?? '?'}/100 · ${cls}`,
+    '',
+    'TWEET:',
+    truncate(post.text, 200),
+    '',
+    'OUR REPLY:',
+    truncate(replyText, 200),
+    '',
+    replyLink ? `Live: ${replyLink}` : '(reply id not captured)',
+  ].join('\n');
+
+  const actions: Array<Record<string, unknown>> = [];
+  if (replyTweetId) {
+    actions.push({
+      action: 'http',
+      label: '🗑 Delete Reply',
+      url: `${base}/api/replies/by-post/${post.id}`,
+      method: 'DELETE',
+      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      clear: true,
+    });
+  }
+  if (replyLink) {
+    actions.push({ action: 'view', label: 'Open on X', url: replyAppLink ?? replyLink });
+  }
+  actions.push({ action: 'view', label: 'Open dashboard', url: base });
+
+  const payload: Record<string, unknown> = {
+    topic,
+    title: '✅ Reply Posted',
+    message,
+    priority: 3,
+    tags: ['white_check_mark'],
+    actions,
+    click: replyAppLink ?? replyLink ?? base,
+  };
+
+  try {
+    const res = await axios.post(server, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10_000,
+      validateStatus: () => true,
+    });
+
+    if (res.status >= 200 && res.status < 300) {
+      logger.info('Reply-posted notification sent', { postId: post.id, topic, status: res.status });
+      return { ok: true, status: res.status, topic, callback: base };
+    }
+
+    const errMsg = `ntfy returned HTTP ${res.status}: ${JSON.stringify(res.data)}`;
+    logger.error(errMsg, { postId: post.id, topic });
+    return { ok: false, status: res.status, error: errMsg, topic, callback: base };
+  } catch (err) {
+    const ax = err as AxiosError;
+    const errMsg = `ntfy request failed: ${ax.message}`;
+    logger.error(errMsg, { postId: post.id, topic });
+    return { ok: false, error: errMsg, topic, callback: base };
+  }
+}
+
 /** Send a simple test notification — no actions, just verify connectivity. */
 export async function sendTestNotification(): Promise<NtfyResult> {
   const topic = process.env.NTFY_TOPIC;
@@ -179,6 +275,14 @@ function withActionToken(url: string, token: string): string {
   return `${url}${sep}token=${encodeURIComponent(token)}`;
 }
 
+export function toXAppStatusUrl(tweetId: string): string {
+  return `twitter://status?status_id=${encodeURIComponent(tweetId)}`;
+}
+
+export function toXAppProfileUrl(handle: string): string {
+  return `twitter://user?screen_name=${encodeURIComponent(handle.replace(/^@/, ''))}`;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Follower-back notification
 // ──────────────────────────────────────────────────────────────────────────
@@ -222,7 +326,7 @@ export async function sendFollowerNotification(
     actions: [
       { action: 'view', label: 'Follow back', url: followUrl, clear: true },
       { action: 'view', label: 'Skip',        url: skipUrl,   clear: true },
-      { action: 'view', label: 'Open profile', url: `https://x.com/${encodeURIComponent(handle)}` },
+      { action: 'view', label: 'Open profile', url: toXAppProfileUrl(handle) },
     ],
   };
 

@@ -1,4 +1,4 @@
-import { fetchOurFollowers } from '../browser/followers.js';
+import { fetchOurFollowers, resolveOwnHandle } from '../browser/followers.js';
 import {
   enqueueFollowerEvent, listAccounts, setFollowerState, getAccount,
 } from '../storage/accounts.js';
@@ -10,12 +10,24 @@ import { classifyAccount } from '../pipeline/classifier.js';
 const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;  // 6 hours
 let _interval: NodeJS.Timeout | null = null;
 
+export interface FollowerSyncResult {
+  ok: boolean;
+  newFollowers: number;
+  queued: number;
+  total: number;
+  handle?: string;
+  reason?: string;
+  message?: string;
+}
+
 export function startFollowerSync(): void {
   if (_interval) return;
 
   // First sync 5 minutes after boot (let everything settle)
-  setTimeout(() => { void runFollowerSync(); }, 5 * 60_000);
-  _interval = setInterval(() => { void runFollowerSync(); }, SYNC_INTERVAL_MS);
+  setTimeout(() => { void runFollowerSync().catch((err) => logger.error('Follower sync failed', { err })); }, 5 * 60_000);
+  _interval = setInterval(() => {
+    void runFollowerSync().catch((err) => logger.error('Follower sync failed', { err }));
+  }, SYNC_INTERVAL_MS);
 
   logger.info('Follower sync scheduled', { everyHours: SYNC_INTERVAL_MS / 3_600_000 });
 }
@@ -35,15 +47,25 @@ export function stopFollowerSync(): void {
  *        - enqueue NEW_FOLLOWER event (PENDING)
  *        - send a single ntfy notification
  */
-export async function runFollowerSync(): Promise<{ newFollowers: number; total: number }> {
-  const me = process.env.X_HANDLE;
+export async function runFollowerSync(): Promise<FollowerSyncResult> {
+  const me = await resolveOwnHandle();
   if (!me) {
-    logger.warn('X_HANDLE not set in .env — skipping follower sync');
-    return { newFollowers: 0, total: 0 };
+    const message = 'Could not determine your X handle. Set X_HANDLE in .env or log in to X in the browser profile.';
+    logger.warn(message);
+    logEvent('FOLLOWER_SYNC_SKIPPED', message);
+    return { ok: false, reason: 'missing_handle', message, newFollowers: 0, queued: 0, total: 0 };
   }
 
   if (getSetting('system_running', 'true') !== 'true') {
-    return { newFollowers: 0, total: 0 };
+    return {
+      ok: false,
+      reason: 'system_paused',
+      message: 'System is paused. Resume it before syncing followers.',
+      newFollowers: 0,
+      queued: 0,
+      total: 0,
+      handle: me,
+    };
   }
 
   logEvent('FOLLOWER_SYNC_START');
@@ -51,9 +73,10 @@ export async function runFollowerSync(): Promise<{ newFollowers: number; total: 
   try {
     followers = await fetchOurFollowers(me, 200);
   } catch (err) {
+    const message = `Follower fetch failed: ${String(err)}`;
     logger.error('Follower fetch failed', { err: String(err) });
-    logEvent('FOLLOWER_SYNC_ERROR', String(err));
-    return { newFollowers: 0, total: 0 };
+    logEvent('FOLLOWER_SYNC_ERROR', message);
+    return { ok: false, reason: 'fetch_failed', message, newFollowers: 0, queued: 0, total: 0, handle: me };
   }
 
   const knownFollowers = new Set(
@@ -70,12 +93,14 @@ export async function runFollowerSync(): Promise<{ newFollowers: number; total: 
 
   // Cap notifications: avoid spamming on first run after a long absence
   const maxNotifyPerRun = 5;
+  let queued = 0;
   for (const handle of newOnes.slice(0, maxNotifyPerRun)) {
     try {
       const account = await classifyAccount(handle, null, { fetchProfileIfMissing: true });
       const eventId = enqueueFollowerEvent(handle, 'NEW_FOLLOWER',
         `classification=${account.classification ?? 'UNKNOWN'}; followers=${account.follower_count_seen}`);
       if (eventId !== null) {
+        queued++;
         await sendFollowerNotification(eventId, handle, account).catch((err) => {
           logger.warn('Follower notification failed', { handle, err: String(err) });
         });
@@ -95,5 +120,5 @@ export async function runFollowerSync(): Promise<{ newFollowers: number; total: 
 
   logEvent('FOLLOWER_SYNC_COMPLETE', `total=${followers.length} new=${newOnes.length}`);
   logger.info('Follower sync complete', { total: followers.length, new: newOnes.length });
-  return { newFollowers: newOnes.length, total: followers.length };
+  return { ok: true, newFollowers: newOnes.length, queued, total: followers.length, handle: me };
 }

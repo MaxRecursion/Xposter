@@ -2,6 +2,40 @@ import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 
+export async function resolveOwnHandle(): Promise<string | null> {
+  const configured = sanitizeHandle(process.env.X_HANDLE ?? '');
+  if (configured) return configured;
+
+  const ctx = await getBrowserContext();
+  const page = await ctx.newPage();
+  try {
+    await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 25_000 });
+    await delay(randomBetween(1500, 2500));
+
+    const handle = await page.evaluate(() => {
+      const profileHref = document
+        .querySelector<HTMLAnchorElement>('a[data-testid="AppTabBar_Profile_Link"], a[aria-label="Profile"]')
+        ?.getAttribute('href');
+      if (profileHref && /^\/[A-Za-z0-9_]{1,15}$/.test(profileHref)) {
+        return profileHref.slice(1);
+      }
+
+      const hrefs = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href^="/"]'))
+        .map((a) => a.getAttribute('href') ?? '');
+      const fallbackHref = hrefs.find((href) => /^\/[A-Za-z0-9_]{1,15}$/.test(href) &&
+        !['/home', '/explore', '/notifications', '/messages', '/i'].includes(href));
+      return fallbackHref?.slice(1) ?? null;
+    });
+
+    return sanitizeHandle(handle ?? '');
+  } catch (err) {
+    logger.warn('Could not auto-detect X handle', { err: String(err) });
+    return null;
+  } finally {
+    await page.close();
+  }
+}
+
 /**
  * Reads the current authenticated user's follower handles by visiting
  * /<me>/verified_followers (and falling back to /<me>/followers).
@@ -123,4 +157,9 @@ export async function followBack(handle: string): Promise<boolean> {
   } finally {
     await page.close();
   }
+}
+
+function sanitizeHandle(handle: string): string | null {
+  const normalized = handle.trim().replace(/^@/, '');
+  return /^[A-Za-z0-9_]{1,15}$/.test(normalized) ? normalized : null;
 }

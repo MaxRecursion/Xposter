@@ -5,7 +5,7 @@ import { isValidTweetReference } from '../utils/x.js';
 export type PostStatus =
   | 'INGESTED' | 'FILTERED' | 'SCORED' | 'GENERATING'
   | 'PENDING_APPROVAL' | 'APPROVED' | 'POSTING'
-  | 'POSTED' | 'SKIPPED' | 'EXPIRED' | 'ERROR';
+  | 'POSTED' | 'SKIPPED' | 'EXPIRED' | 'ERROR' | 'DELETED';
 
 export interface Post {
   id: string;
@@ -24,6 +24,8 @@ export interface Post {
   score_breakdown: string | null;
   generated_reply: string | null;
   final_reply: string | null;
+  posted_tweet_id: string | null;
+  deleted_at: number | null;
   ingested_at: number;
   updated_at: number;
 }
@@ -147,6 +149,48 @@ export function updateGeneratedReply(id: string, reply: string): void {
 export function updateFinalReply(id: string, reply: string): void {
   getDb().prepare(`UPDATE posts SET final_reply = ?, updated_at = unixepoch() WHERE id = ?`)
     .run(reply, id);
+}
+
+export function updatePostedTweetId(id: string, postedTweetId: string): void {
+  getDb()
+    .prepare(`UPDATE posts SET posted_tweet_id = ?, updated_at = unixepoch() WHERE id = ?`)
+    .run(postedTweetId, id);
+}
+
+export function getPostByPostedTweetId(postedTweetId: string): Post | null {
+  return (getDb()
+    .prepare('SELECT * FROM posts WHERE posted_tweet_id = ?')
+    .get(postedTweetId) as Post | undefined) ?? null;
+}
+
+export function getLastPostedUnix(): number {
+  const row = getDb()
+    .prepare(`SELECT updated_at FROM posts WHERE status = 'POSTED' ORDER BY updated_at DESC LIMIT 1`)
+    .get() as { updated_at: number } | undefined;
+  return row?.updated_at ?? 0;
+}
+
+export function markReplyDeleted(id: string): void {
+  const db = getDb();
+  // Bypass the CHECK constraint on older DBs that don't have 'DELETED' in it yet.
+  // New DBs have 'DELETED' in the CREATE TABLE CHECK, so the pragma is a no-op there.
+  db.pragma('ignore_check_constraints = ON');
+  try {
+    db.prepare(
+      `UPDATE posts SET status = 'DELETED', deleted_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
+    ).run(id);
+  } finally {
+    db.pragma('ignore_check_constraints = OFF');
+  }
+}
+
+/** Mark a post as posted to X and store the resulting reply tweet id. */
+export function markPostAsPosted(id: string, postedTweetId: string | null): void {
+  getDb().prepare(`
+    UPDATE posts
+    SET status = 'POSTED', posted_tweet_id = ?, updated_at = unixepoch()
+    WHERE id = ?
+  `).run(postedTweetId, id);
 }
 
 // ── Activity Log ──────────────────────────────────────────────────────────────

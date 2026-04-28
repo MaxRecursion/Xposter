@@ -42,7 +42,7 @@ function applyMigrations(db: Database.Database): void {
                       CHECK(status IN (
                         'INGESTED','FILTERED','SCORED','GENERATING',
                         'PENDING_APPROVAL','APPROVED','POSTING',
-                        'POSTED','SKIPPED','EXPIRED','ERROR'
+                        'POSTED','SKIPPED','EXPIRED','ERROR','DELETED'
                       )),
       score           REAL,
       score_breakdown TEXT,
@@ -252,7 +252,11 @@ function applyMigrations(db: Database.Database): void {
 
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
+  addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');
+
 }
+// Note: the DELETED status is allowed on existing DBs via PRAGMA ignore_check_constraints
+// inside markReplyDeleted() in queries.ts (new DBs have it in the CHECK from the start).
 
 function addColumnIfMissing(
   db: Database.Database,

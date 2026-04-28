@@ -3,14 +3,15 @@ import { DetectedLanguage, filterPost } from '../pipeline/filter.js';
 import { ScoredPost, scorePost, rankCandidates } from '../pipeline/scorer.js';
 import { generateReply } from '../pipeline/generator.js';
 import { classifyAccount } from '../pipeline/classifier.js';
-import { sendApprovalNotification } from '../notifications/ntfy.js';
+import { sendReplyPostedNotification } from '../notifications/ntfy.js';
+import { postReply } from '../browser/posting.js';
 import {
   upsertPost, updatePostLanguage, updatePostScore, updateGeneratedReply,
-  updatePostStatus, getPost, getPostsByStatus, getSetting,
-  logEvent, expireOldPending,
+  updatePostStatus, getPost, getSetting,
+  logEvent, expireOldPending, markPostAsPosted,
   Post,
 } from '../storage/queries.js';
-import { upsertAccountSeen } from '../storage/accounts.js';
+import { recordInteraction, upsertAccountSeen } from '../storage/accounts.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import {
@@ -133,8 +134,9 @@ export async function runPipeline(): Promise<{ ingested: number; candidates: num
     const blocklist = getSetting('blocklist_classifications', 'BOT,SPAM,BRAND_PROMO')
       .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 
-    let notified = 0;
-    for (const candidate of topCandidates) {
+    let posted = 0;
+    for (let i = 0; i < topCandidates.length; i++) {
+      const candidate = topCandidates[i];
       try {
         const post = getPost(candidate.id);
         if (!post) continue;
@@ -163,25 +165,43 @@ export async function runPipeline(): Promise<{ ingested: number; candidates: num
 
         updatePostStatus(post.id, 'GENERATING');
         const reply = await generateReply(post, account);
-        updateGeneratedReply(post.id, reply);
+        updateGeneratedReply(post.id, reply);  // sets PENDING_APPROVAL with the reply text
 
-        const updatedPosts = getPostsByStatus('PENDING_APPROVAL');
-        const updated = updatedPosts.find((p) => p.id === candidate.id);
-        if (updated) {
-          const result = await sendApprovalNotification(updated);
-          if (result.ok) {
-            logEvent('NOTIFICATION_SENT', `topic=${result.topic}`, post.id);
+        // Auto-post — no human approval gate.
+        updatePostStatus(post.id, 'POSTING');
+        logEvent('AUTO_POSTING', `score=${candidate.score}`, post.id);
+
+        try {
+          const { replyTweetId } = await postReply(post.tweet_url, reply);
+          markPostAsPosted(post.id, replyTweetId);
+          recordInteraction(post.id, post.author_handle, reply, {
+            tweetId: replyTweetId ?? undefined,
+            tweetUrl: replyTweetId ? `https://x.com/i/web/status/${replyTweetId}` : undefined,
+          });
+          logEvent('POSTED', `reply_id=${replyTweetId ?? 'unknown'}`, post.id);
+          posted++;
+
+          // Fire-and-forget: notify the user that we posted, with a Delete button.
+          const notif = await sendReplyPostedNotification(
+            post,
+            reply,
+            replyTweetId,
+            account?.classification ?? null,
+          );
+          if (notif.ok) {
+            logEvent('NOTIFICATION_SENT', `topic=${notif.topic}`, post.id);
           } else {
-            logEvent('NOTIFICATION_FAILED', result.error ?? 'unknown error', post.id);
-            logger.warn('ntfy notification failed but post remains pending approval', {
-              postId: post.id, error: result.error,
-            });
+            logEvent('NOTIFICATION_FAILED', notif.error ?? 'unknown error', post.id);
           }
-          notified++;
+        } catch (postErr) {
+          logger.error('Auto-post failed', { postId: post.id, err: postErr });
+          updatePostStatus(post.id, 'ERROR');
+          logEvent('POST_ERROR', String(postErr), post.id);
+          continue;
         }
 
-        if (notified < topCandidates.length) {
-          await delay(randomBetween(2000, 5000));
+        if (i < topCandidates.length - 1) {
+          await delay(randomBetween(8000, 15000));  // rate-limit ourselves between auto-posts
         }
       } catch (err) {
         logger.error('Error processing candidate', { id: candidate.id, err });
@@ -190,9 +210,9 @@ export async function runPipeline(): Promise<{ ingested: number; candidates: num
       }
     }
 
-    logEvent('PIPELINE_COMPLETE', `ingested=${ingested} candidates=${notified}`);
-    logger.info('Pipeline complete', { ingested, candidates: notified });
-    return { ingested, candidates: notified };
+    logEvent('PIPELINE_COMPLETE', `ingested=${ingested} posted=${posted}`);
+    logger.info('Pipeline complete', { ingested, posted });
+    return { ingested, candidates: posted };
   } catch (err) {
     logger.error('Pipeline failed', { err });
     logEvent('PIPELINE_ERROR', String(err));

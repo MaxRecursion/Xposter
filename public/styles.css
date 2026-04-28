@@ -396,6 +396,20 @@ header h1 span { color: var(--accent); }
 
 .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
 
+.sync-status {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  color: var(--text2);
+  font-size: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.sync-status.success { border-left-color: var(--green); color: var(--text); }
+.sync-status.error   { border-left-color: var(--red); color: var(--text); }
+
 /* ── Toast ──────────────────────────────────────────────────────────────── */
 #toast-container { bottom: 20px; position: fixed; right: 20px; z-index: 999; }
 

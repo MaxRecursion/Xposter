@@ -511,15 +511,23 @@ async function loadFollowers() {
     const events = await apiFetch('/api/follow/pending');
     const el = $('followers-list');
     if (!el) return;
+    if ($('stat-followers')) $('stat-followers').textContent = events.length;
     if (events.length === 0) {
       el.innerHTML = `<div class="empty-state"><div class="icon">🤝</div><div>No pending follow-back decisions</div></div>`;
       return;
     }
     el.innerHTML = events.map(renderFollowerCard).join('');
-    if ($('stat-followers')) $('stat-followers').textContent = events.length;
   } catch (e) {
     if ($('followers-list')) $('followers-list').innerHTML = `<div class="empty-state">Error: ${escHtml(e.message)}</div>`;
   }
+}
+
+function setFollowerSyncStatus(message, kind = '') {
+  const el = $('followers-sync-status');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `sync-status ${kind}`.trim();
+  el.style.display = message ? 'block' : 'none';
 }
 
 function renderFollowerCard(event) {
@@ -870,14 +878,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const btn = $('btn-sync-followers');
       btn.disabled = true;
       btn.textContent = '⏳ Syncing…';
+      setFollowerSyncStatus('Syncing followers from X…');
       try {
-        await apiFetch('/api/follow/sync', { method: 'POST' });
-        toast('Follower sync started', 'success');
-        setTimeout(loadFollowers, 4000);
+        const result = await apiFetch('/api/follow/sync', { method: 'POST' });
+        const message = result.message ??
+          `Follower sync complete: ${result.total ?? 0} followers scanned, ${result.newFollowers ?? 0} new.`;
+        setFollowerSyncStatus(message, 'success');
+        toast(message, 'success');
+        await loadFollowers();
       } catch (e) {
+        setFollowerSyncStatus(e.message, 'error');
         toast(`Sync failed: ${e.message}`, 'error');
       } finally {
-        setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Sync followers now'; }, 5000);
+        btn.disabled = false;
+        btn.textContent = '🔄 Sync followers now';
       }
     });
   }
