@@ -98,6 +98,12 @@ From your iPhone on the same WiFi:
 http://<your-mac-lan-ip>:3000
 ```
 
+From your iPhone anywhere with Tailscale:
+
+```text
+http://<your-mac-tailscale-ip>:3000
+```
+
 ### Production-Style Run
 
 ```bash
@@ -130,6 +136,46 @@ If you prefer silent background callbacks and your network/device supports them,
 ```env
 NTFY_ACTION_MODE=http
 ```
+
+## Tailscale Anywhere Access
+
+Tailscale lets your iPhone reach the dashboard when you are away from home without exposing Xposter to the public internet.
+
+1. Install Tailscale on the Mac from the official download page or Mac App Store.
+2. Sign in to Tailscale on the Mac.
+3. Install Tailscale on the iPhone from the App Store.
+4. Sign in to the same Tailscale account on the iPhone.
+5. On the Mac, find the Tailscale IP:
+
+```bash
+tailscale ip -4
+```
+
+If the CLI is not installed, copy the Mac's `100.x.y.z` address from the Tailscale app UI.
+
+6. Configure `.env`:
+
+```env
+HOST=0.0.0.0
+CALLBACK_NETWORK=tailscale
+CALLBACK_BASE_URL=
+TAILSCALE_IP=<optional-mac-100.x.y.z-if-cli-is-unavailable>
+TRUST_DASHBOARD_ORIGIN=true
+```
+
+7. Restart Xposter:
+
+```bash
+npm run dev
+```
+
+8. Open this on the iPhone while Tailscale VPN is connected:
+
+```text
+http://<mac-100.x.y.z>:3000
+```
+
+The dashboard should not ask for the API key when opened from the app's own Tailscale URL. ntfy approval links will also use the Tailscale callback URL.
 
 ## Architecture
 
@@ -181,7 +227,7 @@ docs/diagrams/         Mermaid architecture and sequence diagrams
 
 - `.env`, browser profiles, SQLite data, logs, build output, and dependencies are ignored by Git.
 - Mutation endpoints require the API key unless called from loopback.
-- Off-Mac dashboard mutations prompt for the API key and store it in that browser's localStorage.
+- Off-Mac dashboard mutations are allowed from the app's own LAN/Tailscale origin when `TRUST_DASHBOARD_ORIGIN=true`; otherwise they prompt for the API key and store it in that browser's localStorage.
 - ntfy `view` links use signed action tokens instead of exposing the full API key.
 - Request logs redact `key` and `token` query parameters.
 - JSON request bodies are size-limited.

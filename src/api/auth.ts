@@ -1,6 +1,7 @@
 import { Request, RequestHandler, Response } from 'express';
 import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
+import { getAllowedDashboardOrigins } from '../utils/network.js';
 
 const PLACEHOLDER_API_KEY = 'change_me_generate_with_openssl_rand_hex_32';
 
@@ -26,6 +27,7 @@ export function isValidApiKey(candidate: string): boolean {
 export function requireApiKey(req: Request, res: Response, next: () => void): void {
   if (!hasConfiguredApiKey()) { next(); return; }
   if (isLoopback(req)) { next(); return; }
+  if (isTrustedDashboardRequest(req)) { next(); return; }
 
   const provided = String(req.headers['x-api-key'] ?? req.query['key'] ?? '');
   if (isValidApiKey(provided)) { next(); return; }
@@ -42,6 +44,7 @@ export function requireActionAuth(action: ActionName): RequestHandler {
   return (req, res, next) => {
     if (!hasConfiguredApiKey()) { next(); return; }
     if (isLoopback(req)) { next(); return; }
+    if (isTrustedDashboardRequest(req)) { next(); return; }
 
     const provided = String(req.headers['x-api-key'] ?? req.query['key'] ?? '');
     if (isValidApiKey(provided)) { next(); return; }
@@ -62,8 +65,20 @@ export function requireActionAuth(action: ActionName): RequestHandler {
 
 export function callerLabel(req: Request): string {
   if (isLoopback(req)) return 'web';
+  if (isTrustedDashboardRequest(req)) return 'web';
   if (req.headers['x-api-key'] || req.query['key'] || req.query['token']) return 'ntfy';
   return 'lan';
+}
+
+export function isTrustedDashboardRequest(req: Request): boolean {
+  if ((process.env.TRUST_DASHBOARD_ORIGIN ?? 'true') !== 'true') return false;
+
+  const origin = String(req.headers.origin ?? '');
+  const referer = String(req.headers.referer ?? '');
+  const candidate = origin || originFromReferer(referer);
+  if (!candidate) return false;
+
+  return getAllowedDashboardOrigins().some((allowed) => candidate === allowed);
 }
 
 export function createActionToken(action: ActionName, postId: string): string {
@@ -105,4 +120,14 @@ function timingSafeEqual(a: string, b: string): boolean {
   const bBuf = Buffer.from(b);
   if (aBuf.length !== bBuf.length) return false;
   return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+function originFromReferer(referer: string): string {
+  if (!referer) return '';
+  try {
+    const url = new URL(referer);
+    return url.origin;
+  } catch {
+    return '';
+  }
 }

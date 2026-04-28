@@ -29,7 +29,7 @@ async function apiFetch(path, opts = {}) {
 
   if (res.status === 401) {
     localStorage.removeItem(API_KEY_STORAGE);
-    const key = prompt('Enter Xposter API key for this device');
+    const key = prompt('Enter Xposter API key for this device. You should only see this if dashboard-origin trust is disabled or the request is not from the Xposter app URL.');
     if (key?.trim()) {
       localStorage.setItem(API_KEY_STORAGE, key.trim());
       res = await fetch(API + path, {

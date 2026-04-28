@@ -11,6 +11,7 @@ flowchart LR
   X["x.com timeline and tweet pages"]
   Groq["Groq chat completions API"]
   Ntfy["ntfy.sh topic"]
+  Tailnet["Tailscale tailnet\n100.x.y.z private network"]
   Phone["iPhone ntfy app / browser"]
 
   Dashboard <--> API
@@ -22,5 +23,6 @@ flowchart LR
   Pipeline <--> DB
   Pipeline --> Ntfy
   Ntfy --> Phone
-  Phone -->|"signed approve/skip callback"| API
+  Phone <--> Tailnet
+  Tailnet -->|"dashboard and signed callbacks"| API
   API --> Browser

@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 
 const PRIVATE_IPV4_RE =
   /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
+const TAILSCALE_IPV4_RE = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
 
 export function getPort(): string {
   return process.env.PORT ?? '3000';
@@ -51,6 +52,15 @@ export function getTailscaleIP(): string | null {
     const ip = output.split(/\s+/).find(Boolean);
     return ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
   } catch {
+    const nets = networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] ?? []) {
+        if (net.family === 'IPv4' && !net.internal && TAILSCALE_IPV4_RE.test(net.address)) {
+          return net.address;
+        }
+      }
+    }
+
     return null;
   }
 }
@@ -82,4 +92,15 @@ export function getBrowserUrls(): { lan: string; tailscale: string | null } {
     lan: getLanBase(),
     tailscale: getTailscaleBase(),
   };
+}
+
+export function getAllowedDashboardOrigins(): string[] {
+  const urls = getBrowserUrls();
+  return [
+    `http://localhost:${getPort()}`,
+    `http://127.0.0.1:${getPort()}`,
+    urls.lan,
+    urls.tailscale,
+    getCallbackBase(),
+  ].filter((url): url is string => Boolean(url));
 }
