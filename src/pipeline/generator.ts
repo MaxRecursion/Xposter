@@ -1,6 +1,7 @@
 import Groq from 'groq-sdk';
 import { Post, getSetting } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
+import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { logger } from '../utils/logger.js';
 
 let _groq: Groq | null = null;
@@ -176,7 +177,11 @@ export async function generateReply(
 
   const { level, tier } = readWitLevel();
   const classification = (authorAccount?.classification as Classification | null) ?? null;
-  const userPrompt = buildUserPrompt(post, authorAccount);
+
+  const contextBlock = isContextEnabled()
+    ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 4, maxTokens: 500 })
+    : '';
+  const userPrompt = buildUserPrompt(post, authorAccount, contextBlock);
 
   logger.info('Calling Groq for reply generation', {
     postId: post.id,
@@ -185,6 +190,7 @@ export async function generateReply(
     witLevel: level,
     witTier: tier,
     classification: classification ?? 'unknown',
+    contextChars: contextBlock.length,
   });
 
   // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
@@ -242,7 +248,7 @@ export async function generateReply(
   return cleaned;
 }
 
-function buildUserPrompt(post: Post, account: Account | null): string {
+function buildUserPrompt(post: Post, account: Account | null, contextBlock = ''): string {
   const langLabel =
     post.language === 'marathi' ? 'Marathi (Devanagari)' :
     post.language === 'marathi-roman' ? 'Marathi (Roman script)' :
@@ -262,10 +268,11 @@ function buildUserPrompt(post: Post, account: Account | null): string {
   lines.push(
     `Posted: ${ageMin} minutes ago`,
     `Likes: ${post.likes} | Replies: ${post.replies}`,
-    '',
-    'Tweet:',
-    post.text,
   );
+  if (contextBlock) {
+    lines.push('', contextBlock);
+  }
+  lines.push('', 'Tweet:', post.text);
 
   return lines.join('\n');
 }

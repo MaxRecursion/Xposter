@@ -1,7 +1,10 @@
 import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+
+const VEC_DIM = parseInt(process.env.VOYAGE_DIM ?? '512', 10) || 512;
 
 const DB_PATH = process.env.DB_PATH_OVERRIDE
   ? path.resolve(process.cwd(), process.env.DB_PATH_OVERRIDE)
@@ -16,6 +19,11 @@ export function getDb(): Database.Database {
   _db = new Database(DB_PATH);
   _db.pragma('journal_mode = WAL');
   _db.pragma('foreign_keys = ON');
+  try {
+    sqliteVec.load(_db);
+  } catch (err) {
+    logger.warn('sqlite-vec failed to load — context features will be disabled', { err: String(err) });
+  }
   applyMigrations(_db);
   logger.info('SQLite database ready', { path: DB_PATH });
   return _db;
@@ -254,6 +262,52 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');
 
+  applyContextMigrations(db);
+}
+
+function applyContextMigrations(db: Database.Database): void {
+  db.exec(`
+    -- Real-time context items fetched from RSS / news / feeds.
+    -- Body is sanitized at ingest time. Dedup is by SHA-256 of the body.
+    CREATE TABLE IF NOT EXISTS context_items (
+      id           TEXT PRIMARY KEY,        -- first 32 chars of body_hash
+      source       TEXT NOT NULL,           -- e.g. 'rss:loksatta-pune'
+      source_url   TEXT,
+      title        TEXT,
+      body         TEXT NOT NULL,
+      body_hash    TEXT NOT NULL UNIQUE,    -- sha256 hex
+      language     TEXT,
+      topics       TEXT NOT NULL DEFAULT '[]',  -- JSON array
+      published_at INTEGER,
+      fetched_at   INTEGER NOT NULL,
+      expires_at   INTEGER,
+      credibility  REAL NOT NULL DEFAULT 0.5
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_context_items_published ON context_items(published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_context_items_source    ON context_items(source);
+    CREATE INDEX IF NOT EXISTS idx_context_items_expires   ON context_items(expires_at);
+
+    CREATE TABLE IF NOT EXISTS context_source_health (
+      source                TEXT PRIMARY KEY,
+      last_run_at           INTEGER,
+      last_ok_at            INTEGER,
+      consecutive_failures  INTEGER NOT NULL DEFAULT 0,
+      last_error            TEXT
+    );
+  `);
+
+  // sqlite-vec virtual table — created only if vec0 is available on this connection
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_context USING vec0(
+        item_id TEXT PRIMARY KEY,
+        embedding FLOAT[${VEC_DIM}]
+      );
+    `);
+  } catch (err) {
+    logger.warn('vec_context virtual table not created — semantic search unavailable', { err: String(err) });
+  }
 }
 // Note: the DELETED status is allowed on existing DBs via PRAGMA ignore_check_constraints
 // inside markReplyDeleted() in queries.ts (new DBs have it in the CHECK from the start).

@@ -19,6 +19,9 @@ import {
 } from './random_runs.js';
 import { startFollowerSync, stopFollowerSync } from './follower_sync.js';
 import { startOriginalPostScheduler, stopOriginalPostScheduler } from './original_posts.js';
+import { isContextEnabled, getContextStore } from '../context/enrich.js';
+import { buildContextSources } from '../context/sources/index.js';
+import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
 
 let _running = false;
 
@@ -28,6 +31,19 @@ export function startScheduler(): void {
   startRandomScheduler();
   startFollowerSync();
   startOriginalPostScheduler();
+
+  if (isContextEnabled()) {
+    const store = getContextStore();
+    if (store) {
+      const sources = buildContextSources();
+      if (sources.length > 0) {
+        startContextIngest(sources, store);
+        logger.info('Context ingest started', { sources: sources.map((s) => s.name) });
+      } else {
+        logger.warn('CONTEXT_ENABLED=true but no sources configured');
+      }
+    }
+  }
 
   // Expiry sweep: every 5 minutes
   setInterval(() => {
@@ -42,6 +58,7 @@ export function stopScheduler(): void {
   stopRandomScheduler();
   stopFollowerSync();
   stopOriginalPostScheduler();
+  stopContextIngest();
   logger.info('Scheduler stopped');
 }
 
