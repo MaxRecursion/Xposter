@@ -147,6 +147,70 @@ function buildSystemPrompt(category: TopicCategory, language: PostLanguage): str
   return base + (language === 'marathi' ? MARATHI_LANG : ENGLISH_LANG);
 }
 
+// ── Engagement farm ───────────────────────────────────────────────────────────
+
+const ENGAGEMENT_FARM_SYSTEM = `You are a sharp-tongued Punekar with strong opinions posting on X (Twitter). You have hot takes and love a good debate. NOT a bot, NOT a brand — a real person who says what others are afraid to say.`;
+
+const ENGAGEMENT_FARM_USER = `Write a single short X (Twitter) post that:
+- Makes a provocative hot take on ONE of these topics: business/money, politics, Pune life, social norms, education, tech/startup
+- The "fact" can be edgy or grey-area (controversial but not hateful)
+- Ends with an open question that invites people to reply and debate
+- 60% chance: write entirely in Marathi (Devanagari script). 40% chance: write in English.
+- Include 1-2 relevant hashtags
+- Under 280 characters total
+- NO "💯", NO motivational openers like "In today's world", NO "food for thought"
+- Sound like a real Punekar venting, not an AI
+
+Reply with ONLY the tweet text, nothing else.`;
+
+export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPost> {
+  const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const client = getGroqClient();
+
+  logger.info('Generating engagement farm post', { model });
+
+  let content = '';
+  let lastError: string | null = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt === 1) logPromptToConsole('ENGAGEMENT_FARM', 'hot-take', ENGAGEMENT_FARM_SYSTEM, ENGAGEMENT_FARM_USER);
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
+        { role: 'user', content: ENGAGEMENT_FARM_USER },
+      ],
+      max_tokens: 300,
+      temperature: 0.95,
+      top_p: 0.95,
+    });
+
+    const raw = (completion.choices[0]?.message?.content ?? '').trim();
+    const cleaned = raw.replace(/^["']|["']$/g, '').trim();
+    const chars = Array.from(cleaned).length;
+
+    if (chars >= 30 && chars <= 280) {
+      content = cleaned;
+      break;
+    }
+    lastError = `length check failed: ${chars} chars`;
+    logger.warn('Engagement farm quality check failed', { attempt, chars });
+  }
+
+  if (!content) {
+    throw new Error(`Could not generate engagement farm post after 3 attempts. Last error: ${lastError}`);
+  }
+
+  const hasDevanagari = /[ऀ-ॿ]/.test(content);
+  const language: PostLanguage = hasDevanagari ? 'marathi' : 'english';
+
+  logger.info('Engagement farm post generated', {
+    language, chars: Array.from(content).length, preview: content.slice(0, 60),
+  });
+
+  return { content, language, topic: 'engagement-farm', category: 'observation', researchContext: '' };
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {

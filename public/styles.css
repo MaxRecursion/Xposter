@@ -873,6 +873,17 @@ select.select-input {
   padding: 2px 6px;
   border-radius: 3px;
 }
+.post-type-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.post-type-badge-original        { background: #3a7bd5; color: #fff; }
+.post-type-badge-engagement-farm { background: #e07b1a; color: #fff; }
+
 .op-status {
   font-size: 10px;
   font-weight: 700;

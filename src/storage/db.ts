@@ -253,7 +253,7 @@ function applyMigrations(db: Database.Database): void {
   // Insert default settings for original posts feature
   db.prepare(`
     INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('original_posts_per_day',    '5'),
+      ('original_posts_per_day',    '7'),
       ('original_post_marathi_ratio','40'),
       ('impression_sync_interval_h', '2'),
       ('topic_category_weights',    '{"local-pune":0.30,"tech":0.20,"politics":0.10,"sports":0.15,"culture":0.15,"observation":0.10}')
@@ -262,6 +262,7 @@ function applyMigrations(db: Database.Database): void {
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');
+  addColumnIfMissing(db, 'original_posts', 'post_type', "TEXT NOT NULL DEFAULT 'ORIGINAL'");
 
   applyContextMigrations(db);
 }

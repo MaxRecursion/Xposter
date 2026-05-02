@@ -742,6 +742,10 @@ function renderOriginalPost(post) {
   const langBadge = post.language === 'marathi'
     ? `<span class="marathi-badge">मराठी</span>`
     : `<span class="lang-badge-en">EN</span>`;
+  const isEF = post.post_type === 'ENGAGEMENT_FARM';
+  const typeBadge = isEF
+    ? `<span class="post-type-badge post-type-badge-engagement-farm">Engagement Farm</span>`
+    : `<span class="post-type-badge post-type-badge-original">Original</span>`;
   const when = post.posted_at ? timeAgo(post.posted_at) : timeAgo(post.created_at);
   const engHtml = post.status === 'POSTED' ? `
     <span title="Views">👁 ${(post.latest_impressions || 0).toLocaleString()}</span>
@@ -757,6 +761,7 @@ function renderOriginalPost(post) {
       <div class="op-header">
         <span class="op-topic">#${escHtml(post.topic)}</span>
         ${langBadge}
+        ${typeBadge}
         <span class="op-status op-status-${post.status.toLowerCase()}">${post.status}</span>
         <span class="op-time">${when}</span>
       </div>

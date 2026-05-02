@@ -367,10 +367,10 @@ export interface ScheduledRun {
   detail: string | null;
 }
 
-export function insertScheduledRun(date: string, runAt: number, kind = 'PIPELINE'): void {
+export function insertScheduledRun(date: string, runAt: number, kind = 'PIPELINE', detail?: string): void {
   getDb().prepare(`
-    INSERT OR IGNORE INTO scheduled_runs (run_date, run_at, kind) VALUES (?, ?, ?)
-  `).run(date, runAt, kind);
+    INSERT OR IGNORE INTO scheduled_runs (run_date, run_at, kind, detail) VALUES (?, ?, ?, ?)
+  `).run(date, runAt, kind, detail ?? null);
 }
 
 export function getScheduledRunsForDate(date: string, kind = 'PIPELINE'): ScheduledRun[] {

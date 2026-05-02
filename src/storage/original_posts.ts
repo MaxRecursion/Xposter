@@ -3,11 +3,14 @@ import { getDb } from './db.js';
 
 export type OriginalPostStatus = 'GENERATING' | 'POSTED' | 'ERROR' | 'SKIPPED';
 
+export type OriginalPostType = 'ORIGINAL' | 'ENGAGEMENT_FARM';
+
 export interface OriginalPost {
   id: string;
   content: string;
   language: string;
   topic: string;
+  post_type: OriginalPostType;
   status: OriginalPostStatus;
   tweet_id: string | null;
   tweet_url: string | null;
@@ -44,13 +47,14 @@ export function insertOriginalPost(data: {
   content: string;
   language: string;
   topic: string;
+  postType?: OriginalPostType;
   researchContext?: string;
 }): OriginalPost {
   const id = crypto.randomUUID();
   getDb().prepare(`
-    INSERT INTO original_posts (id, content, language, topic, research_context)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, data.content, data.language, data.topic, data.researchContext ?? null);
+    INSERT INTO original_posts (id, content, language, topic, post_type, research_context)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, data.content, data.language, data.topic, data.postType ?? 'ORIGINAL', data.researchContext ?? null);
   return getOriginalPost(id)!;
 }
 
