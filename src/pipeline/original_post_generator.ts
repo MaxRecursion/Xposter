@@ -136,6 +136,16 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
 
 // ── Quality gate ──────────────────────────────────────────────────────────────
 
+function logPromptToConsole(kind: string, id: string, system: string, user: string): void {
+  if (process.env.LOG_PROMPTS === 'false') return;
+  const line = '─'.repeat(72);
+  process.stdout.write(
+    `\n${line}\n┃ GROQ ${kind} PROMPT  ${id}\n${line}\n` +
+    `── SYSTEM ──\n${system}\n` +
+    `── USER ──\n${user}\n${line}\n\n`,
+  );
+}
+
 function qualityCheck(content: string, language: PostLanguage): string | null {
   const chars = Array.from(content).length;
   if (chars < 60) return `too short (${chars} chars)`;
@@ -209,6 +219,7 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
   let lastError: string | null = null;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt === 1) logPromptToConsole('ORIGINAL', `topic=${topic}`, systemPrompt, userPrompt);
     const completion = await client.chat.completions.create({
       model,
       messages: [

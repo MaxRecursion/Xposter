@@ -16,6 +16,16 @@ const W_CRED = 0.10;
 const W_TOPIC = 0.10;
 
 /**
+ * Hard cutoff to drop irrelevant items. voyage-3-lite cosine distances run
+ * higher than I initially tuned for: a perfectly-related item lands around
+ * 0.55–0.65 against a tweet-style query. Anything beyond ~0.95 is genuinely
+ * unrelated. The prompt header tells the model "treat as background only",
+ * so inject mildly tangential content rather than nothing — it still anchors
+ * the model in the current discourse climate.
+ */
+const MAX_DISTANCE = 0.95;
+
+/**
  * Wraps the vector store with a recency × similarity × credibility × topic-overlap
  * re-ranker. The vec0 KNN does similarity well; we over-fetch and re-rank to
  * prefer recent, authoritative, and topically-aligned items.
@@ -32,10 +42,19 @@ export class Retriever {
     });
     if (candidates.length === 0) return [];
 
+    // Drop only the truly unrelated tail — see MAX_DISTANCE comment.
+    const relevant = candidates.filter((c) => c.distance <= MAX_DISTANCE);
+    if (relevant.length === 0) {
+      // Fall back to top-3 candidates if everything got filtered (e.g. when
+      // the query has no good matches in the corpus). Better to give the
+      // model something background-relevant than nothing at all.
+      return candidates.slice(0, Math.min(3, candidates.length));
+    }
+
     const queryTopics = new Set(detectTopics(q.text));
     const now = Math.floor(Date.now() / 1000);
 
-    const ranked = candidates.map((c) => {
+    const ranked = relevant.map((c) => {
       const ts = c.publishedAt ?? c.fetchedAt;
       const ageHours = Math.max(0, (now - ts) / 3600);
       const recency = Math.exp(-ageHours / RECENCY_HALF_LIFE_HOURS);

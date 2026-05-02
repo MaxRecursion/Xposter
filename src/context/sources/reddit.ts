@@ -59,7 +59,13 @@ export function redditSource(cfg: RedditSourceConfig): ContextSource {
       const items = children.flatMap((c) => {
         const d = c.data;
         if (d.over_18 || d.stickied) return [];
-        const body = (d.selftext?.trim() || d.title.trim());
+
+        // Body must be stable across fetches so SHA-256 hash dedup works. We
+        // intentionally exclude live counters (score, num_comments) — they
+        // change every poll and would defeat dedup.
+        const body = d.is_self
+          ? (d.selftext?.trim() || d.title.trim())
+          : d.title.trim();
         if (!body) return [];
 
         const publishedAt = Math.floor(d.created_utc);
@@ -67,7 +73,7 @@ export function redditSource(cfg: RedditSourceConfig): ContextSource {
           source: cfg.name,
           sourceUrl: `https://www.reddit.com${d.permalink}`,
           title: d.title,
-          body: d.is_self ? body : `${d.title} (link post; ${d.num_comments} comments, score ${d.score})`,
+          body,
           language: 'english' as const,
           publishedAt,
           expiresAt: publishedAt + ttl,

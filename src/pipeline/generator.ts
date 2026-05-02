@@ -196,10 +196,13 @@ export async function generateReply(
   // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
   const temp = tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
 
+  const sysPrompt = systemPrompt(post.language, tier, classification);
+  logPromptToConsole('REPLY', post.id, sysPrompt, userPrompt);
+
   const completion = await client.chat.completions.create({
     model,
     messages: [
-      { role: 'system', content: systemPrompt(post.language, tier, classification) },
+      { role: 'system', content: sysPrompt },
       { role: 'user', content: userPrompt },
     ],
     max_tokens: 200,
@@ -246,6 +249,16 @@ export async function generateReply(
 
   logger.info('Reply generated', { postId: post.id, reply: cleaned, lang: post.language });
   return cleaned;
+}
+
+function logPromptToConsole(kind: string, id: string, system: string, user: string): void {
+  if (process.env.LOG_PROMPTS === 'false') return;
+  const line = '─'.repeat(72);
+  process.stdout.write(
+    `\n${line}\n┃ GROQ ${kind} PROMPT  id=${id}\n${line}\n` +
+    `── SYSTEM ──\n${system}\n` +
+    `── USER ──\n${user}\n${line}\n\n`,
+  );
 }
 
 function buildUserPrompt(post: Post, account: Account | null, contextBlock = ''): string {

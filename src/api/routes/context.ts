@@ -1,8 +1,13 @@
 import express from 'express';
 import { getDb } from '../../storage/db.js';
 import { getSourceHealth } from '../../context/ingest/health.js';
-import { isContextEnabled, getContextStore } from '../../context/enrich.js';
+import { isContextEnabled, getContextStore, enrichPrompt } from '../../context/enrich.js';
 import { getTopicVelocities } from '../../context/trends.js';
+import { detectTopics } from '../../context/topics.js';
+import { generateReply } from '../../pipeline/generator.js';
+import { detectLanguage } from '../../pipeline/filter.js';
+import type { Post } from '../../storage/queries.js';
+import { logger } from '../../utils/logger.js';
 
 export const contextRouter = express.Router();
 
@@ -75,4 +80,90 @@ contextRouter.get('/recent', (req, res) => {
     LIMIT ?
   `).all(limit);
   res.json(rows);
+});
+
+/**
+ * Run the full reply-generation path against a synthetic tweet. Exercises
+ * context retrieval, prompt assembly, and the Groq call — useful for
+ * debugging without touching the timeline or DB writes. Does NOT post the
+ * reply anywhere.
+ */
+contextRouter.post('/test-reply', async (req, res) => {
+  const text = String(req.body?.text ?? '').trim();
+  if (!text) return res.status(400).json({ error: 'missing text in JSON body' });
+  if (text.length > 1000) return res.status(400).json({ error: 'text too long' });
+
+  const handle = String(req.body?.handle ?? 'debug_user');
+  const language = req.body?.language && typeof req.body.language === 'string'
+    ? req.body.language
+    : (detectLanguage(text) ?? 'english');
+
+  const synthPost: Post = {
+    id: 'debug-' + Date.now().toString(36),
+    tweet_id: '0',
+    author_handle: handle,
+    author_name: handle,
+    text,
+    language,
+    timestamp: Math.floor(Date.now() / 1000),
+    likes: 0,
+    replies: 0,
+    retweets: 0,
+    tweet_url: `https://x.com/${handle}/status/0`,
+    status: 'GENERATING',
+    score: null,
+    score_breakdown: null,
+    generated_reply: null,
+    final_reply: null,
+    posted_tweet_id: null,
+    deleted_at: null,
+    ingested_at: Math.floor(Date.now() / 1000),
+    updated_at: Math.floor(Date.now() / 1000),
+  };
+
+  const start = Date.now();
+  try {
+    const reply = await generateReply(synthPost, null);
+    res.json({
+      ok: true,
+      input: { text, handle, language },
+      reply,
+      elapsed_ms: Date.now() - start,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('test-reply failed', { err: msg });
+    res.status(500).json({ ok: false, error: msg });
+  }
+});
+
+/**
+ * Preview the enrichment block that would be injected into a prompt for the
+ * given query. Read-only; useful for tuning the retriever and inspecting what
+ * the model actually sees. Costs one Voyage embedding call per request.
+ */
+contextRouter.get('/preview', async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (!q) {
+    return res.status(400).json({ error: 'missing q parameter' });
+  }
+  const maxItems = Math.min(10, Math.max(1, parseInt(String(req.query.k ?? '5'), 10) || 5));
+  const maxTokens = Math.min(2000, Math.max(50, parseInt(String(req.query.tokens ?? '500'), 10) || 500));
+
+  if (!isContextEnabled()) {
+    return res.json({ enabled: false, query: q, block: '' });
+  }
+
+  const start = Date.now();
+  const block = await enrichPrompt({ text: q, maxItems, maxTokens });
+  const detectedTopics = detectTopics(q);
+
+  res.json({
+    enabled: true,
+    query: q,
+    detected_topics: detectedTopics,
+    block_chars: block.length,
+    elapsed_ms: Date.now() - start,
+    block,
+  });
 });
