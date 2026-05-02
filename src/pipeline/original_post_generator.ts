@@ -1,8 +1,7 @@
 import Groq from 'groq-sdk';
 import { getSetting, getRecentPosts } from '../storage/queries.js';
-import { getTopicPerformance } from '../storage/original_posts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
-import { getVelocityMap } from '../context/trends.js';
+import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
 import { logger } from '../utils/logger.js';
 
 let _groq: Groq | null = null;
@@ -20,65 +19,19 @@ export interface GeneratedOriginalPost {
   content: string;
   language: PostLanguage;
   topic: string;
+  category: TopicCategory;
   researchContext: string;
-}
-
-// ── Topic selection ───────────────────────────────────────────────────────────
-
-/** All candidate topics (merged from settings + built-in defaults). */
-function getTopics(): string[] {
-  const raw = getSetting('topic_keywords', 'pune,rain,traffic,flooding,waterlogging,pothole,event');
-  const fromSettings = raw.split(',').map((k) => k.trim()).filter(Boolean);
-  const defaults = [
-    'pune', 'rain', 'traffic', 'flooding', 'waterlogging', 'pothole',
-    'local', 'event', 'weather', 'road', 'pmc', 'metro',
-  ];
-  return Array.from(new Set([...fromSettings, ...defaults]));
-}
-
-/**
- * Picks a topic using weighted random selection.
- * Topics that have previously generated high engagement get higher weight.
- * Brand-new topics get a baseline weight of 1.0 to ensure variety.
- * When context is enabled, topics currently trending in fetched news/discussion
- * get a velocity multiplier — so the bot rides the wave instead of writing
- * about a topic that the city stopped talking about three days ago.
- */
-function pickTopic(topics: string[]): string {
-  const performance = getTopicPerformance();
-  const perfMap = new Map(performance.map((p) => [p.topic, p.engagement_score]));
-
-  let velMap: Map<string, number> = new Map();
-  if (isContextEnabled()) {
-    try {
-      velMap = getVelocityMap();
-    } catch (err) {
-      logger.warn('Velocity map lookup failed; ignoring trend signal', { err: String(err) });
-    }
-  }
-
-  const weights = topics.map((t) => {
-    const score = perfMap.get(t) ?? 0;
-    const baseline = 1.0 + score * 0.1;
-    // Topic tags from context/topics.ts use lowercase keys that overlap with
-    // these settings keywords (rain, traffic, pmc, metro). For non-overlapping
-    // terms (e.g. 'pothole' here vs 'roads' tag), velocity defaults to 1.0.
-    const velocity = velMap.get(t) ?? 1.0;
-    return baseline * Math.min(2.5, Math.max(0.6, velocity));
-  });
-
-  const totalWeight = weights.reduce((a, b) => a + b, 0);
-  let rand = Math.random() * totalWeight;
-  for (let i = 0; i < topics.length; i++) {
-    rand -= weights[i];
-    if (rand <= 0) return topics[i];
-  }
-  return topics[topics.length - 1];
 }
 
 // ── Language selection ────────────────────────────────────────────────────────
 
-function pickLanguage(): PostLanguage {
+/**
+ * Marathi only fits well for local-pune and culture topics. Forcing Marathi on
+ * a tech / politics / sports / observation tweet produces awkward bookish text
+ * the bot's audience won't engage with.
+ */
+function pickLanguage(category: TopicCategory): PostLanguage {
+  if (category !== 'local-pune' && category !== 'culture') return 'english';
   const ratio = parseInt(getSetting('original_post_marathi_ratio', '40'), 10);
   const safeRatio = Math.min(100, Math.max(0, Number.isFinite(ratio) ? ratio : 40));
   return Math.random() * 100 < safeRatio ? 'marathi' : 'english';
@@ -91,9 +44,6 @@ function pickLanguage(): PostLanguage {
  *   1. Timeline tweets ingested in the last 48h matching the topic substring.
  *   2. The real-time context store (RSS/Reddit/weather), if enabled — semantic
  *      retrieval against the topic phrase, ranked by recency × credibility.
- *
- * Returns a formatted context string plus raw tweet snippets so the model can
- * avoid re-stating things already in the local conversation.
  */
 async function gatherResearchContext(topic: string): Promise<{ context: string; snippets: string[] }> {
   const recent = getRecentPosts(48);
@@ -116,11 +66,7 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
 
   if (isContextEnabled()) {
     try {
-      const enriched = await enrichPrompt({
-        text: topic,
-        maxItems: 5,
-        maxTokens: 600,
-      });
+      const enriched = await enrichPrompt({ text: topic, maxItems: 5, maxTokens: 600 });
       if (enriched) sections.push(enriched);
     } catch (err) {
       logger.warn('Context enrichment for original post failed; continuing', { err: String(err), topic });
@@ -130,7 +76,6 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
   if (sections.length === 0) {
     return { context: `No recent context available for "${topic}".`, snippets };
   }
-
   return { context: sections.join('\n\n'), snippets };
 }
 
@@ -151,17 +96,23 @@ function qualityCheck(content: string, language: PostLanguage): string | null {
   if (chars < 60) return `too short (${chars} chars)`;
   if (chars > 280) return `too long (${chars} chars)`;
   if (language === 'marathi' && !/[ऀ-ॿ]/.test(content)) return 'requested Marathi but no Devanagari found';
-
-  // Must have at least 1 sentence-ending mark (period, !, ?, Marathi danda, etc.)
   const sentenceEnds = (content.match(/[.!?।॥]/g) ?? []).length;
   if (sentenceEnds < 1) return 'no sentence-ending punctuation found';
-
-  return null; // OK
+  return null;
 }
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-const SYSTEM_BASE = `You are a real person from Pune, Maharashtra posting original thoughts on X (Twitter).
+const SHARED_RULES = `Hard limits:
+- Maximum 280 characters total
+- Zero or one hashtag only (prefer zero)
+- No emojis unless the topic strongly calls for it
+- Do NOT start with "Just", "Thread:", "Hot take:", or "Unpopular opinion:"
+- No promotional language
+
+RETURN ONLY THE TWEET TEXT. No quotes, no preamble, no explanation.`;
+
+const SYSTEM_BASE_PUNE = `You are a real person from Pune, Maharashtra posting original thoughts on X (Twitter).
 
 Write ONE original tweet (not a reply). The tweet must:
 - Be 3-4 sentences long
@@ -170,14 +121,18 @@ Write ONE original tweet (not a reply). The tweet must:
 - Sound like a real, thinking Punekar, not a journalist or corporate bot
 - Have a clear perspective or take, not neutral reporting
 
-Hard limits:
-- Maximum 280 characters total
-- Zero or one hashtag only (prefer zero)
-- No emojis unless the topic strongly calls for it
-- Do NOT start with "Just", "Thread:", "Hot take:", or "Unpopular opinion:"
-- No promotional language
+${SHARED_RULES}`;
 
-RETURN ONLY THE TWEET TEXT. No quotes, no preamble, no explanation.`;
+const SYSTEM_BASE_GENERAL = `You are a sharp, opinionated person posting original thoughts on X (Twitter). You are NOT an assistant, NOT a chatbot, NOT a brand voice. You're a real person with takes — funny when the situation calls for it, sincere when it doesn't.
+
+Write ONE original tweet (not a reply). The tweet must:
+- Be 3-4 sentences long
+- End with a thought-provoking question OR an intriguing open statement that makes readers want to engage
+- Have a clear perspective or take, not neutral reporting
+- Sound like a real, thinking person, not a journalist or corporate bot
+- Engage with the topic on its own terms (do NOT pivot to Pune unless the topic itself is local)
+
+${SHARED_RULES}`;
 
 const MARATHI_LANG = `
 LANGUAGE: Write entirely in Marathi using Devanagari script (देवनागरी).
@@ -187,17 +142,22 @@ Do NOT write in English or Roman/Latin script.`;
 const ENGLISH_LANG = `
 LANGUAGE: Write in natural, conversational English.`;
 
+function buildSystemPrompt(category: TopicCategory, language: PostLanguage): string {
+  const base = category === 'local-pune' ? SYSTEM_BASE_PUNE : SYSTEM_BASE_GENERAL;
+  return base + (language === 'marathi' ? MARATHI_LANG : ENGLISH_LANG);
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
-  const topics = getTopics();
-  const topic = pickTopic(topics);
-  const language = pickLanguage();
+  const { topic, category } = pickTopicAndCategory();
+  const language = pickLanguage(category);
   const { context, snippets } = await gatherResearchContext(topic);
 
-  const systemPrompt = SYSTEM_BASE + (language === 'marathi' ? MARATHI_LANG : ENGLISH_LANG);
+  const systemPrompt = buildSystemPrompt(category, language);
 
   const userPrompt = [
+    `Category: ${category}`,
     `Topic: ${topic}`,
     '',
     'Research context (recent conversation around this topic):',
@@ -213,13 +173,13 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
   const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
   const client = getGroqClient();
 
-  logger.info('Generating original post', { topic, language, model });
+  logger.info('Generating original post', { topic, category, language, model });
 
   let content = '';
   let lastError: string | null = null;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    if (attempt === 1) logPromptToConsole('ORIGINAL', `topic=${topic}`, systemPrompt, userPrompt);
+    if (attempt === 1) logPromptToConsole('ORIGINAL', `topic=${topic} cat=${category}`, systemPrompt, userPrompt);
     const completion = await client.chat.completions.create({
       model,
       messages: [
@@ -272,7 +232,9 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
     throw new Error(`Could not generate a passing original post after 3 attempts. Last error: ${lastError}`);
   }
 
-  logger.info('Original post generated', { topic, language, chars: Array.from(content).length, preview: content.slice(0, 60) });
+  logger.info('Original post generated', {
+    topic, category, language, chars: Array.from(content).length, preview: content.slice(0, 60),
+  });
 
-  return { content, language, topic, researchContext: context };
+  return { content, language, topic, category, researchContext: context };
 }
