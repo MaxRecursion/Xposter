@@ -27,6 +27,8 @@ export interface RetrievedContextItem {
   title: string | null;
   body: string;
   language: string | null;
+  /** JSON-encoded array of Topic strings (see context/topics.ts). */
+  topics: string;
   publishedAt: number | null;
   fetchedAt: number;
   credibility: number;

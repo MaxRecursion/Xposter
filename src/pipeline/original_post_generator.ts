@@ -1,6 +1,8 @@
 import Groq from 'groq-sdk';
 import { getSetting, getRecentPosts } from '../storage/queries.js';
 import { getTopicPerformance } from '../storage/original_posts.js';
+import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
+import { getVelocityMap } from '../context/trends.js';
 import { logger } from '../utils/logger.js';
 
 let _groq: Groq | null = null;
@@ -38,14 +40,31 @@ function getTopics(): string[] {
  * Picks a topic using weighted random selection.
  * Topics that have previously generated high engagement get higher weight.
  * Brand-new topics get a baseline weight of 1.0 to ensure variety.
+ * When context is enabled, topics currently trending in fetched news/discussion
+ * get a velocity multiplier — so the bot rides the wave instead of writing
+ * about a topic that the city stopped talking about three days ago.
  */
 function pickTopic(topics: string[]): string {
   const performance = getTopicPerformance();
   const perfMap = new Map(performance.map((p) => [p.topic, p.engagement_score]));
 
+  let velMap: Map<string, number> = new Map();
+  if (isContextEnabled()) {
+    try {
+      velMap = getVelocityMap();
+    } catch (err) {
+      logger.warn('Velocity map lookup failed; ignoring trend signal', { err: String(err) });
+    }
+  }
+
   const weights = topics.map((t) => {
     const score = perfMap.get(t) ?? 0;
-    return 1.0 + score * 0.1; // baseline 1, scaled by engagement
+    const baseline = 1.0 + score * 0.1;
+    // Topic tags from context/topics.ts use lowercase keys that overlap with
+    // these settings keywords (rain, traffic, pmc, metro). For non-overlapping
+    // terms (e.g. 'pothole' here vs 'roads' tag), velocity defaults to 1.0.
+    const velocity = velMap.get(t) ?? 1.0;
+    return baseline * Math.min(2.5, Math.max(0.6, velocity));
   });
 
   const totalWeight = weights.reduce((a, b) => a + b, 0);
@@ -68,11 +87,16 @@ function pickLanguage(): PostLanguage {
 // ── Research step ─────────────────────────────────────────────────────────────
 
 /**
- * Gathers recent context for the topic from already-ingested timeline tweets.
- * Returns formatted context string + raw tweet snippets for dedup avoidance.
+ * Gathers recent context for the topic from two sources:
+ *   1. Timeline tweets ingested in the last 48h matching the topic substring.
+ *   2. The real-time context store (RSS/Reddit/weather), if enabled — semantic
+ *      retrieval against the topic phrase, ranked by recency × credibility.
+ *
+ * Returns a formatted context string plus raw tweet snippets so the model can
+ * avoid re-stating things already in the local conversation.
  */
-function gatherResearchContext(topic: string): { context: string; snippets: string[] } {
-  const recent = getRecentPosts(48); // last 48h
+async function gatherResearchContext(topic: string): Promise<{ context: string; snippets: string[] }> {
+  const recent = getRecentPosts(48);
   const topicLower = topic.toLowerCase();
 
   const matched = recent
@@ -80,17 +104,34 @@ function gatherResearchContext(topic: string): { context: string; snippets: stri
     .sort((a, b) => (b.likes + b.replies * 2) - (a.likes + a.replies * 2))
     .slice(0, 6);
 
-  if (matched.length === 0) {
-    return { context: `No recent context available for "${topic}".`, snippets: [] };
+  const snippets = matched.map((p) => p.text.slice(0, 200));
+  const sections: string[] = [];
+
+  if (snippets.length > 0) {
+    sections.push([
+      `Recent tweets about "${topic}" (last 48h, sorted by engagement):`,
+      ...snippets.map((s, i) => `${i + 1}. ${s}`),
+    ].join('\n'));
   }
 
-  const snippets = matched.map((p) => p.text.slice(0, 200));
-  const context = [
-    `Recent tweets about "${topic}" (last 48h, sorted by engagement):`,
-    ...snippets.map((s, i) => `${i + 1}. ${s}`),
-  ].join('\n');
+  if (isContextEnabled()) {
+    try {
+      const enriched = await enrichPrompt({
+        text: topic,
+        maxItems: 5,
+        maxTokens: 600,
+      });
+      if (enriched) sections.push(enriched);
+    } catch (err) {
+      logger.warn('Context enrichment for original post failed; continuing', { err: String(err), topic });
+    }
+  }
 
-  return { context, snippets };
+  if (sections.length === 0) {
+    return { context: `No recent context available for "${topic}".`, snippets };
+  }
+
+  return { context: sections.join('\n\n'), snippets };
 }
 
 // ── Quality gate ──────────────────────────────────────────────────────────────
@@ -142,7 +183,7 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
   const topics = getTopics();
   const topic = pickTopic(topics);
   const language = pickLanguage();
-  const { context, snippets } = gatherResearchContext(topic);
+  const { context, snippets } = await gatherResearchContext(topic);
 
   const systemPrompt = SYSTEM_BASE + (language === 'marathi' ? MARATHI_LANG : ENGLISH_LANG);
 

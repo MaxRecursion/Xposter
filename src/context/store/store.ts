@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { getDb } from '../../storage/db.js';
 import { logger } from '../../utils/logger.js';
+import { detectTopics, topicsAsJson } from '../topics.js';
 import type { ContextItemInput, RetrievedContextItem } from '../types.js';
 import type { EmbeddingClient } from '../embeddings/client.js';
 
@@ -12,17 +13,23 @@ interface RawHit {
   title: string | null;
   body: string;
   language: string | null;
+  topics: string;
   published_at: number | null;
   fetched_at: number;
   credibility: number;
 }
 
+const NEAR_DUPLICATE_DISTANCE = 0.06;
+const NEAR_DUPLICATE_LOOKBACK_HOURS = 48;
+const NEAR_DUPLICATE_K = 5;
+
 export class ContextStore {
   constructor(private readonly embeddings: EmbeddingClient) {}
 
   /**
-   * Insert items that aren't already stored (dedup by SHA-256 of body).
-   * Embeds only the freshly-inserted items, then writes to the vec0 table.
+   * Insert items that aren't already stored. Two-stage dedup:
+   *   1. SHA-256 of body — exact duplicate detection (cheap, no embedding spent)
+   *   2. Cosine distance against recent items — semantic near-duplicate
    * Returns the number of items actually inserted.
    */
   async upsertAndEmbed(items: ContextItemInput[]): Promise<number> {
@@ -31,22 +38,22 @@ export class ContextStore {
     const db = getDb();
     const existsStmt = db.prepare('SELECT 1 AS hit FROM context_items WHERE body_hash = ?');
 
-    const fresh = items
+    const hashFresh = items
       .map((it) => ({
         ...it,
         bodyHash: crypto.createHash('sha256').update(it.body).digest('hex'),
       }))
       .filter((it) => !existsStmt.get(it.bodyHash));
 
-    if (fresh.length === 0) {
-      logger.debug('Context upsert: all duplicates', { source: items[0]?.source, count: items.length });
+    if (hashFresh.length === 0) {
+      logger.debug('Context upsert: all hash-duplicates', { source: items[0]?.source, count: items.length });
       return 0;
     }
 
-    const texts = fresh.map((it) => buildEmbeddingInput(it.title, it.body));
+    const texts = hashFresh.map((it) => buildEmbeddingInput(it.title, it.body));
     const vectors = await this.embeddings.embed(texts, { kind: 'document' });
-    if (vectors.length !== fresh.length) {
-      throw new Error(`Embedding count mismatch: got ${vectors.length} for ${fresh.length} items`);
+    if (vectors.length !== hashFresh.length) {
+      throw new Error(`Embedding count mismatch: got ${vectors.length} for ${hashFresh.length} items`);
     }
 
     const insertItem = db.prepare(`
@@ -54,20 +61,42 @@ export class ContextStore {
         id, source, source_url, title, body, body_hash, language, topics,
         published_at, fetched_at, expires_at, credibility
       ) VALUES (
-        @id, @source, @sourceUrl, @title, @body, @bodyHash, @language, '[]',
+        @id, @source, @sourceUrl, @title, @body, @bodyHash, @language, @topics,
         @publishedAt, @fetchedAt, @expiresAt, @credibility
       )
       ON CONFLICT(body_hash) DO NOTHING
     `);
     const insertVec = db.prepare('INSERT INTO vec_context(item_id, embedding) VALUES (?, ?)');
+    const cutoff = Math.floor(Date.now() / 1000) - NEAR_DUPLICATE_LOOKBACK_HOURS * 3600;
+    const nearDupStmt = db.prepare(`
+      SELECT v.item_id, v.distance, c.published_at
+      FROM vec_context v
+      JOIN context_items c ON c.id = v.item_id
+      WHERE v.embedding MATCH ? AND k = ?
+        AND (c.published_at IS NULL OR c.published_at >= ?)
+      ORDER BY v.distance
+      LIMIT 1
+    `);
 
     const now = Math.floor(Date.now() / 1000);
     let inserted = 0;
+    let nearDupSkipped = 0;
 
-    const tx = db.transaction((rows: typeof fresh, vecs: Float32Array[]) => {
+    const tx = db.transaction((rows: typeof hashFresh, vecs: Float32Array[]) => {
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
+        const vec = vecs[i];
+        const vbuf = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength);
+
+        // Cosine near-duplicate check
+        const hit = nearDupStmt.get(vbuf, NEAR_DUPLICATE_K, cutoff) as { distance: number } | undefined;
+        if (hit && hit.distance < NEAR_DUPLICATE_DISTANCE) {
+          nearDupSkipped++;
+          continue;
+        }
+
         const id = r.bodyHash.slice(0, 32);
+        const topics = detectTopics(`${r.title ?? ''} ${r.body}`);
         const result = insertItem.run({
           id,
           source: r.source,
@@ -76,23 +105,26 @@ export class ContextStore {
           body: r.body,
           bodyHash: r.bodyHash,
           language: r.language,
+          topics: topicsAsJson(topics),
           publishedAt: r.publishedAt,
           fetchedAt: now,
           expiresAt: r.expiresAt,
           credibility: r.credibility,
         });
         if (result.changes === 1) {
-          insertVec.run(id, Buffer.from(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength));
+          insertVec.run(id, vbuf);
           inserted++;
         }
       }
     });
-    tx(fresh, vectors);
+    tx(hashFresh, vectors);
 
     logger.info('Context upsert', {
-      source: fresh[0]?.source,
-      fresh: inserted,
-      duplicates: items.length - inserted,
+      source: hashFresh[0]?.source,
+      attempted: hashFresh.length,
+      inserted,
+      hashDuplicates: items.length - hashFresh.length,
+      nearDuplicates: nearDupSkipped,
     });
     return inserted;
   }
@@ -110,10 +142,9 @@ export class ContextStore {
     const cutoff = Math.floor(Date.now() / 1000) - maxAge;
 
     const db = getDb();
-    // Over-fetch from KNN, then post-filter by recency. sqlite-vec MATCH wants `k = ?`.
     const rows = db.prepare(`
       SELECT v.item_id, v.distance, c.source, c.source_url, c.title, c.body,
-             c.language, c.published_at, c.fetched_at, c.credibility
+             c.language, c.topics, c.published_at, c.fetched_at, c.credibility
       FROM vec_context v
       JOIN context_items c ON c.id = v.item_id
       WHERE v.embedding MATCH ? AND k = ?
@@ -128,6 +159,7 @@ export class ContextStore {
       title: r.title,
       body: r.body,
       language: r.language,
+      topics: r.topics,
       publishedAt: r.published_at,
       fetchedAt: r.fetched_at,
       credibility: r.credibility,
@@ -135,9 +167,7 @@ export class ContextStore {
     }));
   }
 
-  /**
-   * Delete items whose expires_at has passed. Also cleans the vec table.
-   */
+  /** Delete items whose expires_at has passed, and their vectors. */
   pruneExpired(): number {
     const db = getDb();
     const now = Math.floor(Date.now() / 1000);

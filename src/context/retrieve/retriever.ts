@@ -1,5 +1,6 @@
 import type { ContextStore } from '../store/store.js';
 import type { RetrievedContextItem } from '../types.js';
+import { detectTopics, parseTopics } from '../topics.js';
 
 export interface RetrievalQuery {
   text: string;
@@ -10,13 +11,14 @@ export interface RetrievalQuery {
 
 const RECENCY_HALF_LIFE_HOURS = 12;
 const W_SIM = 0.55;
-const W_RECENCY = 0.30;
-const W_CRED = 0.15;
+const W_RECENCY = 0.25;
+const W_CRED = 0.10;
+const W_TOPIC = 0.10;
 
 /**
- * Wraps the vector store with a recency × similarity × credibility re-ranker.
- * The vec0 KNN already does similarity well; we over-fetch and re-rank to
- * prefer recent and authoritative items.
+ * Wraps the vector store with a recency × similarity × credibility × topic-overlap
+ * re-ranker. The vec0 KNN does similarity well; we over-fetch and re-rank to
+ * prefer recent, authoritative, and topically-aligned items.
  */
 export class Retriever {
   constructor(private readonly store: ContextStore) {}
@@ -30,14 +32,24 @@ export class Retriever {
     });
     if (candidates.length === 0) return [];
 
+    const queryTopics = new Set(detectTopics(q.text));
     const now = Math.floor(Date.now() / 1000);
+
     const ranked = candidates.map((c) => {
       const ts = c.publishedAt ?? c.fetchedAt;
       const ageHours = Math.max(0, (now - ts) / 3600);
       const recency = Math.exp(-ageHours / RECENCY_HALF_LIFE_HOURS);
       const similarity = clamp01(1 - c.distance);
       const credibility = clamp01(c.credibility);
-      const score = W_SIM * similarity + W_RECENCY * recency + W_CRED * credibility;
+      const itemTopics = parseTopics(c.topics);
+      const topicOverlap = queryTopics.size === 0
+        ? 0
+        : itemTopics.filter((t) => queryTopics.has(t)).length / queryTopics.size;
+      const score =
+        W_SIM * similarity +
+        W_RECENCY * recency +
+        W_CRED * credibility +
+        W_TOPIC * topicOverlap;
       return { item: c, score };
     });
 
