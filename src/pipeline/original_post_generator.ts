@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk';
-import { getSetting, getRecentPosts } from '../storage/queries.js';
+import { getSetting, getRecentPosts, logEvent } from '../storage/queries.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
 import { logger } from '../utils/logger.js';
@@ -89,6 +89,7 @@ function logPromptToConsole(kind: string, id: string, system: string, user: stri
     `── SYSTEM ──\n${system}\n` +
     `── USER ──\n${user}\n${line}\n\n`,
   );
+  logEvent('GROQ_PROMPT', `[${kind}] ${id} | ${user.slice(0, 500)}`);
 }
 
 function qualityCheck(content: string, language: PostLanguage): string | null {

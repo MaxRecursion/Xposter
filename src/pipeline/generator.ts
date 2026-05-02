@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk';
-import { Post, getSetting } from '../storage/queries.js';
+import { Post, getSetting, logEvent } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { detectTopics } from '../context/topics.js';
@@ -361,6 +361,7 @@ function logPromptToConsole(kind: string, id: string, system: string, user: stri
     `── SYSTEM ──\n${system}\n` +
     `── USER ──\n${user}\n${line}\n\n`,
   );
+  logEvent('GROQ_PROMPT', `[${kind}] ${id} | ${user.slice(0, 500)}`);
 }
 
 function buildUserPrompt(post: Post, account: Account | null, contextBlock = ''): string {
