@@ -181,7 +181,7 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
         { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
         { role: 'user', content: ENGAGEMENT_FARM_USER },
       ],
-      max_tokens: 300,
+      max_tokens: 600,
       temperature: 0.95,
       top_p: 0.95,
     });
@@ -251,7 +251,7 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 300,
+      max_tokens: 600,
       temperature: 0.85,
       top_p: 0.95,
     });
@@ -281,7 +281,7 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
             content: 'देवनागरी लिपीत मराठीत लिहा. फक्त मराठी, इंग्रजी नको.',
           },
         ],
-        max_tokens: 300,
+        max_tokens: 600,
         temperature: 0.8,
         top_p: 0.95,
       }).then((r) => {
