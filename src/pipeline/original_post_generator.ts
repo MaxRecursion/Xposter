@@ -94,7 +94,7 @@ function logPromptToConsole(kind: string, id: string, system: string, user: stri
 
 function qualityCheck(content: string, language: PostLanguage): string | null {
   const chars = Array.from(content).length;
-  if (chars < 60) return `too short (${chars} chars)`;
+  if (chars < 20) return `too short (${chars} chars)`;
   if (chars > 280) return `too long (${chars} chars)`;
   if (language === 'marathi' && !/[ऀ-ॿ]/.test(content)) return 'requested Marathi but no Devanagari found';
   const sentenceEnds = (content.match(/[.!?।॥]/g) ?? []).length;
@@ -181,10 +181,10 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
         { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
         { role: 'user', content: ENGAGEMENT_FARM_USER },
       ],
-      max_tokens: 600,
+      max_completion_tokens: 400,
       temperature: 0.95,
       top_p: 0.95,
-    });
+    } as any);
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const cleaned = raw.replace(/^["']|["']$/g, '').trim();
@@ -251,10 +251,10 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 600,
+      max_completion_tokens: 400,
       temperature: 0.85,
       top_p: 0.95,
-    });
+    } as any);
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const cleaned = raw.replace(/^["']|["']$/g, '').trim();
@@ -281,10 +281,10 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
             content: 'देवनागरी लिपीत मराठीत लिहा. फक्त मराठी, इंग्रजी नको.',
           },
         ],
-        max_tokens: 600,
+        max_completion_tokens: 400,
         temperature: 0.8,
         top_p: 0.95,
-      }).then((r) => {
+      } as any).then((r) => {
         const retry = (r.choices[0]?.message?.content ?? '').trim().replace(/^["']|["']$/g, '');
         if (!qualityCheck(retry, language)) content = retry;
       }).catch(() => undefined);
