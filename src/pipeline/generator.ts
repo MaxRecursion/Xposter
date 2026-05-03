@@ -307,14 +307,10 @@ export async function generateReply(
       { role: 'system', content: sysPrompt },
       { role: 'user', content: userPrompt },
     ],
-    // gpt-oss-120b and other reasoning models spend their token budget on internal
-    // reasoning first, then generate content. With max_tokens: 200 the reasoning
-    // chain alone consumed all 200 tokens, leaving content empty. 600 gives ~400
-    // tokens for reasoning and still leaves 200 for the actual ≤280-char reply.
-    max_tokens: 600,
+    max_completion_tokens: 400,
     temperature: temp,
     top_p: 0.95,
-  });
+  } as any);
 
   let reply = completion.choices[0]?.message?.content?.trim() ?? '';
   if (!reply) throw new Error('Groq returned empty reply');
@@ -340,10 +336,10 @@ export async function generateReply(
             'No English. Devanagari script only.',
         },
       ],
-      max_tokens: 600,
+      max_completion_tokens: 400,
       temperature: 0.7,
       top_p: 0.95,
-    });
+    } as any);
 
     const retryText = retry.choices[0]?.message?.content?.trim() ?? '';
     if (retryText && /[ऀ-ॿ]/.test(retryText)) {
