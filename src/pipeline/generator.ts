@@ -3,6 +3,7 @@ import { Post, getSetting, logEvent } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { detectTopics } from '../context/topics.js';
+import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
 
 let _groq: Groq | null = null;
@@ -307,13 +308,14 @@ export async function generateReply(
       { role: 'system', content: sysPrompt },
       { role: 'user', content: userPrompt },
     ],
-    max_completion_tokens: 400,
+    max_completion_tokens: 6000,
     temperature: temp,
     top_p: 0.95,
+    reasoning_effort: 'high',
   } as any);
 
   let reply = completion.choices[0]?.message?.content?.trim() ?? '';
-  if (!reply) throw new Error('Groq returned empty reply');
+  if (!reply) throw new EmptyReplyError();
 
   // Sanitize: strip any surrounding quotes the model might add
   let cleaned = reply.replace(/^["']|["']$/g, '').trim();
@@ -336,9 +338,10 @@ export async function generateReply(
             'No English. Devanagari script only.',
         },
       ],
-      max_completion_tokens: 400,
+      max_completion_tokens: 6000,
       temperature: 0.7,
       top_p: 0.95,
+      reasoning_effort: 'high',
     } as any);
 
     const retryText = retry.choices[0]?.message?.content?.trim() ?? '';

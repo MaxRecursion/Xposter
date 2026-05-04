@@ -2,6 +2,7 @@ import { ingestTimeline } from '../browser/ingestion.js';
 import { DetectedLanguage, filterPost } from '../pipeline/filter.js';
 import { ScoredPost, scorePost, rankCandidates } from '../pipeline/scorer.js';
 import { generateReply } from '../pipeline/generator.js';
+import { EmptyReplyError } from '../pipeline/errors.js';
 import { classifyAccount } from '../pipeline/classifier.js';
 import { sendReplyPostedNotification } from '../notifications/ntfy.js';
 import { postReply } from '../browser/posting.js';
@@ -221,6 +222,12 @@ export async function runPipeline(): Promise<{ ingested: number; candidates: num
           await delay(randomBetween(8000, 15000));  // rate-limit ourselves between auto-posts
         }
       } catch (err) {
+        if (err instanceof EmptyReplyError) {
+          logger.warn('Empty reply from Groq — skipping candidate, waiting for next run', { id: candidate.id });
+          updatePostStatus(candidate.id, 'SKIPPED');
+          logEvent('CANDIDATE_SKIPPED_EMPTY', 'empty reply, skipped', candidate.id);
+          continue;
+        }
         logger.error('Error processing candidate', { id: candidate.id, err });
         updatePostStatus(candidate.id, 'ERROR');
         logEvent('CANDIDATE_ERROR', String(err), candidate.id);

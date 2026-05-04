@@ -7,6 +7,7 @@ import {
   getPostsNeedingImpressionSync, insertImpression,
 } from '../storage/original_posts.js';
 import { generateOriginalPost, generateEngagementFarmPost } from '../pipeline/original_post_generator.js';
+import { EmptyReplyError } from '../pipeline/errors.js';
 import type { OriginalPostType } from '../storage/original_posts.js';
 import { postOriginalTweet } from '../browser/compose.js';
 import { scrapeEngagement } from '../browser/impressions.js';
@@ -166,6 +167,11 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
 
     return { ok: true, id: post.id };
   } catch (err) {
+    if (err instanceof EmptyReplyError) {
+      logger.warn('Original post: empty reply from Groq — skipping, waiting for next slot', { trigger });
+      logEvent('ORIGINAL_POST_SKIPPED_EMPTY', 'empty reply, skipped');
+      return { ok: false, error: 'empty reply (skipped)' };
+    }
     logger.error('Original post failed', { trigger, err: String(err) });
     logEvent('ORIGINAL_POST_ERROR', String(err));
     return { ok: false, error: String(err) };

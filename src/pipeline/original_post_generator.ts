@@ -2,6 +2,7 @@ import Groq from 'groq-sdk';
 import { getSetting, getRecentPosts, logEvent } from '../storage/queries.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
+import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
 
 let _groq: Groq | null = null;
@@ -181,14 +182,20 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
         { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
         { role: 'user', content: ENGAGEMENT_FARM_USER },
       ],
-      max_completion_tokens: 400,
+      max_completion_tokens: 6000,
       temperature: 0.95,
       top_p: 0.95,
+      reasoning_effort: 'high',
     } as any);
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const cleaned = raw.replace(/^["']|["']$/g, '').trim();
     const chars = Array.from(cleaned).length;
+
+    if (chars === 0) {
+      logger.warn('Engagement farm: empty response, skipping this run', { attempt });
+      throw new EmptyReplyError('Engagement farm returned empty reply');
+    }
 
     if (chars >= 30 && chars <= 280) {
       content = cleaned;
@@ -251,13 +258,19 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_completion_tokens: 400,
+      max_completion_tokens: 6000,
       temperature: 0.85,
       top_p: 0.95,
+      reasoning_effort: 'high',
     } as any);
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const cleaned = raw.replace(/^["']|["']$/g, '').trim();
+
+    if (cleaned.length === 0) {
+      logger.warn('Original post: empty response, skipping this run', { attempt, topic, category });
+      throw new EmptyReplyError('Original post returned empty reply');
+    }
 
     const qError = qualityCheck(cleaned, language);
     if (!qError) {
@@ -281,9 +294,10 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
             content: 'देवनागरी लिपीत मराठीत लिहा. फक्त मराठी, इंग्रजी नको.',
           },
         ],
-        max_completion_tokens: 400,
+        max_completion_tokens: 6000,
         temperature: 0.8,
         top_p: 0.95,
+        reasoning_effort: 'high',
       } as any).then((r) => {
         const retry = (r.choices[0]?.message?.content ?? '').trim().replace(/^["']|["']$/g, '');
         if (!qualityCheck(retry, language)) content = retry;
