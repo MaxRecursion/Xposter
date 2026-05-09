@@ -1,7 +1,13 @@
-import { chromium, BrowserContext } from 'playwright';
+import { BrowserContext } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+
+// Stealth plugin masks the automation fingerprints X uses to flag the bot
+// (navigator.webdriver, chrome.runtime quirks, plugin/permission shape, etc).
+chromium.use(StealthPlugin());
 
 const USER_DATA_DIR = path.resolve(
   process.cwd(),
@@ -20,12 +26,9 @@ export async function getBrowserContext(): Promise<BrowserContext> {
   logger.info('Launching browser', { userDataDir: USER_DATA_DIR, headless });
 
   _context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+    channel: 'chrome', // use user's installed Google Chrome instead of the (detected-as-automation) Chrome for Testing build
     headless,
     viewport: { width: 1280, height: 900 },
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-      'AppleWebKit/537.36 (KHTML, like Gecko) ' +
-      'Chrome/131.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'Asia/Kolkata',
     args: [
@@ -33,11 +36,7 @@ export async function getBrowserContext(): Promise<BrowserContext> {
       '--no-first-run',
       '--no-default-browser-check',
     ],
-  });
-
-  // Mask webdriver flag to reduce fingerprinting
-  await _context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    ignoreDefaultArgs: ['--enable-automation'],
   });
 
   logger.info('Browser context ready');
