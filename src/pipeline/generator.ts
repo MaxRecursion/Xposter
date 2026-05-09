@@ -162,6 +162,8 @@ HARD LIMITS:
 - No emojis unless the original tweet uses them — and even then, sparingly.
 - No promotional language, no sales pitch, no link-dropping.
 
+LANGUAGE: Reply in sharp, polished English only. Do NOT reply in Marathi, Hindi, or any other language. Do NOT use Devanagari script or Roman-script Marathi — even if the original tweet is in another language, your reply is English.
+
 OUTPUT: Return ONLY the reply text. No quotes around it, no "Here's a reply:", no explanation, no "Mode A" / "Mode B" label. Just the reply, exactly as it would appear on X.`;
 
 const SYSTEM_PROMPT_GENERAL = `You are a sharp, opinionated person replying on X (Twitter). You are NOT an assistant, NOT a chatbot, NOT a brand voice. You're a real person with takes — funny when the situation calls for it, sincere when it doesn't.
@@ -206,45 +208,17 @@ HARD LIMITS:
 - No emojis unless the original tweet uses them — and even then, sparingly.
 - No promotional language, no sales pitch, no link-dropping.
 
+LANGUAGE: Reply in sharp, polished English only. Do NOT reply in Marathi, Hindi, or any other language. Do NOT use Devanagari script or Roman-script Marathi — even if the original tweet is in another language, your reply is English.
+
 OUTPUT: Return ONLY the reply text. No quotes around it, no "Here's a reply:", no explanation, no "Mode A" / "Mode B" label. Just the reply, exactly as it would appear on X.`;
 
-const MARATHI_RULES = `
-
-🔴 ABSOLUTE LANGUAGE RULE — MARATHI ONLY 🔴
-The tweet is in MARATHI. Your reply MUST be entirely in Marathi using Devanagari script (देवनागरी).
-- Do NOT reply in English.
-- Do NOT reply in Hindi.
-- Do NOT transliterate Marathi using Latin/Roman letters.
-- Use natural, colloquial Marathi as spoken in Pune (पुणेरी मराठी).
-- Common everyday Marathi words and phrases — not bookish/formal.
-- Example acceptable replies: "हो ना, खूप त्रास होतो आहे आज", "पुण्यात नेहमीच असं होतं पावसात"
-- Example UNACCEPTABLE replies: "Yes very bad", "Haan bahut kharab hai", "ho na khup tras"`;
-
-const ENGLISH_RULES = `
-
-LANGUAGE RULE: The tweet is in English. Reply in natural conversational English.`;
-
-const MARATHI_ROMAN_RULES = `LANGUAGE RULE — ROMAN MARATHI:
-The tweet is Marathi typed in Roman/Latin script (e.g. "majhya punyat khup paus aahe").
-Reply in the same style: natural Marathi typed in Roman/Latin script.
-- Match the casual code-mixed feel of the original.
-- Do NOT switch to Devanagari unless the original used it.
-- Do NOT switch to pure English.
-- Use authentic Marathi-ish Roman spellings (ahe, nahi, khup, ka re, mhanaje).`;
-
-function systemPrompt(language: string, tier: WitTier, classification: Classification | null, flavor: Flavor): string {
+function systemPrompt(tier: WitTier, classification: Classification | null, flavor: Flavor): string {
   const base = flavor === 'pune' ? SYSTEM_PROMPT_PUNE : SYSTEM_PROMPT_GENERAL;
-  const langRules =
-    language === 'marathi' ? MARATHI_RULES :
-    language === 'marathi-roman' ? MARATHI_ROMAN_RULES :
-    ENGLISH_RULES;
-
   const classificationGuidance = classificationGuidanceFor(classification);
   return [
     base,
     witInstructions(tier, flavor),
     classificationGuidance,
-    langRules,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -288,7 +262,6 @@ export async function generateReply(
   logger.info('Calling Groq for reply generation', {
     postId: post.id,
     model,
-    lang: post.language,
     witLevel: level,
     witTier: tier,
     flavor,
@@ -299,7 +272,7 @@ export async function generateReply(
   // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
   const temp = tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
 
-  const sysPrompt = systemPrompt(post.language, tier, classification, flavor);
+  const sysPrompt = systemPrompt(tier, classification, flavor);
   logPromptToConsole('REPLY', `${post.id} flavor=${flavor}`, sysPrompt, userPrompt);
 
   const completion = await client.chat.completions.create({
@@ -313,44 +286,14 @@ export async function generateReply(
     top_p: 0.95,
   });
 
-  let reply = completion.choices[0]?.message?.content?.trim() ?? '';
+  const reply = completion.choices[0]?.message?.content?.trim() ?? '';
   if (!reply) throw new EmptyReplyError();
 
   // Sanitize: strip any surrounding quotes the model might add
   let cleaned = reply.replace(/^["']|["']$/g, '').trim();
-
-  // Marathi enforcement: if the model didn't produce Devanagari, retry once with stricter prompt.
-  if (post.language === 'marathi' && !/[ऀ-ॿ]/.test(cleaned)) {
-    logger.warn('Marathi reply came back without Devanagari — retrying once', { postId: post.id });
-
-    const retry = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt('marathi', tier, classification, flavor) },
-        { role: 'user', content: userPrompt },
-        { role: 'assistant', content: cleaned },
-        {
-          role: 'user',
-          content:
-            'तुमचा प्रतिसाद इंग्रजीत आला, हे चुकीचे आहे. ' +
-            'फक्त मराठी (देवनागरी लिपी) मध्ये एक नवीन छोटा प्रतिसाद द्या. ' +
-            'No English. Devanagari script only.',
-        },
-      ],
-      max_tokens: 400,
-      temperature: 0.7,
-      top_p: 0.95,
-    });
-
-    const retryText = retry.choices[0]?.message?.content?.trim() ?? '';
-    if (retryText && /[ऀ-ॿ]/.test(retryText)) {
-      cleaned = retryText.replace(/^["']|["']$/g, '').trim();
-    }
-  }
-
   cleaned = enforceReplyLimit(cleaned);
 
-  logger.info('Reply generated', { postId: post.id, reply: cleaned, lang: post.language, flavor });
+  logger.info('Reply generated', { postId: post.id, reply: cleaned, flavor });
   return cleaned;
 }
 
@@ -366,14 +309,9 @@ function logPromptToConsole(kind: string, id: string, system: string, user: stri
 }
 
 function buildUserPrompt(post: Post, account: Account | null, contextBlock = ''): string {
-  const langLabel =
-    post.language === 'marathi' ? 'Marathi (Devanagari)' :
-    post.language === 'marathi-roman' ? 'Marathi (Roman script)' :
-    'English';
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
 
   const lines = [
-    `Language: ${langLabel}`,
     `Author: @${post.author_handle}`,
   ];
   if (account?.classification) {

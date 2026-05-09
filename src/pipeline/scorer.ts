@@ -5,7 +5,6 @@ export interface ScoreBreakdown {
   topicRelevance: number;   // 0-30: more keyword matches = higher
   replyOpportunity: number; // 0-20: questions, complaints, requests
   engagementSweet: number;  // 0-10: sweet spot (not 0, not viral)
-  marathiBonus: number;     // 0-10: flat boost for Marathi (primary target)
 }
 
 export interface ScoredPost {
@@ -15,20 +14,18 @@ export interface ScoredPost {
 }
 
 // Signals that suggest a reply is welcome
-const QUESTION_PATTERNS = [/\?/, /कसं/, /कुठे/, /केव्हा/, /काय/, /कोण/, /का\s/,
-  /when/i, /where/i, /how/i, /anyone/i, /any idea/i];
+const QUESTION_PATTERNS = [/\?/, /when/i, /where/i, /how/i, /anyone/i, /any idea/i];
 
 const COMPLAINT_PATTERNS = [/terrible/i, /worst/i, /horrible/i, /broken/i, /fix/i,
-  /frustrated/i, /sick of/i, /खराब/, /त्रास/, /बंद/, /बिघडला/];
+  /frustrated/i, /sick of/i];
 
-const HELP_REQUEST_PATTERNS = [/help/i, /suggest/i, /recommend/i, /advice/i,
-  /मदत/, /सांगा/, /सुचवा/];
+const HELP_REQUEST_PATTERNS = [/help/i, /suggest/i, /recommend/i, /advice/i];
 
-// Marathi & English topic keyword weights
+// English topic keyword weights
 const WEIGHTED_KEYWORDS: Array<[string, number]> = [
-  ['पुणे', 3], ['pune', 3], ['पुण्यात', 3],
-  ['पाऊस', 2], ['rain', 2], ['पूर', 2], ['flood', 2],
-  ['वाहतूक', 2], ['traffic', 2], ['जाम', 2],
+  ['pune', 3],
+  ['rain', 2], ['flood', 2],
+  ['traffic', 2],
   ['waterlog', 2], ['pothole', 2], ['pmc', 1],
   ['event', 1], ['local', 1], ['metro', 1],
 ];
@@ -70,24 +67,18 @@ export function scorePost(post: Post): ScoredPost {
   // 0 engagement or >500: engScore stays 0
   const engagementSweet = engScore;
 
-  // ── Marathi Bonus (0–10) ───────────────────────────────────────────────────
-  // Primary target language gets a flat boost so it ranks above generic English.
-  const marathiBonus = post.language === 'marathi' ? 10 : 0;
-
   const breakdown: ScoreBreakdown = {
     recency: Math.round(recency * 10) / 10,
     topicRelevance: Math.round(topicRelevance * 10) / 10,
     replyOpportunity: Math.round(replyOpportunity * 10) / 10,
     engagementSweet,
-    marathiBonus,
   };
 
   const score = Math.min(100,
     breakdown.recency +
     breakdown.topicRelevance +
     breakdown.replyOpportunity +
-    breakdown.engagementSweet +
-    breakdown.marathiBonus,
+    breakdown.engagementSweet,
   );
 
   return { id: post.id, score: Math.round(score * 10) / 10, breakdown };
