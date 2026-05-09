@@ -119,20 +119,20 @@ describe('generateReply', () => {
     await expect(generateReply(makePost())).rejects.toThrow('empty reply');
   });
 
-  it('includes Marathi language instruction for Marathi posts', async () => {
+  it('always instructs the model to reply in English only', async () => {
     const { __mockCreate } = await import('groq-sdk') as any;
     __mockCreate.mockResolvedValue({
-      choices: [{ message: { content: 'पाऊस खूप आहे आज!' } }],
+      choices: [{ message: { content: 'Pune monsoon hits like clockwork.' } }],
     });
 
     const { generateReply } = await import('../../src/pipeline/generator.js');
+    // Even when the upstream tweet is Marathi, our reply policy is English only.
     const marathiPost = makePost({ language: 'marathi', text: 'पुण्यात आज पाऊस किती होता?' });
     const result = await generateReply(marathiPost);
 
-    // Verify the prompt contained Marathi language signal
     const callArgs = __mockCreate.mock.calls[0][0];
-    const userMsg = callArgs.messages.find((m: any) => m.role === 'user').content;
-    expect(userMsg).toContain('Marathi');
-    expect(result).toBe('पाऊस खूप आहे आज!');
+    const systemMsg = callArgs.messages.find((m: any) => m.role === 'system').content;
+    expect(systemMsg).toContain('sharp, polished English only');
+    expect(result).toBe('Pune monsoon hits like clockwork.');
   });
 });

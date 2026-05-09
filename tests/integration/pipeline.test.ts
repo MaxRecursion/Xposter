@@ -112,12 +112,15 @@ describe('Pipeline integration', () => {
     const { upsertPost, updatePostLanguage } = await import('../../src/storage/queries.js');
     const { scorePost } = await import('../../src/pipeline/scorer.js');
 
-    const post = upsertPost(SAMPLE_TWEETS[1]);
-    if (!post) throw new Error('post should be new');
+    const post = upsertPost(SAMPLE_TWEETS[0]);
+    // Already inserted by the dedup test; fetch it.
+    const { getPostByTweetId } = await import('../../src/storage/queries.js');
+    const fresh = post ?? getPostByTweetId(SAMPLE_TWEETS[0].tweet_id);
+    if (!fresh) throw new Error('post not found');
 
-    updatePostLanguage(post.id, 'marathi');
+    updatePostLanguage(fresh.id, 'english');
 
-    const { score, breakdown } = scorePost({ ...post, language: 'marathi' });
+    const { score, breakdown } = scorePost({ ...fresh, language: 'english' });
 
     expect(score).toBeGreaterThan(30);
     expect(breakdown.recency).toBeGreaterThan(0);
