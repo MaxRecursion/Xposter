@@ -1,7 +1,13 @@
-import { chromium, BrowserContext } from 'playwright';
+import { BrowserContext } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+
+// Stealth plugin masks the automation fingerprints X uses to flag the bot
+// (navigator.webdriver, chrome.runtime quirks, plugin/permission shape, etc).
+chromium.use(StealthPlugin());
 
 const USER_DATA_DIR = path.resolve(
   process.cwd(),
@@ -20,12 +26,9 @@ export async function getBrowserContext(): Promise<BrowserContext> {
   logger.info('Launching browser', { userDataDir: USER_DATA_DIR, headless });
 
   _context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+    channel: 'chrome', // use user's installed Google Chrome instead of the (detected-as-automation) Chrome for Testing build
     headless,
     viewport: { width: 1280, height: 900 },
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-      'AppleWebKit/537.36 (KHTML, like Gecko) ' +
-      'Chrome/131.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'Asia/Kolkata',
     args: [
@@ -33,15 +36,58 @@ export async function getBrowserContext(): Promise<BrowserContext> {
       '--no-first-run',
       '--no-default-browser-check',
     ],
+    ignoreDefaultArgs: ['--enable-automation'],
   });
 
-  // Mask webdriver flag to reduce fingerprinting
-  await _context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-  });
+  await injectAuthCookiesFromEnv(_context);
 
   logger.info('Browser context ready');
   return _context;
+}
+
+/**
+ * X aggressively flags Playwright-driven login flows — the username form
+ * silently refuses to advance to the password step. Workaround: skip the
+ * login flow entirely. The user logs in once in their normal Chrome, copies
+ * the auth_token + ct0 cookies out of DevTools, and pastes them into .env.
+ * We inject those cookies into the persistent context so the browser starts
+ * already authenticated. No login form ever sees a CDP-controlled browser.
+ *
+ * Cookies typically last ~1 year; refresh from .env when isLoggedIn() flips
+ * back to false.
+ */
+async function injectAuthCookiesFromEnv(ctx: BrowserContext): Promise<void> {
+  const authToken = process.env.X_AUTH_TOKEN?.trim();
+  if (!authToken) return;
+
+  const existing = await ctx.cookies('https://x.com');
+  if (existing.some((c) => c.name === 'auth_token' && c.value === authToken)) {
+    return; // cookies already present and matching
+  }
+
+  const ct0 = process.env.X_CT0?.trim();
+  const cookies = [
+    {
+      name: 'auth_token',
+      value: authToken,
+      domain: '.x.com',
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax' as const,
+    },
+    ...(ct0 ? [{
+      name: 'ct0',
+      value: ct0,
+      domain: '.x.com',
+      path: '/',
+      httpOnly: false,
+      secure: true,
+      sameSite: 'Lax' as const,
+    }] : []),
+  ];
+  await ctx.addCookies(cookies);
+  logger.info('Injected X auth cookies from env', { ct0: Boolean(ct0) });
 }
 
 export async function closeBrowser(): Promise<void> {

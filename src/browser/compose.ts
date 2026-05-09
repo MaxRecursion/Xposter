@@ -3,15 +3,7 @@ import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween, mediumDelay, longDelay, humanType } from '../utils/delay.js';
 
-// Sidebar "Post" / compose button — opens the full compose modal
-const SIDEBAR_COMPOSE_SELECTORS = [
-  '[data-testid="SideNav_NewTweet_Button"]',
-  'a[href="/compose/post"]',
-  'a[href="/compose/tweet"]',
-  '[aria-label="Post"][role="link"]',
-];
-
-// Compose textarea inside the modal (appears after opening the modal)
+// Compose textarea inside the modal (appears after navigating to /compose/post)
 const COMPOSE_BOX_SELECTORS = [
   '[data-testid="tweetTextarea_0"]',
   'div[role="textbox"][contenteditable="true"]',
@@ -63,18 +55,12 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
   try {
     logger.info('Composing original tweet', { chars: content.length });
 
-    // 1. Land on home and open the compose modal via the sidebar button.
-    //    The modal gives us a reliably-editable textarea (unlike the inline home compose box).
-    await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    // 1. Navigate directly to compose/post — opens the compose modal without
+    //    needing to find a sidebar button (whose selectors break when X updates).
+    await page.goto('https://x.com/compose/post', { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await delay(randomBetween(2500, 4000));
 
-    const sidebarBtn = await findVisible(page, SIDEBAR_COMPOSE_SELECTORS, 15_000);
-    if (!sidebarBtn) throw new Error('Sidebar compose button not found on x.com/home');
-
-    await sidebarBtn.click();
-    await longDelay(); // wait for compose modal to animate in
-
-    // 2. Find the textarea inside the modal
+    // 2. Find the textarea inside the compose modal
     const composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 15_000);
     if (!composeBox) throw new Error('Compose textarea not found inside compose modal');
 

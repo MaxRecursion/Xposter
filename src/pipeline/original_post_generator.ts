@@ -182,11 +182,10 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
         { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
         { role: 'user', content: ENGAGEMENT_FARM_USER },
       ],
-      max_completion_tokens: 6000,
+      max_tokens: 400,
       temperature: 0.95,
       top_p: 0.95,
-      reasoning_effort: 'high',
-    } as any);
+    });
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const cleaned = raw.replace(/^["']|["']$/g, '').trim();
@@ -258,11 +257,10 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_completion_tokens: 6000,
+      max_tokens: 400,
       temperature: 0.85,
       top_p: 0.95,
-      reasoning_effort: 'high',
-    } as any);
+    });
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const cleaned = raw.replace(/^["']|["']$/g, '').trim();
@@ -294,11 +292,10 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
             content: 'देवनागरी लिपीत मराठीत लिहा. फक्त मराठी, इंग्रजी नको.',
           },
         ],
-        max_completion_tokens: 6000,
+        max_tokens: 400,
         temperature: 0.8,
         top_p: 0.95,
-        reasoning_effort: 'high',
-      } as any).then((r) => {
+      }).then((r) => {
         const retry = (r.choices[0]?.message?.content ?? '').trim().replace(/^["']|["']$/g, '');
         if (!qualityCheck(retry, language)) content = retry;
       }).catch(() => undefined);

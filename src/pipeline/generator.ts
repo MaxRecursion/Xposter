@@ -308,11 +308,10 @@ export async function generateReply(
       { role: 'system', content: sysPrompt },
       { role: 'user', content: userPrompt },
     ],
-    max_completion_tokens: 6000,
+    max_tokens: 400,
     temperature: temp,
     top_p: 0.95,
-    reasoning_effort: 'high',
-  } as any);
+  });
 
   let reply = completion.choices[0]?.message?.content?.trim() ?? '';
   if (!reply) throw new EmptyReplyError();
@@ -338,11 +337,10 @@ export async function generateReply(
             'No English. Devanagari script only.',
         },
       ],
-      max_completion_tokens: 6000,
+      max_tokens: 400,
       temperature: 0.7,
       top_p: 0.95,
-      reasoning_effort: 'high',
-    } as any);
+    });
 
     const retryText = retry.choices[0]?.message?.content?.trim() ?? '';
     if (retryText && /[ऀ-ॿ]/.test(retryText)) {
