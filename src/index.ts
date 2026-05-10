@@ -1,4 +1,10 @@
-import 'dotenv/config';
+import { config as dotenvConfig } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+// Load .env from repo root regardless of working directory (fixes worktree starts)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+dotenvConfig({ path: resolve(__dirname, '../.env') });
 import { createServer } from './api/server.js';
 import { getDb } from './storage/db.js';
 import { startScheduler } from './scheduler/cron.js';
