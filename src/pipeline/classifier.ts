@@ -145,7 +145,6 @@ export async function classifyAccount(
       max_completion_tokens: 6000,
       temperature: 0.1,
       top_p: 0.9,
-      reasoning_effort: 'high',
     } as any);
 
     const raw = completion.choices[0]?.message?.content?.trim() ?? '';

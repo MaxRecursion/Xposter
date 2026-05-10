@@ -159,7 +159,6 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
     max_completion_tokens: 6000,
     temperature: 0.95,
     top_p: 0.95,
-    reasoning_effort: 'high',
   } as any);
 
   const raw = (completion.choices[0]?.message?.content ?? '').trim();
@@ -219,7 +218,6 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
     max_completion_tokens: 6000,
     temperature: 0.85,
     top_p: 0.95,
-    reasoning_effort: 'high',
   } as any);
 
   const raw = (completion.choices[0]?.message?.content ?? '').trim();
