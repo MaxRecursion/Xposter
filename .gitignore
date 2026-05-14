@@ -22,3 +22,4 @@ coverage/
 # Temporary files
 *.log
 *.tmp
+browser-profile*

@@ -2,6 +2,7 @@
   "name": "xposter",
   "version": "1.0.0",
   "description": "Human-in-the-loop X timeline reply automation for Pune/Marathi topics",
+  "type": "module",
   "license": "GPL-3.0-or-later",
   "main": "dist/index.js",
   "scripts": {

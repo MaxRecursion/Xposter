@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Xposter Dashboard</title>
   <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58zeoHQLzGxg2oV/GWCKFtnHxJrMmDe/BNQR3bTrMbZDHSBMiRXFG2it8oJMnMEfq6gaTNHn7Asm+wCmFQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
   <div class="app">
@@ -61,6 +62,7 @@
         <button class="tab-btn" data-tab="originals">Originals</button>
         <button class="tab-btn" data-tab="history">History</button>
         <button class="tab-btn" data-tab="console">⏵ Console</button>
+        <button class="tab-btn" data-tab="memory">🧠 Mind</button>
         <button class="tab-btn" data-tab="settings">Settings</button>
       </div>
 
@@ -147,6 +149,78 @@
             <div class="hc-banner" id="hc-banner"></div>
             <div id="hc-lines"></div>
             <div class="hc-prompt">root@xposter:~$ <span class="hc-cursor"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory Mind Map Tab -->
+      <div class="tab-content" id="tab-memory">
+        <div class="memory-layout">
+          <!-- Graph panel -->
+          <div class="memory-graph-panel">
+            <div class="memory-graph-header">
+              <div class="memory-graph-title">
+                <span class="memory-pulse-dot"></span>
+                <span>Neural Concept Graph</span>
+              </div>
+              <div class="memory-graph-controls">
+                <input type="text" id="memory-query" class="memory-search" placeholder="Query memory… (e.g. startup funding)" />
+                <button class="btn btn-ghost" id="btn-memory-query" style="font-size:12px">⚡ Activate</button>
+                <button class="btn btn-ghost" id="btn-memory-refresh" style="font-size:12px">↻</button>
+              </div>
+            </div>
+            <div class="memory-svg-wrap">
+              <svg id="memory-svg"></svg>
+              <div class="memory-empty" id="memory-empty" style="display:none">
+                <div class="memory-empty-icon">🧠</div>
+                <div>No memory yet — post some originals and replies first</div>
+              </div>
+            </div>
+            <div class="memory-legend">
+              <span class="mem-leg-item"><span class="mem-dot" style="background:#4a9eff"></span>Tech/AI</span>
+              <span class="mem-leg-item"><span class="mem-dot" style="background:#34d399"></span>Finance</span>
+              <span class="mem-leg-item"><span class="mem-dot" style="background:#f87171"></span>Politics</span>
+              <span class="mem-leg-item"><span class="mem-dot" style="background:#fb923c"></span>Pune/Local</span>
+              <span class="mem-leg-item"><span class="mem-dot" style="background:#a78bfa"></span>Social</span>
+              <span class="mem-leg-item"><span class="mem-dot" style="background:#fbbf24"></span>Startup</span>
+            </div>
+          </div>
+
+          <!-- Sidebar -->
+          <div class="memory-sidebar">
+
+            <!-- Stats -->
+            <div class="mem-card">
+              <div class="mem-card-title">Memory Stats</div>
+              <div class="mem-stats-grid" id="mem-stats-grid">
+                <div class="mem-stat"><div class="mem-stat-val" id="ms-events">–</div><div class="mem-stat-label">Events</div></div>
+                <div class="mem-stat"><div class="mem-stat-val" id="ms-nodes">–</div><div class="mem-stat-label">Concepts</div></div>
+                <div class="mem-stat"><div class="mem-stat-val" id="ms-edges">–</div><div class="mem-stat-label">Links</div></div>
+                <div class="mem-stat"><div class="mem-stat-val" id="ms-originals">–</div><div class="mem-stat-label">Originals</div></div>
+              </div>
+            </div>
+
+            <!-- Context Sources -->
+            <div class="mem-card">
+              <div class="mem-card-title">Context Sources (RAG)</div>
+              <div id="mem-sources-list" class="mem-sources-list">
+                <div class="mem-source-loading">loading…</div>
+              </div>
+              <div class="mem-context-total" id="mem-context-total"></div>
+            </div>
+
+            <!-- Trending Topics -->
+            <div class="mem-card">
+              <div class="mem-card-title">Topic Velocity</div>
+              <div id="mem-trends-list" class="mem-trends-list"></div>
+            </div>
+
+            <!-- Active Node Detail -->
+            <div class="mem-card" id="mem-detail-card" style="display:none">
+              <div class="mem-card-title" id="mem-detail-title">Selected Concept</div>
+              <div id="mem-detail-body"></div>
+            </div>
+
           </div>
         </div>
       </div>

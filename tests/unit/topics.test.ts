@@ -39,6 +39,16 @@ describe('detectTopics', () => {
     expect(detectTopics('Ganpati visarjan procession route')).toContain('festival');
   });
 
+  it('detects AI, jobs, startup, and economy signals', () => {
+    const tags = detectTopics('AI automation is changing hiring for Pune startup teams as RBI rates affect funding');
+    expect(tags).toEqual(expect.arrayContaining(['ai', 'jobs', 'startup', 'economy', 'pune-area']));
+  });
+
+  it('detects Maharashtra economic geography', () => {
+    const tags = detectTopics('Maharashtra manufacturing around Chakan and Talegaon is watching automation closely');
+    expect(tags).toEqual(expect.arrayContaining(['maharashtra', 'economy', 'ai']));
+  });
+
   it('does not over-tag generic text', () => {
     const tags = detectTopics('Beautiful sunset over the Mula river');
     expect(tags).not.toContain('traffic');

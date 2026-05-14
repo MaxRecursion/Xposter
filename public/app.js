@@ -969,7 +969,374 @@ document.addEventListener('DOMContentLoaded', () => {
   $('hc-clear').addEventListener('click', () => hc.clear());
   $('hc-pause').addEventListener('click', () => hc.togglePause());
 
+  // Memory tab
+  initMemoryTab();
+
   // Initial load + auto-refresh every 30s
   refresh();
   setInterval(refresh, 30_000);
 });
+
+/* ═══════════════════════════════════════════════════════════
+   MEMORY MIND MAP
+   ═══════════════════════════════════════════════════════════ */
+
+function initMemoryTab() {
+  const btn = document.getElementById('btn-memory-refresh');
+  const btnQ = document.getElementById('btn-memory-query');
+  const qInput = document.getElementById('memory-query');
+
+  // Load when tab first opened
+  document.querySelector('[data-tab="memory"]').addEventListener('click', () => {
+    if (!memoryLoaded) loadMemory();
+  });
+
+  btn.addEventListener('click', () => loadMemory());
+  btnQ.addEventListener('click', () => activateMemoryQuery(qInput.value.trim()));
+  qInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') activateMemoryQuery(qInput.value.trim());
+  });
+}
+
+let memoryLoaded = false;
+let memoryData = null;
+let memSim = null;
+
+// Concept → color bucket
+function conceptColor(key) {
+  const k = key.toLowerCase();
+  if (/\b(ai|tech|software|developer|coding|automation|saas|it |gcc|startup|startups|founders|funding)\b/.test(k)) return '#4a9eff';
+  if (/\b(finance|economy|gdp|inflation|rbi|salary|salaries|rupee|bank|market|stock|invest)\b/.test(k)) return '#34d399';
+  if (/\b(politics|political|election|government|policy|minister|modi|bjp|congress|vote)\b/.test(k)) return '#f87171';
+  if (/\b(pune|maharashtra|hinjewadi|mumbai|india|local|city)\b/.test(k)) return '#fb923c';
+  if (/\b(social|education|school|college|student|women|jobs|hiring|layoff|skill|upskill)\b/.test(k)) return '#a78bfa';
+  if (/\b(startup|entrepreneur|product|growth|vc|angel)\b/.test(k)) return '#fbbf24';
+  return '#6b7280';
+}
+
+async function loadMemory() {
+  memoryLoaded = true;
+  const emptyEl = document.getElementById('memory-empty');
+  emptyEl.style.display = 'none';
+
+  try {
+    const [nmData, ctxData, trendsData] = await Promise.all([
+      fetch('/api/context/neural-memory').then(r => r.json()),
+      fetch('/api/context/health').then(r => r.json()),
+      fetch('/api/context/trends').then(r => r.json()),
+    ]);
+
+    memoryData = nmData;
+    renderMemoryStats(nmData.stats);
+    renderMemorySources(ctxData);
+    renderMemoryTrends(trendsData);
+    renderMemoryGraph(nmData);
+  } catch (e) {
+    console.error('Memory load failed', e);
+    emptyEl.style.display = 'flex';
+    emptyEl.querySelector('div:last-child').textContent = 'Failed to load memory: ' + e.message;
+  }
+}
+
+function renderMemoryStats(stats) {
+  const s = stats || {};
+  document.getElementById('ms-events').textContent = s.totalEvents ?? '–';
+  document.getElementById('ms-nodes').textContent = s.totalNodes ?? '–';
+  document.getElementById('ms-edges').textContent = s.totalEdges ?? '–';
+  document.getElementById('ms-originals').textContent = s.originals ?? '–';
+}
+
+function renderMemorySources(ctxData) {
+  const list = document.getElementById('mem-sources-list');
+  const sources = ctxData?.stats?.by_source ?? [];
+  const health = ctxData?.sources ?? {};
+  const total = ctxData?.stats?.total_items ?? 0;
+
+  if (!sources.length) {
+    list.innerHTML = '<div class="mem-source-loading" style="color:var(--text3)">Context disabled or no items yet</div>';
+    return;
+  }
+
+  const sourceColors = {
+    'rss:indianexpress': '#fb923c',
+    'reddit': '#ff6314',
+    'weather': '#4a9eff',
+  };
+
+  list.innerHTML = sources.map(src => {
+    const color = sourceColors[src.source] || '#6b7280';
+    const hSrc = health[src.source] ?? {};
+    const isActive = hSrc.last_ok_at && (Date.now() / 1000 - hSrc.last_ok_at) < 7200;
+    const label = src.source.replace(/^rss:/, '').replace('indianexpress', 'Indian Express');
+    const newestAgo = src.newest_at
+      ? Math.round((Date.now() / 1000 - src.newest_at) / 60)
+      : null;
+    const agoStr = newestAgo !== null
+      ? (newestAgo < 60 ? `${newestAgo}m ago` : `${Math.round(newestAgo / 60)}h ago`)
+      : 'no items';
+
+    return `
+      <div class="mem-source-item">
+        <div class="mem-source-dot ${isActive ? 'active' : ''}" style="background:${color}"></div>
+        <div class="mem-source-info">
+          <div class="mem-source-name">${label}</div>
+          <div class="mem-source-meta">Latest: ${agoStr}</div>
+        </div>
+        <div class="mem-source-count">${src.count}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('mem-context-total').textContent =
+    `${total} items · ${ctxData.stats?.total_vectors ?? 0} vectors`;
+}
+
+function renderMemoryTrends(trends) {
+  const list = document.getElementById('mem-trends-list');
+  const top = (trends || []).slice(0, 8);
+  if (!top.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text3)">No trend data yet</div>';
+    return;
+  }
+  const maxVel = Math.max(...top.map(t => Math.abs(t.velocity ?? t.count ?? 1)), 1);
+  list.innerHTML = top.map(t => {
+    const name = t.topic || t.name || '?';
+    const vel = t.velocity ?? t.count ?? 0;
+    const pct = Math.round((Math.abs(vel) / maxVel) * 100);
+    const velStr = vel > 0 ? `+${vel.toFixed(1)}` : vel.toFixed(1);
+    return `
+      <div class="mem-trend-item">
+        <div class="mem-trend-label-row">
+          <span class="mem-trend-name">${name}</span>
+          <span class="mem-trend-vel">${velStr}</span>
+        </div>
+        <div class="mem-trend-bar-bg">
+          <div class="mem-trend-bar-fill" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderMemoryGraph(data) {
+  const nodes = (data.nodes || []).map(n => ({ ...n, id: n.key }));
+  const edges = (data.edges || []).map(e => ({ source: e.from, target: e.to, weight: e.weight }));
+
+  if (!nodes.length) {
+    document.getElementById('memory-empty').style.display = 'flex';
+    return;
+  }
+
+  const svg = d3.select('#memory-svg');
+  svg.selectAll('*').remove();
+
+  const wrap = document.getElementById('memory-svg').parentElement;
+  const W = wrap.clientWidth || 700;
+  const H = wrap.clientHeight || 500;
+
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  // Zoom behaviour
+  const g = svg.append('g').attr('class', 'mem-zoom-g');
+  svg.call(
+    d3.zoom().scaleExtent([0.3, 3]).on('zoom', (event) => {
+      g.attr('transform', event.transform);
+    })
+  );
+
+  // Weight scales
+  const maxW = d3.max(nodes, d => d.weight) || 1;
+  const rScale = d3.scaleSqrt().domain([0, maxW]).range([6, 28]);
+  const maxEW = d3.max(edges, d => d.weight) || 1;
+  const strokeScale = d3.scaleLinear().domain([0, maxEW]).range([0.5, 4]);
+
+  // Build adjacency for interaction
+  const adjacency = new Map();
+  nodes.forEach(n => adjacency.set(n.id, new Set()));
+  edges.forEach(e => {
+    const src = typeof e.source === 'object' ? e.source.id : e.source;
+    const tgt = typeof e.target === 'object' ? e.target.id : e.target;
+    if (adjacency.has(src)) adjacency.get(src).add(tgt);
+    if (adjacency.has(tgt)) adjacency.get(tgt).add(src);
+  });
+
+  // Force simulation
+  if (memSim) memSim.stop();
+  memSim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d => d.id).strength(d => 0.1 + d.weight / maxEW * 0.4).distance(d => 80 - d.weight / maxEW * 40))
+    .force('charge', d3.forceManyBody().strength(d => -120 - rScale(d.weight) * 4))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(d => rScale(d.weight) + 6))
+    .alphaDecay(0.025);
+
+  // Edges
+  const link = g.append('g').selectAll('line')
+    .data(edges).join('line')
+    .attr('class', 'mem-link')
+    .attr('stroke', d => {
+      const srcId = typeof d.source === 'object' ? d.source.id : d.source;
+      return conceptColor(srcId);
+    })
+    .attr('stroke-width', d => strokeScale(d.weight));
+
+  // Nodes
+  const node = g.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .attr('class', 'mem-node')
+    .call(
+      d3.drag()
+        .on('start', (event, d) => { if (!event.active) memSim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+        .on('end', (event, d) => { if (!event.active) memSim.alphaTarget(0); d.fx = null; d.fy = null; })
+    )
+    .on('click', (event, d) => {
+      event.stopPropagation();
+      highlightNode(d, node, link, adjacency, data);
+    });
+
+  node.append('circle')
+    .attr('r', d => rScale(d.weight))
+    .attr('fill', d => conceptColor(d.key) + '33')
+    .attr('stroke', d => conceptColor(d.key));
+
+  node.append('text')
+    .attr('dy', d => rScale(d.weight) + 12)
+    .attr('text-anchor', 'middle')
+    .text(d => d.key)
+    .style('font-size', d => Math.max(9, Math.min(12, rScale(d.weight) * 0.7)) + 'px');
+
+  // Tick
+  memSim.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // Click background to clear selection
+  svg.on('click', () => clearHighlight(node, link));
+}
+
+function highlightNode(d, node, link, adjacency, data) {
+  const connectedIds = adjacency.get(d.id) || new Set();
+
+  node.classed('highlighted', n => n.id === d.id || connectedIds.has(n.id));
+  node.classed('dimmed', n => n.id !== d.id && !connectedIds.has(n.id));
+  link.classed('highlighted', l => {
+    const s = typeof l.source === 'object' ? l.source.id : l.source;
+    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    return s === d.id || t === d.id;
+  });
+  link.classed('dimmed', l => {
+    const s = typeof l.source === 'object' ? l.source.id : l.source;
+    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    return s !== d.id && t !== d.id;
+  });
+
+  // Show detail card
+  showNodeDetail(d, connectedIds, data);
+}
+
+function clearHighlight(node, link) {
+  node.classed('highlighted dimmed', false);
+  link.classed('highlighted dimmed', false);
+  document.getElementById('mem-detail-card').style.display = 'none';
+}
+
+function showNodeDetail(d, connectedIds, data) {
+  const card = document.getElementById('mem-detail-card');
+  card.style.display = 'block';
+  document.getElementById('mem-detail-title').textContent = `"${d.key}"`;
+
+  const lastSeen = d.lastSeenAt
+    ? new Date(d.lastSeenAt * 1000).toLocaleDateString()
+    : 'unknown';
+
+  // Find events that mention this concept
+  const relEvents = (data.recentEvents || [])
+    .filter(e => (e.concepts || []).includes(d.key))
+    .slice(0, 3);
+
+  const connected = [...connectedIds].slice(0, 8);
+
+  document.getElementById('mem-detail-body').innerHTML = `
+    <div class="mem-detail-concept" style="color:${conceptColor(d.key)}">${d.key}</div>
+    <div class="mem-detail-stat-row">
+      <div class="mem-detail-stat"><strong>${d.activations}</strong> activations</div>
+      <div class="mem-detail-stat"><strong>${d.weight.toFixed(2)}</strong> weight</div>
+      <div class="mem-detail-stat">Last: <strong>${lastSeen}</strong></div>
+    </div>
+    ${connected.length ? `
+      <div class="mem-card-title" style="margin-top:8px">Co-occurs with</div>
+      <div class="mem-connected-list">
+        ${connected.map(c => `<span class="mem-connected-chip">${c}</span>`).join('')}
+      </div>` : ''}
+    ${relEvents.length ? `
+      <div class="mem-card-title" style="margin-top:8px">Recent signals</div>
+      <div class="mem-detail-events">
+        ${relEvents.map(e => `
+          <div class="mem-detail-event ${e.kind === 'reply' ? 'reply-event' : ''}">
+            <span style="color:var(--text3);font-size:10px">[${e.kind}]</span> ${e.text}
+          </div>`).join('')}
+      </div>` : ''}
+  `;
+
+  // Clicking a connected chip highlights that node
+  card.querySelectorAll('.mem-connected-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.getElementById('memory-query').value = chip.textContent;
+      activateMemoryQuery(chip.textContent);
+    });
+  });
+}
+
+async function activateMemoryQuery(query) {
+  if (!query) return;
+  if (!memoryLoaded) await loadMemory();
+
+  // Visually activate matching nodes
+  const nodeEls = d3.selectAll('.mem-node');
+  const linkEls = d3.selectAll('.mem-link');
+
+  // Fetch which concepts get activated
+  try {
+    const res = await fetch(`/api/context/preview?q=${encodeURIComponent(query)}&k=5`);
+    const data = await res.json();
+    const detectedTopics = new Set(data.detected_topics || []);
+
+    // Also match by keyword
+    const qWords = query.toLowerCase().split(/\s+/);
+
+    nodeEls.classed('activated', false).classed('dimmed', false).classed('highlighted', false);
+    linkEls.classed('dimmed', false).classed('highlighted', false);
+
+    const activatedIds = new Set();
+    nodeEls.each(function(d) {
+      const matches = detectedTopics.has(d.key) ||
+        qWords.some(w => d.key.toLowerCase().includes(w));
+      if (matches) {
+        activatedIds.add(d.id);
+        d3.select(this).classed('activated', true).classed('highlighted', true);
+      } else {
+        d3.select(this).classed('dimmed', true);
+      }
+    });
+
+    linkEls.each(function(d) {
+      const s = typeof d.source === 'object' ? d.source.id : d.source;
+      const t = typeof d.target === 'object' ? d.target.id : d.target;
+      if (activatedIds.has(s) && activatedIds.has(t)) {
+        d3.select(this).classed('highlighted', true).classed('dimmed', false);
+      } else {
+        d3.select(this).classed('dimmed', true);
+      }
+    });
+
+    // Remove activation glow after 3s
+    setTimeout(() => {
+      nodeEls.classed('activated highlighted dimmed', false);
+      linkEls.classed('highlighted dimmed', false);
+    }, 4000);
+
+  } catch (e) {
+    console.error('Memory query failed', e);
+  }
+}

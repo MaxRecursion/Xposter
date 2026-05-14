@@ -14,6 +14,10 @@ vi.mock('groq-sdk', () => {
   };
 });
 
+vi.mock('../../src/context/neural_memory.js', () => ({
+  recallNeuralMemory: () => '',
+}));
+
 function makePost(overrides: Partial<Post> = {}): Post {
   const now = Math.floor(Date.now() / 1000);
   return {

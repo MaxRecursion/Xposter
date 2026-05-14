@@ -36,6 +36,7 @@ import {
   getCategoryWeights,
   pickTopicAndCategory,
   getRecentTopics,
+  TOPIC_CATEGORIES,
 } from '../../src/pipeline/topic_categories.js';
 
 describe('getCategoryWeights', () => {
@@ -45,25 +46,44 @@ describe('getCategoryWeights', () => {
 
   it('returns defaults when setting is missing', () => {
     const w = getCategoryWeights();
-    expect(w['local-pune']).toBeCloseTo(0.30);
-    expect(w['tech']).toBeCloseTo(0.20);
-    expect(w['observation']).toBeCloseTo(0.10);
+    expect(w['pune-tech-economy']).toBeCloseTo(0.40);
+    expect(w['local-pune']).toBeCloseTo(0.20);
+    expect(w['tech']).toBeCloseTo(0.15);
+    expect(w['observation']).toBeCloseTo(0.03);
   });
 
   it('respects user-provided JSON', () => {
     mockSettings.set('topic_category_weights', JSON.stringify({
-      'local-pune': 0.10, 'tech': 0.50, 'sports': 0.40,
+      'pune-tech-economy': 0.25,
+      'local-pune': 0.10,
+      'tech': 0.50,
+      'politics': 0,
+      'sports': 0.15,
+      'culture': 0,
+      'observation': 0,
     }));
     const w = getCategoryWeights();
+    expect(w['pune-tech-economy']).toBeCloseTo(0.25);
     expect(w['local-pune']).toBeCloseTo(0.10);
     expect(w['tech']).toBeCloseTo(0.50);
-    expect(w['sports']).toBeCloseTo(0.40);
+    expect(w['sports']).toBeCloseTo(0.15);
+  });
+
+  it('adds the strategic Pune tech economy share for legacy settings', () => {
+    mockSettings.set('topic_category_weights', JSON.stringify({
+      'local-pune': 0.30, 'tech': 0.20, 'politics': 0.10, 'sports': 0.15, 'culture': 0.15, 'observation': 0.10,
+    }));
+    const w = getCategoryWeights();
+    expect(w['pune-tech-economy']).toBeCloseTo(0.40);
+    const total = TOPIC_CATEGORIES.reduce((sum, cat) => sum + w[cat], 0);
+    expect(total).toBeCloseTo(1);
   });
 
   it('falls back to defaults on malformed JSON', () => {
     mockSettings.set('topic_category_weights', '{not json');
     const w = getCategoryWeights();
-    expect(w['local-pune']).toBeCloseTo(0.30);
+    expect(w['pune-tech-economy']).toBeCloseTo(0.40);
+    expect(w['local-pune']).toBeCloseTo(0.20);
   });
 
   it('falls back to defaults on all-zero weights', () => {
@@ -71,7 +91,7 @@ describe('getCategoryWeights', () => {
       'local-pune': 0, 'tech': 0, 'politics': 0, 'sports': 0, 'culture': 0, 'observation': 0,
     }));
     const w = getCategoryWeights();
-    expect(w['local-pune']).toBeGreaterThan(0);
+    expect(w['pune-tech-economy']).toBeGreaterThan(0);
   });
 });
 
@@ -86,12 +106,13 @@ describe('pickTopicAndCategory', () => {
     const spec = pickTopicAndCategory();
     expect(typeof spec.topic).toBe('string');
     expect(spec.topic.length).toBeGreaterThan(0);
-    expect(['local-pune','tech','politics','sports','culture','observation']).toContain(spec.category);
+    expect(TOPIC_CATEGORIES).toContain(spec.category);
   });
 
   it('weights extreme tech setting toward tech topics', () => {
     mockSettings.set('topic_category_weights', JSON.stringify({
       'local-pune': 0, 'tech': 1, 'politics': 0, 'sports': 0, 'culture': 0, 'observation': 0,
+      'pune-tech-economy': 0,
     }));
     const samples = Array.from({ length: 30 }, () => pickTopicAndCategory());
     const techCount = samples.filter((s) => s.category === 'tech').length;
@@ -99,12 +120,22 @@ describe('pickTopicAndCategory', () => {
   });
 
   it('does not pivot the bot toward only Pune topics by default', () => {
-    // 30% local-pune means roughly 21/30 should be non-Pune.
+    // The default mix still includes non-local categories alongside the 40%
+    // Pune tech/economy lane.
     const samples = Array.from({ length: 60 }, () => pickTopicAndCategory());
     const punecount = samples.filter((s) => s.category === 'local-pune').length;
     expect(punecount).toBeLessThan(60);
     const nonPune = samples.filter((s) => s.category !== 'local-pune').length;
     expect(nonPune).toBeGreaterThan(0);
+  });
+
+  it('weights extreme strategic setting toward Pune tech economy topics', () => {
+    mockSettings.set('topic_category_weights', JSON.stringify({
+      'pune-tech-economy': 1, 'local-pune': 0, 'tech': 0, 'politics': 0, 'sports': 0, 'culture': 0, 'observation': 0,
+    }));
+    const samples = Array.from({ length: 30 }, () => pickTopicAndCategory());
+    expect(samples.every((s) => s.category === 'pune-tech-economy')).toBe(true);
+    expect(samples.some((s) => /AI|Pune|Maharashtra|RBI|Hinjewadi|startup/i.test(s.topic))).toBe(true);
   });
 });
 

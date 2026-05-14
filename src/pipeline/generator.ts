@@ -2,6 +2,7 @@ import Groq from 'groq-sdk';
 import { Post, getSetting, logEvent } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
+import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
@@ -257,7 +258,8 @@ export async function generateReply(
   const contextBlock = isContextEnabled()
     ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 4, maxTokens: 500 })
     : '';
-  const userPrompt = buildUserPrompt(post, authorAccount, contextBlock);
+  const memoryBlock = recallNeuralMemory(post.text, { maxItems: 3, maxChars: 900 });
+  const userPrompt = buildUserPrompt(post, authorAccount, [contextBlock, memoryBlock].filter(Boolean).join('\n\n'));
 
   logger.info('Calling Groq for reply generation', {
     postId: post.id,
@@ -267,6 +269,7 @@ export async function generateReply(
     flavor,
     classification: classification ?? 'unknown',
     contextChars: contextBlock.length,
+    memoryChars: memoryBlock.length,
   });
 
   // Slightly higher temperature in WITTY/SHARP tiers to encourage variety

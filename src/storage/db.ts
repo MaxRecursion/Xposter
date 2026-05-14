@@ -256,7 +256,7 @@ function applyMigrations(db: Database.Database): void {
       ('original_posts_per_day',    '7'),
       ('original_post_marathi_ratio','40'),
       ('impression_sync_interval_h', '2'),
-      ('topic_category_weights',    '{"local-pune":0.30,"tech":0.20,"politics":0.10,"sports":0.15,"culture":0.15,"observation":0.10}')
+      ('topic_category_weights',    '{"pune-tech-economy":0.40,"local-pune":0.20,"tech":0.15,"politics":0.07,"sports":0.08,"culture":0.07,"observation":0.03}')
   `).run();
 
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)

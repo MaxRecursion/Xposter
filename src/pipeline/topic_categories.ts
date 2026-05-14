@@ -6,6 +6,7 @@ import { isContextEnabled } from '../context/enrich.js';
 import { logger } from '../utils/logger.js';
 
 export type TopicCategory =
+  | 'pune-tech-economy'
   | 'local-pune'
   | 'tech'
   | 'politics'
@@ -18,12 +19,31 @@ export interface TopicSpec {
   category: TopicCategory;
 }
 
+export const TOPIC_CATEGORIES: TopicCategory[] = [
+  'pune-tech-economy',
+  'local-pune',
+  'tech',
+  'politics',
+  'sports',
+  'culture',
+  'observation',
+];
+
 /**
  * Per-category topic pools. The bot picks a category first, then a topic
  * within it — so the mix of subjects stays diverse even if one category has
  * many candidate topics.
  */
 const CATEGORY_TOPICS: Record<TopicCategory, string[]> = {
+  'pune-tech-economy': [
+    'AI jobs in Pune', 'Hinjewadi hiring and AI automation',
+    'Maharashtra startup ecosystem', 'Pune GCCs and automation',
+    'AI upskilling in Pune', 'IT services margins and AI',
+    'campus placements and AI', 'Pune SaaS builders',
+    'Maharashtra manufacturing automation', 'Pune tech salaries and housing',
+    'India macro economy and jobs', 'RBI rates and startup funding',
+    'Pune founders building with AI', 'Maharashtra MSMEs adopting AI',
+  ],
   'local-pune': [
     'pune monsoon', 'pune traffic', 'pmc', 'pune metro', 'mumbai-pune expressway',
     'fc road', 'kothrud', 'aundh', 'baner', 'hinjewadi commute',
@@ -61,12 +81,13 @@ const CATEGORY_TOPICS: Record<TopicCategory, string[]> = {
 };
 
 const DEFAULT_CATEGORY_WEIGHTS: Record<TopicCategory, number> = {
-  'local-pune': 0.30,
-  'tech': 0.20,
-  'politics': 0.10,
-  'sports': 0.15,
-  'culture': 0.15,
-  'observation': 0.10,
+  'pune-tech-economy': 0.40,
+  'local-pune': 0.20,
+  'tech': 0.15,
+  'politics': 0.07,
+  'sports': 0.08,
+  'culture': 0.07,
+  'observation': 0.03,
 };
 
 const RECENT_HISTORY_WINDOW = 5;
@@ -85,15 +106,20 @@ export function getCategoryWeights(): Record<TopicCategory, number> {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<TopicCategory, number> = { ...DEFAULT_CATEGORY_WEIGHTS };
-    for (const cat of Object.keys(out) as TopicCategory[]) {
+    const explicitlyConfigured = new Set<string>();
+    for (const cat of TOPIC_CATEGORIES) {
       const v = parsed[cat];
       if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
         out[cat] = v;
+        explicitlyConfigured.add(cat);
       }
     }
-    const sum = Object.values(out).reduce((a, b) => a + b, 0);
-    if (sum <= 0) return { ...DEFAULT_CATEGORY_WEIGHTS };
-    return out;
+
+    if (!explicitlyConfigured.has('pune-tech-economy')) {
+      return preserveStrategicShare(out, DEFAULT_CATEGORY_WEIGHTS['pune-tech-economy']);
+    }
+
+    return normalizeWeights(out);
   } catch (err) {
     logger.warn('topic_category_weights setting is invalid JSON; using defaults', { err: String(err) });
     return { ...DEFAULT_CATEGORY_WEIGHTS };
@@ -137,7 +163,7 @@ function weightedRandom<K>(entries: Array<[K, number]>): K {
 export function pickTopicAndCategory(): TopicSpec {
   const categoryWeights = getCategoryWeights();
   const category = weightedRandom(
-    Object.entries(categoryWeights) as Array<[TopicCategory, number]>,
+    TOPIC_CATEGORIES.map((cat) => [cat, categoryWeights[cat]]),
   );
   const topics = CATEGORY_TOPICS[category];
 
@@ -186,3 +212,27 @@ function matchVelocityKey(topic: string, velMap: Map<string, number>): string | 
 
 /** Public so generator.ts can match a tweet to a category for voice selection. */
 export const PUNE_LOCAL_TOPIC_TAGS = new Set(['pune-area', 'pmc', 'metro', 'roads', 'civic', 'monsoon']);
+
+function normalizeWeights(weights: Record<TopicCategory, number>): Record<TopicCategory, number> {
+  const sum = Object.values(weights).reduce((a, b) => a + b, 0);
+  if (sum <= 0) return { ...DEFAULT_CATEGORY_WEIGHTS };
+
+  const out = { ...weights };
+  for (const cat of TOPIC_CATEGORIES) out[cat] = out[cat] / sum;
+  return out;
+}
+
+function preserveStrategicShare(
+  weights: Record<TopicCategory, number>,
+  strategicShare: number,
+): Record<TopicCategory, number> {
+  const share = Math.min(1, Math.max(0, strategicShare));
+  const otherCats = TOPIC_CATEGORIES.filter((cat) => cat !== 'pune-tech-economy');
+  const otherSum = otherCats.reduce((sum, cat) => sum + weights[cat], 0);
+  if (otherSum <= 0) return { ...DEFAULT_CATEGORY_WEIGHTS };
+
+  const out = { ...weights };
+  out['pune-tech-economy'] = share;
+  for (const cat of otherCats) out[cat] = (weights[cat] / otherSum) * (1 - share);
+  return out;
+}

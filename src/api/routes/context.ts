@@ -6,6 +6,7 @@ import { getTopicVelocities } from '../../context/trends.js';
 import { detectTopics } from '../../context/topics.js';
 import { generateReply } from '../../pipeline/generator.js';
 import { detectLanguage } from '../../pipeline/filter.js';
+import { buildNeuralSchemaMemory, loadMemoryEvents } from '../../context/neural_memory.js';
 import type { Post } from '../../storage/queries.js';
 import { logger } from '../../utils/logger.js';
 
@@ -166,4 +167,54 @@ contextRouter.get('/preview', async (req, res) => {
     elapsed_ms: Date.now() - start,
     block,
   });
+});
+
+/**
+ * Return the full neural schema memory graph (nodes + edges + recent events)
+ * for dashboard visualization. Limits nodes/edges for UI performance.
+ */
+contextRouter.get('/neural-memory', (_req, res) => {
+  try {
+    const events = loadMemoryEvents(300);
+    const memory = buildNeuralSchemaMemory(events);
+
+    const MAX_NODES = 35;
+    const MAX_EDGES = 60;
+
+    const topNodes = memory.nodes.slice(0, MAX_NODES);
+    const nodeKeys = new Set(topNodes.map((n) => n.key));
+    const topEdges = memory.edges
+      .filter((e) => nodeKeys.has(e.from) && nodeKeys.has(e.to))
+      .slice(0, MAX_EDGES);
+
+    const recentEvents = memory.events
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 15)
+      .map((e) => ({
+        kind: e.kind,
+        text: e.text.slice(0, 120),
+        topic: e.topic,
+        concepts: e.concepts.slice(0, 6),
+        createdAt: e.createdAt,
+        engagement: e.engagement,
+        score: e.score,
+      }));
+
+    res.json({
+      nodes: topNodes,
+      edges: topEdges,
+      recentEvents,
+      stats: {
+        totalNodes: memory.nodes.length,
+        totalEdges: memory.edges.length,
+        totalEvents: memory.events.length,
+        originals: events.filter((e) => e.kind === 'original').length,
+        replies: events.filter((e) => e.kind === 'reply').length,
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('neural-memory endpoint failed', { err: msg });
+    res.status(500).json({ error: msg });
+  }
 });
