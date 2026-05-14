@@ -39,11 +39,11 @@ export function scorePost(post: Post): ScoredPost {
   const sixHours = 6 * 3600;
   const recency = Math.max(0, 30 * (1 - ageSeconds / sixHours));
 
-  // ── Topic Relevance (0–35) ─────────────────────────────────────────────────
+  // ── Topic Relevance (0–30) ─────────────────────────────────────────────────
   const textLower = post.text.toLowerCase();
   let kwScore = 0;
   for (const [kw, weight] of WEIGHTED_KEYWORDS) {
-    if (textLower.includes(kw.toLowerCase()) || post.text.includes(kw)) {
+    if (textLower.includes(kw)) {
       kwScore += weight;
     }
   }
