@@ -28,7 +28,7 @@ export async function sendApprovalNotification(post: Post): Promise<NtfyResult> 
 
   const base = getCallbackBase();
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
-  const lang = post.language === 'marathi' ? 'Marathi' : 'English';
+  const lang = languageLabel(post.language);
   const actionMode = (process.env.NTFY_ACTION_MODE ?? 'view').toLowerCase();
   const approveUrl = actionMode === 'http'
     ? `${base}/api/actions/approve/${post.id}`
@@ -148,7 +148,7 @@ export async function sendReplyPostedNotification(
 
   const base = getCallbackBase();
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
-  const lang = post.language === 'marathi' ? 'Marathi' : 'English';
+  const lang = languageLabel(post.language);
   const replyAppLink = replyTweetId ? toXAppStatusUrl(replyTweetId) : null;
   const replyLink = replyTweetId
     ? `https://x.com/i/web/status/${replyTweetId}`
@@ -269,6 +269,16 @@ function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + '…';
 }
 
+function languageLabel(language: string): string {
+  switch (language) {
+    case 'marathi':       return 'Marathi';
+    case 'marathi-roman': return 'Marathi (Roman)';
+    case 'hindi':         return 'Hindi';
+    case 'english':       return 'English';
+    default:              return language || 'unknown';
+  }
+}
+
 function withActionToken(url: string, token: string): string {
   if (!token) return url;
   const sep = url.includes('?') ? '&' : '?';
@@ -308,13 +318,13 @@ export async function sendFollowerNotification(
   const followers = account?.follower_count_seen ?? 0;
   const isMar = account?.is_marathi_creator ? ' · Marathi creator' : '';
 
+  const bioLine = account?.bio ? `Bio: ${truncate(account.bio, 200)}` : '';
   const message = [
     `@${handle} just followed you.`,
     '',
     `Class: ${cls}${isMar}`,
     `Followers: ${followers.toLocaleString()}`,
-    account?.bio ? '' : '',
-    account?.bio ? `Bio: ${truncate(account.bio, 200)}` : '',
+    bioLine,
   ].filter(Boolean).join('\n');
 
   const payload = {

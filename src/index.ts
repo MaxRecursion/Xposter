@@ -1,9 +1,8 @@
 import { config as dotenvConfig } from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
-// Load .env from repo root regardless of working directory (fixes worktree starts)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { resolve } from 'path';
+// Load .env from repo root regardless of working directory (fixes worktree starts).
+// tsconfig targets CommonJS, so __dirname is provided by the runtime — using
+// import.meta.url here would break `tsc` with TS1343.
 dotenvConfig({ path: resolve(__dirname, '../.env') });
 import { createServer } from './api/server.js';
 import { getDb } from './storage/db.js';

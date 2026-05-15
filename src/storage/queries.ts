@@ -129,7 +129,7 @@ export function updatePostLanguage(id: string, language: string): void {
 export function updatePostScore(
   id: string,
   score: number,
-  breakdown: Record<string, number>,
+  breakdown: object,
 ): void {
   getDb().prepare(`
     UPDATE posts
