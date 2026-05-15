@@ -14,6 +14,7 @@ import { scrapeEngagement } from '../browser/impressions.js';
 import { getSetting, logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
+import { pickWeightedOffsetMinute } from './audience_weights.js';
 
 const KIND = 'ORIGINAL_POST';
 const TICK_INTERVAL_MS = 60_000;
@@ -212,7 +213,7 @@ function generateRandomSlots(dateKey: string): Array<{ ts: number; postType: Ori
   for (let i = 0; i < n; i++) {
     const slotStart = i * slotMin;
     const slotEnd = (i + 1) * slotMin;
-    const offsetMin = slotStart + Math.floor(Math.random() * Math.max(1, slotEnd - slotStart));
+    const offsetMin = pickWeightedOffsetMinute(startMs, slotStart, slotEnd);
     const ts = Math.floor((startMs + offsetMin * 60_000) / 1000);
     if (ts > nowSec + 60) picks.push({ ts, postType: types[i] });
   }

@@ -9,6 +9,7 @@ import { followRouter } from './routes/follow.js';
 import { originalPostsRouter } from './routes/original_posts.js';
 import { repliesRouter } from './routes/replies.js';
 import { contextRouter } from './routes/context.js';
+import { audienceRouter } from './routes/audience.js';
 import { runPipeline, isPipelineRunning } from '../scheduler/cron.js';
 import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
@@ -65,6 +66,7 @@ export function createServer(): express.Express {
   app.use('/api/original-posts', originalPostsRouter);
   app.use('/api/replies', repliesRouter);
   app.use('/api/context', contextRouter);
+  app.use('/api/audience', audienceRouter);
 
   // Schedule visibility
   app.get('/api/schedule/today', (_req, res) => {
