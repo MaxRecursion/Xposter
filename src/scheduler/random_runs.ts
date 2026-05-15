@@ -4,6 +4,7 @@ import {
 } from '../storage/accounts.js';
 import { getSetting, logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
+import { pickWeightedOffsetMinute } from './audience_weights.js';
 
 /**
  * Randomized 5x-daily scheduler.
@@ -87,14 +88,15 @@ function generateRandomTimes(dateKey: string): number[] {
   const totalMinutes = Math.floor((endMs - startMs) / 60_000);
   if (totalMinutes <= 0) return [];
 
-  // Jittered grid: divide window into N equal slots, drop one random time per slot.
-  // Guarantees no two runs are within ~totalMinutes/(2N) of each other.
+  // Jittered grid: divide window into N equal slots, pick one time per slot
+  // weighted by the audience-engagement heatmap (falls back to uniform when
+  // no heatmap is available). Min-spacing is preserved by the slot boundaries.
   const slotMin = Math.floor(totalMinutes / n);
   const picks: number[] = [];
   for (let i = 0; i < n; i++) {
     const slotStart = i * slotMin;
     const slotEnd = (i + 1) * slotMin;
-    const offsetMin = slotStart + Math.floor(Math.random() * Math.max(1, slotEnd - slotStart));
+    const offsetMin = pickWeightedOffsetMinute(startMs, slotStart, slotEnd);
     const ts = Math.floor((startMs + offsetMin * 60_000) / 1000);
 
     // Drop already-passed times for today — don't backfill on boot

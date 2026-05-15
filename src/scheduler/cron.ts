@@ -20,6 +20,7 @@ import {
 } from './random_runs.js';
 import { startFollowerSync, stopFollowerSync } from './follower_sync.js';
 import { startOriginalPostScheduler, stopOriginalPostScheduler } from './original_posts.js';
+import { startAudienceSync, stopAudienceSync } from './audience_sync.js';
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
 import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
@@ -32,6 +33,7 @@ export function startScheduler(): void {
   startRandomScheduler();
   startFollowerSync();
   startOriginalPostScheduler();
+  startAudienceSync();
 
   if (isContextEnabled()) {
     const store = getContextStore();
@@ -59,6 +61,7 @@ export function stopScheduler(): void {
   stopRandomScheduler();
   stopFollowerSync();
   stopOriginalPostScheduler();
+  stopAudienceSync();
   stopContextIngest();
   logger.info('Scheduler stopped');
 }

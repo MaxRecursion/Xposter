@@ -773,6 +773,189 @@ function renderOriginalPost(post) {
     </div>`;
 }
 
+// ── Audience Activity tab ─────────────────────────────────────────────────────
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_NAMES_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+// Five-bucket blue palette matching X's analytics chart (light → dark).
+const AUDIENCE_PALETTE = ['#e6f0fa', '#c8def7', '#9ec4f2', '#62a3eb', '#1d8bf0'];
+
+async function loadAudience() {
+  try {
+    const [data, schedule] = await Promise.all([
+      apiFetch('/api/audience/heatmap'),
+      apiFetch('/api/schedule/today').catch(() => ({})),
+    ]);
+
+    renderAudienceLegend();
+
+    const emptyEl = $('audience-empty');
+    const fetchedEl = $('audience-fetched');
+
+    if (!data.heatmap) {
+      if (emptyEl) emptyEl.style.display = 'flex';
+      const msg = $('audience-empty-msg');
+      if (msg) msg.textContent = 'No audience data yet — click "Refresh now" to fetch it from X analytics';
+      if (fetchedEl) fetchedEl.textContent = 'Last 28 days · never fetched';
+      renderAudienceHeatmap(null, []);
+      renderAudienceScheduledTimes([], []);
+      return;
+    }
+
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (fetchedEl) {
+      fetchedEl.textContent = `Last 28 days · fetched ${timeAgo(data.fetched_at)}`;
+    }
+
+    const pipelineToday = schedule.pipeline?.today ?? [];
+    const originalsToday = schedule.original_posts?.today ?? [];
+    renderAudienceHeatmap(data.heatmap, [
+      ...pipelineToday.map((r) => ({ ...r, kind: 'reply' })),
+      ...originalsToday.map((r) => ({ ...r, kind: 'original' })),
+    ]);
+    renderAudienceScheduledTimes(pipelineToday, originalsToday);
+  } catch (e) {
+    const emptyEl = $('audience-empty');
+    if (emptyEl) emptyEl.style.display = 'flex';
+    const msg = $('audience-empty-msg');
+    if (msg) msg.textContent = `Failed to load audience data: ${e.message}`;
+  }
+}
+
+function renderAudienceLegend() {
+  const el = $('audience-legend-swatches');
+  if (!el) return;
+  el.innerHTML = AUDIENCE_PALETTE.map(
+    (c) => `<span class="audience-legend-swatch" style="background:${c}"></span>`,
+  ).join('');
+}
+
+function bucketIntensity(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return 0;
+  return Math.max(0, Math.min(4, Math.floor(value * 5)));
+}
+
+function renderAudienceHeatmap(matrix, scheduledRuns) {
+  const svg = d3.select('#audience-heatmap');
+  svg.selectAll('*').remove();
+  if (!matrix) return;
+
+  const wrap = $('audience-heatmap-wrap');
+  const W = (wrap?.clientWidth ?? 760);
+  const H = 460;
+  const margin = { top: 18, right: 56, bottom: 28, left: 36 };
+  const innerW = W - margin.left - margin.right;
+  const innerH = H - margin.top - margin.bottom;
+  const cellW = innerW / 7;
+  const cellH = innerH / 24;
+
+  svg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', '100%').attr('height', H);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+  // Day-of-week order to match X's chart: Mon → Sun (column 0..6)
+  const colToDow = [1, 2, 3, 4, 5, 6, 0];
+
+  // Cells
+  for (let col = 0; col < 7; col++) {
+    const dow = colToDow[col];
+    for (let hour = 0; hour < 24; hour++) {
+      const intensity = matrix[dow]?.[hour] ?? 0;
+      const bucket = bucketIntensity(intensity);
+      g.append('rect')
+        .attr('x', col * cellW + 1)
+        .attr('y', hour * cellH + 1)
+        .attr('width', Math.max(0, cellW - 2))
+        .attr('height', Math.max(0, cellH - 2))
+        .attr('rx', 2)
+        .attr('fill', AUDIENCE_PALETTE[bucket])
+        .append('title')
+        .text(`${DAY_NAMES[dow]} · ${formatHourLabel(hour)} — intensity ${Math.round(intensity * 100)}%`);
+    }
+  }
+
+  // Hour gridline labels every 4 hours on the right
+  for (let hour = 0; hour <= 24; hour += 4) {
+    g.append('text')
+      .attr('x', innerW + 8)
+      .attr('y', hour * cellH + 4)
+      .attr('class', 'audience-axis')
+      .text(formatHourLabel(hour % 24));
+  }
+
+  // Day labels at bottom
+  for (let col = 0; col < 7; col++) {
+    g.append('text')
+      .attr('x', col * cellW + cellW / 2)
+      .attr('y', innerH + 18)
+      .attr('text-anchor', 'middle')
+      .attr('class', 'audience-axis')
+      .text(DAY_NAMES_SHORT[colToDow[col]]);
+  }
+
+  // Overlay scheduled runs as small dots
+  if (Array.isArray(scheduledRuns)) {
+    for (const run of scheduledRuns) {
+      if (!run?.run_at || run.status !== 'SCHEDULED') continue;
+      const d = new Date(run.run_at * 1000);
+      const runDow = d.getDay();
+      const runHour = d.getHours();
+      const col = colToDow.indexOf(runDow);
+      if (col < 0) continue;
+      const minuteFrac = d.getMinutes() / 60;
+      const cx = col * cellW + cellW / 2;
+      const cy = (runHour + minuteFrac) * cellH + cellH / 2;
+      g.append('circle')
+        .attr('cx', cx)
+        .attr('cy', cy)
+        .attr('r', 4)
+        .attr('class', `audience-run-dot audience-run-${run.kind}`)
+        .append('title')
+        .text(`${run.kind === 'reply' ? '💬 reply pipeline' : '✍️ original post'} at ${formatTimeHM(d)}`);
+    }
+  }
+}
+
+function formatHourLabel(hour) {
+  if (hour === 0) return '12am';
+  if (hour === 12) return '12pm';
+  if (hour < 12) return `${hour}am`;
+  return `${hour - 12}pm`;
+}
+
+function formatTimeHM(d) {
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderAudienceScheduledTimes(pipeline, originals) {
+  const el = $('audience-today-times');
+  if (!el) return;
+  const merged = [
+    ...pipeline.map((r) => ({ ...r, kind: 'reply' })),
+    ...originals.map((r) => ({ ...r, kind: 'original' })),
+  ]
+    .filter((r) => r.run_at && r.status === 'SCHEDULED')
+    .sort((a, b) => a.run_at - b.run_at);
+
+  if (merged.length === 0) {
+    el.innerHTML = '<div class="empty-state" style="padding:14px">No more runs scheduled today.</div>';
+    return;
+  }
+  el.innerHTML = merged
+    .map((r) => {
+      const d = new Date(r.run_at * 1000);
+      const icon = r.kind === 'reply' ? '💬' : '✍️';
+      const label = r.kind === 'reply' ? 'Reply pipeline' : (r.detail === 'ENGAGEMENT_FARM' ? 'Engagement farm' : 'Original post');
+      return `
+        <div class="audience-time-pill audience-time-${r.kind}">
+          <span class="audience-time-icon">${icon}</span>
+          <span class="audience-time-hm">${formatTimeHM(d)}</span>
+          <span class="audience-time-label">${label}</span>
+        </div>`;
+    })
+    .join('');
+}
+
 // ── Full refresh ──────────────────────────────────────────────────────────────
 
 async function refresh() {
@@ -784,6 +967,7 @@ async function refresh() {
   if (activeTab === 'followers') await loadFollowers();
   if (activeTab === 'accounts')  await loadAccounts();
   if (activeTab === 'originals') await loadOriginals();
+  if (activeTab === 'audience')  await loadAudience();
   // Console runs its own loop independently
 }
 
@@ -968,6 +1152,29 @@ document.addEventListener('DOMContentLoaded', () => {
   // Hacker console controls
   $('hc-clear').addEventListener('click', () => hc.clear());
   $('hc-pause').addEventListener('click', () => hc.togglePause());
+
+  // Audience refresh
+  if ($('btn-audience-refresh')) {
+    $('btn-audience-refresh').addEventListener('click', async () => {
+      const btn = $('btn-audience-refresh');
+      btn.disabled = true;
+      btn.textContent = '⏳ Fetching from X…';
+      try {
+        const result = await apiFetch('/api/audience/refresh', { method: 'POST' });
+        if (result.ok) {
+          toast(`Audience heatmap refreshed (${result.cells ?? 0} cells)`, 'success');
+          await loadAudience();
+        } else {
+          toast(`Refresh failed: ${result.error}`, 'error');
+        }
+      } catch (e) {
+        toast(`Refresh failed: ${e.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Refresh now';
+      }
+    });
+  }
 
   // Memory tab
   initMemoryTab();

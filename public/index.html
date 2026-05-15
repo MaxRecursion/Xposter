@@ -60,6 +60,7 @@
         <button class="tab-btn" data-tab="followers">Followers</button>
         <button class="tab-btn" data-tab="accounts">Accounts</button>
         <button class="tab-btn" data-tab="originals">Originals</button>
+        <button class="tab-btn" data-tab="audience">📊 Activity</button>
         <button class="tab-btn" data-tab="history">History</button>
         <button class="tab-btn" data-tab="console">⏵ Console</button>
         <button class="tab-btn" data-tab="memory">🧠 Mind</button>
@@ -124,6 +125,42 @@
         </div>
         <div id="originals-topic-perf" style="margin-bottom:16px;"></div>
         <div id="originals-list"></div>
+      </div>
+
+      <!-- Audience Activity Tab -->
+      <div class="tab-content" id="tab-audience">
+        <div class="audience-header">
+          <div>
+            <h3 class="audience-title">When your followers are most active</h3>
+            <div class="audience-sub" id="audience-fetched">loading…</div>
+          </div>
+          <div class="audience-controls">
+            <button class="btn btn-ghost" id="btn-audience-refresh">🔄 Refresh now</button>
+          </div>
+        </div>
+
+        <div class="audience-card">
+          <div id="audience-heatmap-wrap">
+            <svg id="audience-heatmap"></svg>
+            <div class="audience-empty" id="audience-empty" style="display:none">
+              <div class="audience-empty-icon">📊</div>
+              <div id="audience-empty-msg">No audience data yet — click "Refresh now"</div>
+            </div>
+          </div>
+          <div class="audience-legend">
+            <span class="audience-legend-label">Least engaged</span>
+            <span class="audience-legend-swatches" id="audience-legend-swatches"></span>
+            <span class="audience-legend-label">Most engaged</span>
+          </div>
+        </div>
+
+        <div class="audience-card">
+          <div class="audience-section-title">Today's scheduled times</div>
+          <div class="audience-sub" style="margin-bottom:8px;">
+            Pipeline runs and original posts are biased toward darker cells above.
+          </div>
+          <div id="audience-today-times" class="audience-times-grid"></div>
+        </div>
       </div>
 
       <!-- History Tab -->
