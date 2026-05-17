@@ -1342,3 +1342,180 @@ select.select-input {
 .audience-time-label { color: var(--text2); }
 .audience-time-reply { border-color: rgba(255, 149, 0, 0.4); }
 .audience-time-original { border-color: rgba(52, 199, 89, 0.4); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Claude Agent tab + Settings toggle
+   ───────────────────────────────────────────────────────────────────────── */
+
+.agent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.agent-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.agent-sub {
+  font-size: 12px;
+  color: var(--text2);
+}
+.agent-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.agent-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+.agent-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.agent-inv-card,
+.agent-feat-card {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.agent-inv-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.agent-inv-event,
+.agent-feat-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.agent-inv-meta {
+  margin-left: auto;
+  color: var(--text2);
+  font-size: 12px;
+}
+.agent-inv-summary {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.agent-inv-rc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.agent-card-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.agent-card-meta code,
+.agent-feat-card code {
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.agent-card-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.agent-feat-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.agent-status-OPEN     { border-left: 3px solid var(--yellow, #ffd60a); }
+.agent-status-PROPOSED { border-left: 3px solid var(--accent); }
+.agent-status-APPLIED  { border-left: 3px solid var(--green); }
+.agent-status-DISMISSED{ border-left: 3px solid var(--text2); opacity: 0.7; }
+.agent-status-BLOCKED  { border-left: 3px solid var(--red); }
+.agent-status-RUNNING  { border-left: 3px solid var(--accent); }
+.agent-status-SUBMITTED{ border-left: 3px solid var(--yellow, #ffd60a); }
+.agent-status-COMPLETED{ border-left: 3px solid var(--green); }
+.agent-status-FAILED   { border-left: 3px solid var(--red); }
+
+.agent-feature-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-feature-form input,
+.agent-feature-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.agent-feature-form textarea {
+  resize: vertical;
+}
+
+.agent-line {
+  display: grid;
+  grid-template-columns: 80px 110px 1fr;
+  gap: 8px;
+  padding: 2px 6px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.agent-line .ts { color: var(--text2); }
+.agent-line .kind { color: var(--accent); text-transform: uppercase; }
+.agent-line .text { color: var(--text); word-break: break-word; }
+.agent-line-tool_denied .kind { color: var(--red); }
+.agent-line-tool_denied .text { color: var(--red); }
+.agent-line-assistant_text .kind { color: var(--green); }
+.agent-line-status .text { color: var(--text2); font-style: italic; }
+.agent-line-end .kind { color: var(--yellow); }
+
+/* Settings row with an inline toggle */
+.settings-field-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+}
+.settings-field-toggle label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text);
+}
+.settings-field-help {
+  font-size: 11px;
+  color: var(--text2);
+  font-weight: 400;
+  max-width: 460px;
+}

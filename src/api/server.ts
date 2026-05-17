@@ -10,6 +10,8 @@ import { originalPostsRouter } from './routes/original_posts.js';
 import { repliesRouter } from './routes/replies.js';
 import { contextRouter } from './routes/context.js';
 import { audienceRouter } from './routes/audience.js';
+import { agentRouter } from './routes/agent.js';
+import { isAgentEnabled, isClaudeCliFound, isGhCliFound, getAgentModel } from '../agent/client.js';
 import { runPipeline, isPipelineRunning } from '../scheduler/cron.js';
 import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
@@ -67,6 +69,7 @@ export function createServer(): express.Express {
   app.use('/api/replies', repliesRouter);
   app.use('/api/context', contextRouter);
   app.use('/api/audience', audienceRouter);
+  app.use('/api/agent', agentRouter);
 
   // Schedule visibility
   app.get('/api/schedule/today', (_req, res) => {
@@ -118,6 +121,10 @@ export function createServer(): express.Express {
       api_key_set: Boolean(process.env.API_KEY) &&
         process.env.API_KEY !== 'change_me_generate_with_openssl_rand_hex_32',
       browser_headless: process.env.BROWSER_HEADLESS ?? 'true',
+      agent_enabled: isAgentEnabled(),
+      agent_model: getAgentModel(),
+      claude_cli_found: isClaudeCliFound(),
+      gh_cli_found: isGhCliFound(),
     });
   });
 

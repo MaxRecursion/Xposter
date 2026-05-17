@@ -311,8 +311,31 @@ async function loadSettings() {
     if ($('s-max-fb'))              $('s-max-fb').value              = s.max_follow_backs_per_day ?? '15';
     if ($('s-blocklist'))           $('s-blocklist').value           = s.blocklist_classifications ?? '';
     if ($('s-orig-per-day'))        $('s-orig-per-day').value        = s.original_posts_per_day ?? '5';
+    if ($('s-orig-marathi-ratio'))  $('s-orig-marathi-ratio').value  = s.original_post_marathi_ratio ?? '40';
+    if ($('s-agent-enabled'))       $('s-agent-enabled').checked     = s.agent_enabled === 'true';
+    if ($('s-agent-threshold'))     $('s-agent-threshold').value     = s.agent_error_threshold ?? '3';
   } catch { /* ignore */ }
   await loadDiagnostics();
+  await refreshAgentSettingsNote();
+}
+
+async function refreshAgentSettingsNote() {
+  const el = $('agent-settings-note');
+  if (!el) return;
+  try {
+    const s = await apiFetch('/api/agent/status');
+    const pieces = [];
+    if (s.infraDisabled) pieces.push('⚠ AGENT_ENABLED=false in env — toggle has no effect');
+    if (!s.claudeCliFound) pieces.push('⚠ `claude` CLI not on PATH');
+    if (!s.ghFound) pieces.push('⚠ `gh` CLI not on PATH (PR creation will fail)');
+    if (pieces.length === 0) {
+      el.textContent = s.enabled
+        ? `Agent is on · model ${s.model} · ${s.runsToday}/${s.maxRunsPerDay} runs used today`
+        : 'Agent ready to enable. Save settings to turn on.';
+    } else {
+      el.innerHTML = pieces.map((p) => `<div>${escHtml(p)}</div>`).join('');
+    }
+  } catch { /* ignore */ }
 }
 
 // ── Wit slider helpers ─────────────────────────────────────────────────────
@@ -955,6 +978,210 @@ function renderAudienceScheduledTimes(pipeline, originals) {
     .join('');
 }
 
+// ── Agent tab ─────────────────────────────────────────────────────────────────
+
+let _agentRunStream = null;
+let _agentActiveRunId = null;
+
+async function loadAgent() {
+  await Promise.all([loadAgentStatus(), loadAgentInvestigations(), loadAgentFeatures()]);
+}
+
+async function loadAgentStatus() {
+  try {
+    const s = await apiFetch('/api/agent/status');
+    const pill = $('agent-enabled-pill');
+    if (pill) {
+      pill.textContent = s.enabled ? 'enabled' : 'disabled';
+      pill.className = `status-badge ${s.enabled ? 'status-POSTED' : 'status-SKIPPED'}`;
+    }
+    const line = $('agent-status-line');
+    if (line) {
+      const checks = [];
+      checks.push(`model ${s.model}`);
+      checks.push(`${s.runsToday}/${s.maxRunsPerDay} runs today`);
+      if (!s.claudeCliFound) checks.push('⚠ no claude CLI');
+      if (!s.ghFound) checks.push('⚠ no gh CLI');
+      if (s.lastWatchTickAt > 0) checks.push(`last watch ${timeAgo(s.lastWatchTickAt)}`);
+      line.textContent = checks.join(' · ');
+    }
+    const disabledCard = $('agent-disabled-card');
+    if (disabledCard) disabledCard.style.display = s.enabled ? 'none' : '';
+  } catch (e) {
+    if ($('agent-status-line')) $('agent-status-line').textContent = `error: ${e.message}`;
+  }
+}
+
+async function loadAgentInvestigations() {
+  const el = $('agent-investigations-list');
+  if (!el) return;
+  try {
+    const list = await apiFetch('/api/agent/investigations');
+    if (!list.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:18px">No investigations yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(renderInvestigationCard).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">Failed to load: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderInvestigationCard(inv) {
+  const fix = inv.proposed_fix ? safeParse(inv.proposed_fix) : null;
+  const files = fix?.files_to_change?.length
+    ? `<div class="agent-card-meta">files: ${fix.files_to_change.slice(0,5).map((f) => `<code>${escHtml(f)}</code>`).join(' ')}</div>`
+    : '';
+  const actions = inv.status === 'PROPOSED'
+    ? `<div class="agent-card-actions">
+         <button class="btn btn-success" onclick="applyInvestigation('${inv.id}')">▶ Apply</button>
+         <button class="btn btn-ghost" onclick="dismissInvestigation('${inv.id}')">Dismiss</button>
+       </div>`
+    : '';
+  return `
+    <div class="agent-inv-card agent-status-${inv.status}">
+      <div class="agent-inv-header">
+        <span class="agent-inv-event">${escHtml(inv.event_name)}</span>
+        <span class="status-badge status-${inv.status}">${inv.status}</span>
+        <span class="agent-inv-meta">×${inv.occurrences} · last ${timeAgo(inv.last_seen_at)}</span>
+      </div>
+      ${inv.summary ? `<div class="agent-inv-summary">${escHtml(inv.summary)}</div>` : ''}
+      ${inv.root_cause ? `<div class="agent-inv-rc">${escHtml(inv.root_cause)}</div>` : ''}
+      ${files}
+      ${actions}
+    </div>`;
+}
+
+window.applyInvestigation = async (id) => {
+  try {
+    const r = await apiFetch(`/api/agent/investigations/${id}/apply`, { method: 'POST' });
+    toast('Implementer started — opening live stream', 'success');
+    if (r.runId) attachAgentRunStream(r.runId);
+    setTimeout(loadAgentInvestigations, 1500);
+  } catch (e) {
+    toast(`Apply failed: ${e.message}`, 'error');
+  }
+};
+
+window.dismissInvestigation = async (id) => {
+  try {
+    await apiFetch(`/api/agent/investigations/${id}/dismiss`, { method: 'POST' });
+    await loadAgentInvestigations();
+  } catch (e) {
+    toast(`Dismiss failed: ${e.message}`, 'error');
+  }
+};
+
+async function loadAgentFeatures() {
+  const el = $('agent-features-list');
+  if (!el) return;
+  try {
+    const list = await apiFetch('/api/agent/features');
+    if (!list.length) {
+      el.innerHTML = '<div class="audience-sub">No feature requests yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(renderFeatureCard).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">Failed to load: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderFeatureCard(task) {
+  const pr = task.pr_url
+    ? `<a class="btn btn-ghost" href="${escAttr(task.pr_url)}" target="_blank" rel="noopener">🔗 PR</a>`
+    : '';
+  return `
+    <div class="agent-feat-card agent-status-${task.status}">
+      <div class="agent-inv-header">
+        <span class="agent-feat-title">${escHtml(task.title)}</span>
+        <span class="status-badge status-${task.status}">${task.status}</span>
+        <span class="agent-inv-meta">${timeAgo(task.created_at)}</span>
+      </div>
+      <div class="agent-feat-desc">${escHtml((task.description || '').slice(0, 240))}${(task.description||'').length>240?'…':''}</div>
+      <div class="agent-card-actions">
+        ${task.branch ? `<code>${escHtml(task.branch)}</code>` : ''}
+        ${pr}
+      </div>
+    </div>`;
+}
+
+async function submitAgentFeature() {
+  const title = ($('agent-feat-title')?.value ?? '').trim();
+  const description = ($('agent-feat-desc')?.value ?? '').trim();
+  if (!title || !description) {
+    toast('Provide both title and description', 'error');
+    return;
+  }
+  try {
+    const r = await apiFetch('/api/agent/features', {
+      method: 'POST',
+      body: JSON.stringify({ title, description }),
+    });
+    toast('Feature request submitted — agent starting', 'success');
+    $('agent-feat-title').value = '';
+    $('agent-feat-desc').value = '';
+    await loadAgentFeatures();
+    // Best-effort: peek at the latest run to attach the stream
+    setTimeout(async () => {
+      try {
+        const runs = await apiFetch('/api/agent/runs?limit=5');
+        const latest = runs.find((r) => r.source_kind === 'feature' && r.source_id === r.source_id);
+        if (latest) attachAgentRunStream(latest.id);
+      } catch { /* ignore */ }
+    }, 2000);
+  } catch (e) {
+    toast(`Submit failed: ${e.message}`, 'error');
+  }
+}
+
+function attachAgentRunStream(runId) {
+  if (_agentRunStream) {
+    try { _agentRunStream.close(); } catch { /* ignore */ }
+  }
+  _agentActiveRunId = runId;
+  const body = $('agent-run-stream-body');
+  const status = $('agent-run-status');
+  if (body) body.innerHTML = '';
+  if (status) status.textContent = `Streaming run ${runId.slice(0, 8)}…`;
+
+  const apiKey = localStorage.getItem('xposter_api_key') ?? '';
+  const url = `/api/agent/runs/${encodeURIComponent(runId)}/stream${apiKey ? `?key=${encodeURIComponent(apiKey)}` : ''}`;
+  const es = new EventSource(url);
+  _agentRunStream = es;
+  es.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      const line = renderAgentStreamLine(msg);
+      if (body) {
+        body.insertAdjacentHTML('beforeend', line);
+        body.scrollTop = body.scrollHeight;
+      }
+      if (msg.kind === 'end') {
+        es.close();
+        _agentRunStream = null;
+        if (status) status.textContent = `Run ${runId.slice(0, 8)} complete.`;
+        loadAgentInvestigations();
+        loadAgentFeatures();
+      }
+    } catch { /* ignore */ }
+  };
+  es.onerror = () => {
+    // EventSource auto-retries; surface a hint
+    if (status) status.textContent = `Stream interrupted (reconnecting)…`;
+  };
+}
+
+function renderAgentStreamLine(msg) {
+  const ts = new Date(msg.ts * 1000).toLocaleTimeString('en-GB');
+  const cls = `agent-line agent-line-${msg.kind}`;
+  return `<div class="${cls}"><span class="ts">${ts}</span><span class="kind">${msg.kind}</span><span class="text">${escHtml(msg.text)}</span></div>`;
+}
+
+function safeParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
 // ── Full refresh ──────────────────────────────────────────────────────────────
 
 async function refresh() {
@@ -967,6 +1194,7 @@ async function refresh() {
   if (activeTab === 'accounts')  await loadAccounts();
   if (activeTab === 'originals') await loadOriginals();
   if (activeTab === 'audience')  await loadAudience();
+  if (activeTab === 'agent')     await loadAgent();
   // Console runs its own loop independently
 }
 
@@ -1046,10 +1274,13 @@ document.addEventListener('DOMContentLoaded', () => {
           blocklist_classifications:    $('s-blocklist')?.value,
           original_posts_per_day:       $('s-orig-per-day')?.value,
           original_post_marathi_ratio:  $('s-orig-marathi-ratio')?.value,
+          agent_enabled:                $('s-agent-enabled')?.checked ? 'true' : 'false',
+          agent_error_threshold:        $('s-agent-threshold')?.value,
         }),
       });
       toast('Settings saved', 'success');
       await loadSchedule();
+      await refreshAgentSettingsNote();
     } catch (e) {
       toast(`Save failed: ${e.message}`, 'error');
     }
@@ -1151,6 +1382,33 @@ document.addEventListener('DOMContentLoaded', () => {
   // Hacker console controls
   $('hc-clear').addEventListener('click', () => hc.clear());
   $('hc-pause').addEventListener('click', () => hc.togglePause());
+
+  // Agent: feature form
+  if ($('agent-feature-form')) {
+    $('agent-feature-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitAgentFeature();
+    });
+  }
+
+  // Agent: watcher tick now
+  if ($('btn-agent-tick')) {
+    $('btn-agent-tick').addEventListener('click', async () => {
+      const btn = $('btn-agent-tick');
+      btn.disabled = true;
+      btn.textContent = '⏳ Scanning…';
+      try {
+        const r = await apiFetch('/api/agent/watch/tick', { method: 'POST' });
+        toast(`Watcher scanned · ${r.investigated} new, ${r.skipped} skipped`, 'success');
+        await loadAgent();
+      } catch (e) {
+        toast(`Watcher failed: ${e.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '↻ Watch now';
+      }
+    });
+  }
 
   // Audience refresh
   if ($('btn-audience-refresh')) {

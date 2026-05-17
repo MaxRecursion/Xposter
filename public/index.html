@@ -61,6 +61,7 @@
         <button class="tab-btn" data-tab="accounts">Accounts</button>
         <button class="tab-btn" data-tab="originals">Originals</button>
         <button class="tab-btn" data-tab="audience">📊 Activity</button>
+        <button class="tab-btn" data-tab="agent">🤖 Agent</button>
         <button class="tab-btn" data-tab="history">History</button>
         <button class="tab-btn" data-tab="console">⏵ Console</button>
         <button class="tab-btn" data-tab="memory">🧠 Mind</button>
@@ -160,6 +161,62 @@
             Pipeline runs and original posts are biased toward darker cells above.
           </div>
           <div id="audience-today-times" class="audience-times-grid"></div>
+        </div>
+      </div>
+
+      <!-- Agent Tab -->
+      <div class="tab-content" id="tab-agent">
+        <div class="agent-header">
+          <div>
+            <h3 class="agent-title">Claude Agent</h3>
+            <div class="agent-sub" id="agent-status-line">checking…</div>
+          </div>
+          <div class="agent-controls">
+            <span id="agent-enabled-pill" class="status-badge">disabled</span>
+            <button class="btn btn-ghost" id="btn-agent-tick" title="Run watcher tick now">↻ Watch now</button>
+          </div>
+        </div>
+
+        <div class="agent-card" id="agent-disabled-card" style="display:none;">
+          <div class="agent-section-title">Agent is disabled</div>
+          <div class="audience-sub">
+            Toggle <strong>Enable Claude Agent</strong> under <em>Settings → Claude Agent</em> to turn it on.
+            You also need the <code>claude</code> CLI installed (Claude Code) for runs to work.
+          </div>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-section-title">Investigations</div>
+          <div class="audience-sub" style="margin-bottom:8px;">
+            Recurring errors the agent has investigated. Click <em>Apply</em> to spawn an
+            implementer run in a fresh worktree; <em>Dismiss</em> to ignore.
+          </div>
+          <div id="agent-investigations-list"></div>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-section-title">Request a new feature</div>
+          <div class="audience-sub" style="margin-bottom:10px;">
+            Describe what you want built. The agent will create a branch, implement it, and open a PR.
+          </div>
+          <form id="agent-feature-form" class="agent-feature-form">
+            <input id="agent-feat-title" placeholder="Short title (e.g. add /api/health/agent endpoint)" maxlength="200" />
+            <textarea id="agent-feat-desc" placeholder="Detailed description — what, where, any constraints…" rows="5" maxlength="5000"></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button type="submit" class="btn btn-primary">Submit to agent</button>
+            </div>
+          </form>
+          <div id="agent-features-list" style="margin-top:14px;"></div>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-section-title">Live run</div>
+          <div class="audience-sub" style="margin-bottom:8px;" id="agent-run-status">No active run.</div>
+          <div class="hacker-console" id="agent-run-stream" style="min-height:240px;">
+            <div class="hacker-console-body">
+              <div id="agent-run-stream-body"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -341,6 +398,25 @@
             <input type="text" id="s-blocklist" placeholder="BOT,BRAND_PROMO" />
           </div>
         </div>
+
+        <h3 class="section-h">Claude Agent</h3>
+        <div class="settings-grid">
+          <div class="settings-field settings-field-toggle">
+            <label for="s-agent-enabled">
+              <span>Enable Claude Agent</span>
+              <span class="settings-field-help">Off by default. Watches activity log, investigates recurring errors, and on approval applies fixes in a fresh worktree.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-agent-enabled" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label>Error threshold (occurrences before investigating)</label>
+            <input type="number" id="s-agent-threshold" min="1" max="50" />
+          </div>
+        </div>
+        <div id="agent-settings-note" class="audience-sub" style="margin-top:6px;"></div>
 
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:18px;">
           <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>

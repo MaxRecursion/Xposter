@@ -138,6 +138,12 @@ postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Respons
   if (updates['original_post_marathi_ratio'] !== undefined) {
     normalized['original_post_marathi_ratio'] = String(clampInt(updates['original_post_marathi_ratio'], 40, 0, 100));
   }
+  if (updates['agent_enabled'] !== undefined) {
+    normalized['agent_enabled'] = String(updates['agent_enabled'] === 'true');
+  }
+  if (updates['agent_error_threshold'] !== undefined) {
+    normalized['agent_error_threshold'] = String(clampInt(updates['agent_error_threshold'], 3, 1, 50));
+  }
 
   for (const [k, v] of Object.entries(normalized)) {
     setSetting(k, v);
