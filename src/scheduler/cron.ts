@@ -125,7 +125,7 @@ export async function runPipeline(): Promise<{ ingested: number; candidates: num
     const scoredAboveThreshold: ScoredPost[] = [];
     for (const { post, lang } of filtered) {
       const scored = scorePost({ ...post, language: lang });
-      updatePostScore(post.id, scored.score, scored.breakdown as any);
+      updatePostScore(post.id, scored.score, scored.breakdown);
       if (scored.score >= minScore) scoredAboveThreshold.push(scored);
     }
 
@@ -133,21 +133,28 @@ export async function runPipeline(): Promise<{ ingested: number; candidates: num
     const maxCandidates = Math.max(1, parseInt(getSetting('max_candidates_per_run', '3'), 10) || 3);
     let topCandidates = ranked.slice(0, maxCandidates);
 
-    // Fallback: if nothing meets the threshold, take the single best post anyway
+    // Fallback: if nothing meets the threshold, take the single best on-topic
+    // post anyway — but never reach for hindi/unknown posts, which the filter
+    // already rejected as unsupported. Replying in English to a Hindi tweet is
+    // worse than skipping the run.
     if (topCandidates.length === 0 && newPosts.length > 0) {
-      const allScored = newPosts.map((post) => {
+      const SUPPORTED_LANGS: DetectedLanguage[] = ['english', 'marathi', 'marathi-roman'];
+      const eligible = newPosts.flatMap((post) => {
         const lang = filterResults.get(post.id)?.lang ?? (post.language as DetectedLanguage);
-        return scorePost({ ...post, language: lang });
+        return SUPPORTED_LANGS.includes(lang) ? [{ post, lang }] : [];
       });
-      const fallback = rankCandidates(allScored)[0];
-      if (fallback) {
-        const fb = filterResults.get(fallback.id);
-        if (fb) {
-          updatePostLanguage(fb.post.id, fb.lang);
-          updatePostScore(fb.post.id, fallback.score, fallback.breakdown as any);
+      if (eligible.length > 0) {
+        const allScored = eligible.map(({ post, lang }) => scorePost({ ...post, language: lang }));
+        const fallback = rankCandidates(allScored)[0];
+        if (fallback) {
+          const fb = filterResults.get(fallback.id);
+          if (fb) {
+            updatePostLanguage(fb.post.id, fb.lang);
+            updatePostScore(fb.post.id, fallback.score, fallback.breakdown);
+          }
+          topCandidates = [fallback];
+          logEvent('FALLBACK_CANDIDATE_SELECTED', `score=${fallback.score} min=${minScore}`, fallback.id);
         }
-        topCandidates = [fallback];
-        logEvent('FALLBACK_CANDIDATE_SELECTED', `score=${fallback.score} min=${minScore}`, fallback.id);
       }
     }
 
