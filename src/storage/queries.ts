@@ -1,6 +1,9 @@
 import { getDb } from './db.js';
 import crypto from 'crypto';
 import { isValidTweetReference } from '../utils/x.js';
+import { getIntSetting } from './settings.js';
+
+export { getAllSettings, getSetting, setSetting } from './settings.js';
 
 export type PostStatus =
   | 'INGESTED' | 'FILTERED' | 'SCORED' | 'GENERATING'
@@ -213,32 +216,10 @@ export function getActivityLog(limit = 100): Array<{
     .all(limit) as any[];
 }
 
-// ── Settings ──────────────────────────────────────────────────────────────────
-
-export function getSetting(key: string, fallback: string): string {
-  const row = getDb()
-    .prepare('SELECT value FROM settings WHERE key = ?')
-    .get(key) as { value: string } | undefined;
-  return row?.value ?? fallback;
-}
-
-export function setSetting(key: string, value: string): void {
-  getDb()
-    .prepare('INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)')
-    .run(key, value);
-}
-
-export function getAllSettings(): Record<string, string> {
-  const rows = getDb()
-    .prepare('SELECT key, value FROM settings')
-    .all() as Array<{ key: string; value: string }>;
-  return Object.fromEntries(rows.map((r) => [r.key, r.value]));
-}
-
 // ── Expire stale pending posts ────────────────────────────────────────────────
 
 export function expireOldPending(): number {
-  const timeoutMin = parseInt(getSetting('approval_timeout_min', '30'), 10);
+  const timeoutMin = getIntSetting('approval_timeout_min', 30, 5, 1440);
   const cutoff = Math.floor(Date.now() / 1000) - timeoutMin * 60;
   const result = getDb().prepare(`
     UPDATE posts

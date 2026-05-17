@@ -3,6 +3,7 @@ import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { mediumDelay, longDelay, humanType, delay, randomBetween } from '../utils/delay.js';
 import { extractTweetIdFromUrl } from '../utils/x.js';
+import { findEnabled, findVisible, watchCreateTweetId } from './dom.js';
 
 export interface PostReplyResult {
   replyTweetId: string | null;
@@ -49,35 +50,21 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 
-  let capturedReplyTweetId: string | null = null;
-
-  // Intercept the CreateTweet GraphQL response so we can return the new reply's ID
-  // without scraping the toast or the timeline. Same pattern compose.ts uses.
-  page.on('response', (response: Response) => {
-    if (!response.url().includes('CreateTweet') || response.status() !== 200) return;
-    response.json().then((body) => {
-      const restId =
-        body?.data?.create_tweet?.tweet_results?.result?.rest_id ??
-        body?.data?.create_tweet?.tweet_results?.result?.legacy?.id_str;
-      if (restId && /^\d+$/.test(String(restId)) && String(restId) !== tweetId) {
-        capturedReplyTweetId = String(restId);
-      }
-    }).catch(() => undefined);
-  });
+  const getCapturedReplyTweetId = watchCreateTweetId(page, { excludeTweetId: tweetId });
 
   try {
     logger.info('Opening tweet for reply', { tweetUrl, tweetId });
     await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await delay(randomBetween(2500, 4000));
 
-    const article = await findElement(page, TWEET_ARTICLE_SELECTORS, 20_000);
+    const article = await findVisible(page, TWEET_ARTICLE_SELECTORS, 20_000);
     if (!article) {
       throw new Error('Tweet article not found - check login/session or tweet availability');
     }
 
-    let composeBox = await findElement(page, COMPOSE_BOX_SELECTORS, 2_000);
+    let composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 2_000);
     if (!composeBox) {
-      const replyBtn = await findElement(page, REPLY_BTN_SELECTORS, 15_000);
+      const replyBtn = await findVisible(page, REPLY_BTN_SELECTORS, 15_000);
       if (!replyBtn) throw new Error('Reply button not found');
 
       await replyBtn.scrollIntoViewIfNeeded();
@@ -85,7 +72,7 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
       await replyBtn.click();
       await longDelay();
 
-      composeBox = await findElement(page, COMPOSE_BOX_SELECTORS, 15_000);
+      composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 15_000);
     }
 
     if (!composeBox) throw new Error('Compose box not found after clicking reply');
@@ -101,7 +88,7 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
     await longDelay();
 
     // Submit
-    const submitBtn = await findEnabledElement(page, SUBMIT_BTN_SELECTORS, 10_000);
+    const submitBtn = await findEnabled(page, SUBMIT_BTN_SELECTORS, 10_000);
     if (!submitBtn) throw new Error('Submit button not found');
 
     await submitBtn.click();
@@ -116,6 +103,7 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
       throw new Error(`X returned error toast: ${errorToast}`);
     }
 
+    const capturedReplyTweetId = getCapturedReplyTweetId();
     logger.info('Reply posted successfully', {
       tweetUrl, replyLength: replyText.length, replyTweetId: capturedReplyTweetId,
     });
@@ -177,7 +165,7 @@ export async function deleteReply(replyTweetId: string): Promise<void> {
 
     // Scope the "..." lookup to the target reply article so we never act on the
     // original tweet higher up in the thread.
-    const caret = await findElement(article, CARET_BTN_SELECTORS, 10_000);
+    const caret = await findVisible(article, CARET_BTN_SELECTORS, 10_000);
     if (!caret) throw new Error('Caret/More menu not found on reply');
 
     await caret.scrollIntoViewIfNeeded();
@@ -185,14 +173,14 @@ export async function deleteReply(replyTweetId: string): Promise<void> {
     await caret.click();
     await longDelay();
 
-    const deleteItem = await findElement(page, DELETE_MENU_ITEM_SELECTORS, 8_000);
+    const deleteItem = await findVisible(page, DELETE_MENU_ITEM_SELECTORS, 8_000);
     if (!deleteItem) {
       throw new Error('Delete menu item not found - this reply may not be authored by the logged-in user');
     }
     await deleteItem.click();
     await mediumDelay();
 
-    const confirmBtn = await findEnabledElement(page, CONFIRM_DELETE_SELECTORS, 8_000);
+    const confirmBtn = await findEnabled(page, CONFIRM_DELETE_SELECTORS, 8_000);
     if (!confirmBtn) throw new Error('Delete confirmation button not found');
     await confirmBtn.click();
 
@@ -228,51 +216,6 @@ async function findTweetArticleById(
       }
     } catch {
       // Wait for X to finish hydrating the tweet thread.
-    }
-    await delay(250);
-  }
-
-  return null;
-}
-
-async function findElement(
-  scope: Page | Locator,
-  selectors: string[],
-  timeoutMs = 5_000,
-): Promise<Locator | null> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    for (const sel of selectors) {
-      try {
-        const loc = scope.locator(sel).first();
-        if (await loc.count() > 0 && await loc.isVisible({ timeout: 500 })) {
-          return loc;
-        }
-      } catch {
-        // try next
-      }
-    }
-    await delay(250);
-  }
-
-  return null;
-}
-
-async function findEnabledElement(
-  page: Page,
-  selectors: string[],
-  timeoutMs = 5_000,
-): Promise<Locator | null> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const loc = await findElement(page, selectors, 500);
-    if (loc) {
-      const ariaDisabled = await loc.getAttribute('aria-disabled').catch(() => null);
-      const disabled = await loc.getAttribute('disabled').catch(() => null);
-      const enabled = await loc.isEnabled().catch(() => true);
-      if (enabled && ariaDisabled !== 'true' && disabled === null) return loc;
     }
     await delay(250);
   }

@@ -1,7 +1,7 @@
-import { Page, Response } from 'playwright';
 import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween, mediumDelay, longDelay, humanType } from '../utils/delay.js';
+import { findEnabled, findVisible, watchCreateTweetId } from './dom.js';
 
 // Compose textarea inside the modal (appears after navigating to /compose/post)
 const COMPOSE_BOX_SELECTORS = [
@@ -36,21 +36,7 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 
-  let capturedTweetId: string | null = null;
-
-  // Intercept the CreateTweet GraphQL response to get the new tweet's ID without
-  // needing fragile DOM scraping of a post-submit toast.
-  page.on('response', (response: Response) => {
-    if (!response.url().includes('CreateTweet') || response.status() !== 200) return;
-    response.json().then((body) => {
-      const restId =
-        body?.data?.create_tweet?.tweet_results?.result?.rest_id ??
-        body?.data?.create_tweet?.tweet_results?.result?.legacy?.id_str;
-      if (restId && /^\d+$/.test(String(restId))) {
-        capturedTweetId = String(restId);
-      }
-    }).catch(() => undefined);
-  });
+  const getCapturedTweetId = watchCreateTweetId(page);
 
   try {
     logger.info('Composing original tweet', { chars: content.length });
@@ -90,6 +76,7 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
     }
 
     const handle = process.env.X_HANDLE;
+    const capturedTweetId = getCapturedTweetId();
     const tweetUrl = capturedTweetId && handle
       ? `https://x.com/${handle}/status/${capturedTweetId}`
       : null;
@@ -99,39 +86,4 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
   } finally {
     await page.close();
   }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function findVisible(page: Page, selectors: string[], timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (const sel of selectors) {
-      try {
-        const loc = page.locator(sel).first();
-        if (await loc.count() > 0 && await loc.isVisible({ timeout: 400 })) return loc;
-      } catch { /* try next */ }
-    }
-    await delay(300);
-  }
-  return null;
-}
-
-async function findEnabled(page: Page, selectors: string[], timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (const sel of selectors) {
-      try {
-        const loc = page.locator(sel).first();
-        if (await loc.count() === 0) continue;
-        if (!await loc.isVisible({ timeout: 400 })) continue;
-        const ariaDisabled = await loc.getAttribute('aria-disabled').catch(() => null);
-        if (ariaDisabled === 'true') continue;
-        if (!await loc.isEnabled().catch(() => false)) continue;
-        return loc;
-      } catch { /* try next */ }
-    }
-    await delay(300);
-  }
-  return null;
 }

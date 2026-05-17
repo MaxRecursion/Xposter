@@ -1,21 +1,11 @@
-import Groq from 'groq-sdk';
 import {
   Account, Classification, ClassificationUpdate,
   classificationIsFresh, getAccount, setAccountClassification, upsertAccountSeen,
 } from '../storage/accounts.js';
-import { getSetting } from '../storage/queries.js';
+import { getIntSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { fetchProfile, AuthorProfile } from '../browser/profile.js';
-
-let _groq: Groq | null = null;
-
-function getGroqClient(): Groq | null {
-  if (_groq) return _groq;
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return null;
-  _groq = new Groq({ apiKey });
-  return _groq;
-}
+import { getOptionalGroqClient } from './groq_client.js';
 
 const CLASSIFICATION_VALUES: Classification[] = [
   'SERIOUS', 'NEWS', 'PARODY', 'COMEDY', 'INFLUENCER',
@@ -73,7 +63,7 @@ export async function classifyAccount(
   opts: ClassifyOptions = {},
 ): Promise<Account> {
   upsertAccountSeen(handle, displayName);
-  const ttlDays = parseInt(getSetting('classification_ttl_days', '7'), 10);
+  const ttlDays = getIntSetting('classification_ttl_days', 7, 1, 90);
   const cached = getAccount(handle);
 
   if (!opts.forceRefresh && classificationIsFresh(cached, ttlDays)) {
@@ -113,7 +103,7 @@ export async function classifyAccount(
   }
 
   // 2. LLM classify
-  const groq = getGroqClient();
+  const groq = getOptionalGroqClient();
   if (!groq) {
     setAccountClassification(handle, {
       classification: 'UNKNOWN',
