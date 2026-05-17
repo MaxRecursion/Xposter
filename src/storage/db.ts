@@ -248,7 +248,94 @@ function applyMigrations(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_post_impressions_post    ON post_impressions(original_post_id);
     CREATE INDEX IF NOT EXISTS idx_post_impressions_checked ON post_impressions(checked_at DESC);
+
+    -- ──────────────────────────────────────────────────────────────────────
+    -- agent_runs: one row per Claude Agent SDK invocation (investigator or implementer)
+    -- ──────────────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id                    TEXT PRIMARY KEY,
+      mode                  TEXT NOT NULL CHECK(mode IN ('investigator','implementer')),
+      status                TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN (
+                              'QUEUED','RUNNING','SUCCESS','FAILED','CANCELLED','BLOCKED'
+                            )),
+      trigger               TEXT NOT NULL DEFAULT 'manual',
+      model                 TEXT,
+      cwd                   TEXT NOT NULL,
+      branch                TEXT,
+      source_kind           TEXT,
+      source_id             TEXT,
+      turn_count            INTEGER NOT NULL DEFAULT 0,
+      input_tokens          INTEGER NOT NULL DEFAULT 0,
+      output_tokens         INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd_estimate     REAL,
+      summary               TEXT,
+      error                 TEXT,
+      started_at            INTEGER NOT NULL DEFAULT (unixepoch()),
+      finished_at           INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_status  ON agent_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs(started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_source  ON agent_runs(source_kind, source_id);
+
+    -- ──────────────────────────────────────────────────────────────────────
+    -- agent_investigations: deduped error clusters + proposed fixes
+    -- ──────────────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS agent_investigations (
+      id              TEXT PRIMARY KEY,
+      signature       TEXT NOT NULL UNIQUE,
+      event_name      TEXT NOT NULL,
+      occurrences     INTEGER NOT NULL DEFAULT 1,
+      first_seen_at   INTEGER NOT NULL,
+      last_seen_at    INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN (
+                        'OPEN','PROPOSED','APPLIED','DISMISSED','BLOCKED'
+                      )),
+      run_id          TEXT,
+      summary         TEXT,
+      root_cause      TEXT,
+      proposed_fix    TEXT,
+      evidence_json   TEXT,
+      sample_detail   TEXT,
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_inv_status    ON agent_investigations(status);
+    CREATE INDEX IF NOT EXISTS idx_agent_inv_event     ON agent_investigations(event_name);
+    CREATE INDEX IF NOT EXISTS idx_agent_inv_last_seen ON agent_investigations(last_seen_at DESC);
+
+    -- ──────────────────────────────────────────────────────────────────────
+    -- agent_feature_tasks: user-submitted natural-language feature requests
+    -- ──────────────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS agent_feature_tasks (
+      id              TEXT PRIMARY KEY,
+      title           TEXT NOT NULL,
+      description     TEXT NOT NULL,
+      requested_by    TEXT NOT NULL DEFAULT 'dashboard',
+      status          TEXT NOT NULL DEFAULT 'SUBMITTED' CHECK(status IN (
+                        'SUBMITTED','RUNNING','COMPLETED','FAILED'
+                      )),
+      run_id          TEXT,
+      branch          TEXT,
+      pr_url          TEXT,
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_feat_status  ON agent_feature_tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_agent_feat_created ON agent_feature_tasks(created_at DESC);
   `);
+
+  // Default settings for the agent subsystem — OFF by default; user toggles on from dashboard.
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('agent_enabled',          'false'),
+      ('agent_last_watched_at',  '0'),
+      ('agent_error_threshold',  '3')
+  `).run();
 
   // Insert default settings for original posts feature
   db.prepare(`

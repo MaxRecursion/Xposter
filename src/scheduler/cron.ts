@@ -21,6 +21,7 @@ import {
 import { startFollowerSync, stopFollowerSync } from './follower_sync.js';
 import { startOriginalPostScheduler, stopOriginalPostScheduler } from './original_posts.js';
 import { startAudienceSync, stopAudienceSync } from './audience_sync.js';
+import { startAgentWatcher, stopAgentWatcher } from '../agent/watcher.js';
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
 import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
@@ -34,6 +35,7 @@ export function startScheduler(): void {
   startFollowerSync();
   startOriginalPostScheduler();
   startAudienceSync();
+  startAgentWatcher();
 
   if (isContextEnabled()) {
     const store = getContextStore();
@@ -62,6 +64,7 @@ export function stopScheduler(): void {
   stopFollowerSync();
   stopOriginalPostScheduler();
   stopAudienceSync();
+  stopAgentWatcher();
   stopContextIngest();
   logger.info('Scheduler stopped');
 }
