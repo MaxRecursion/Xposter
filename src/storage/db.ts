@@ -343,6 +343,7 @@ function applyMigrations(db: Database.Database): void {
       ('original_posts_per_day',    '7'),
       ('original_post_marathi_ratio','40'),
       ('impression_sync_interval_h', '2'),
+      ('follow_back_window_hours',   '24'),
       ('topic_category_weights',    '{"pune-tech-economy":0.40,"local-pune":0.20,"tech":0.15,"politics":0.07,"sports":0.08,"culture":0.07,"observation":0.03}')
   `).run();
 
@@ -350,6 +351,8 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');
   addColumnIfMissing(db, 'original_posts', 'post_type', "TEXT NOT NULL DEFAULT 'ORIGINAL'");
+  // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
+  addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');
 
   applyContextMigrations(db);
 }
