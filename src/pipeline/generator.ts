@@ -1,22 +1,15 @@
-import Groq from 'groq-sdk';
-import { Post, getSetting, logEvent } from '../storage/queries.js';
+import { Post, getSetting } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
+import { getGroqClient } from './groq_client.js';
+import { logPromptToConsole } from './prompt_logger.js';
+import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
 
-let _groq: Groq | null = null;
 const MAX_REPLY_CHARS = 280;
-
-function getGroqClient(): Groq {
-  if (_groq) return _groq;
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error('GROQ_API_KEY is not set');
-  _groq = new Groq({ apiKey });
-  return _groq;
-}
 
 /**
  * Reads wit_level setting (0-100) and returns:
@@ -293,22 +286,12 @@ export async function generateReply(
   if (!reply) throw new EmptyReplyError();
 
   // Sanitize: strip any surrounding quotes the model might add
-  let cleaned = reply.replace(/^["']|["']$/g, '').trim();
-  cleaned = enforceReplyLimit(cleaned);
+  let cleaned = cleanModelText(reply);
+  cleaned = enforceCharacterLimit(cleaned, MAX_REPLY_CHARS);
+  assertEnglishOnly(cleaned, 'Reply generation');
 
   logger.info('Reply generated', { postId: post.id, reply: cleaned, flavor });
   return cleaned;
-}
-
-function logPromptToConsole(kind: string, id: string, system: string, user: string): void {
-  if (process.env.LOG_PROMPTS === 'false') return;
-  const line = '─'.repeat(72);
-  process.stdout.write(
-    `\n${line}\n┃ GROQ ${kind} PROMPT  id=${id}\n${line}\n` +
-    `── SYSTEM ──\n${system}\n` +
-    `── USER ──\n${user}\n${line}\n\n`,
-  );
-  logEvent('GROQ_PROMPT', `[${kind}] ${id} | ${user.slice(0, 500)}`);
 }
 
 function buildUserPrompt(post: Post, account: Account | null, contextBlock = ''): string {
@@ -337,16 +320,4 @@ function buildUserPrompt(post: Post, account: Account | null, contextBlock = '')
 
 function truncateForPrompt(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
-}
-
-function enforceReplyLimit(reply: string): string {
-  const trimmed = reply.trim();
-  const chars = Array.from(trimmed);
-  if (chars.length <= MAX_REPLY_CHARS) return trimmed;
-
-  const clipped = chars.slice(0, MAX_REPLY_CHARS).join('');
-  const lastSpace = clipped.lastIndexOf(' ');
-  const safeClip = lastSpace > 80 ? clipped.slice(0, lastSpace) : clipped;
-
-  return safeClip.replace(/[,.!?;:।-]+$/g, '').trim();
 }

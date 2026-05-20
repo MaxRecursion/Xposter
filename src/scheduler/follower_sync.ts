@@ -1,14 +1,17 @@
 import { fetchOurFollowers, resolveOwnHandle } from '../browser/followers.js';
 import {
-  enqueueFollowerEvent, listAccounts, setFollowerState, getAccount,
+  listAccounts, setFollowerState, getAccount,
 } from '../storage/accounts.js';
-import { getSetting, logEvent } from '../storage/queries.js';
+import { enqueueFollowerEvent, autoApproveFollowBack, setFollowerEventStatus } from '../storage/follower_events.js';
+import { logEvent } from '../storage/queries.js';
+import { getBooleanSetting, getListSetting, getIntSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { sendFollowerNotification } from '../notifications/ntfy.js';
 import { classifyAccount } from '../pipeline/classifier.js';
 
 const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;  // 6 hours
 let _interval: NodeJS.Timeout | null = null;
+let _bootTimer: NodeJS.Timeout | null = null;
 
 export interface FollowerSyncResult {
   ok: boolean;
@@ -24,7 +27,9 @@ export function startFollowerSync(): void {
   if (_interval) return;
 
   // First sync 5 minutes after boot (let everything settle)
-  setTimeout(() => { void runFollowerSync().catch((err) => logger.error('Follower sync failed', { err })); }, 5 * 60_000);
+  _bootTimer = setTimeout(() => {
+    void runFollowerSync().catch((err) => logger.error('Follower sync failed', { err }));
+  }, 5 * 60_000);
   _interval = setInterval(() => {
     void runFollowerSync().catch((err) => logger.error('Follower sync failed', { err }));
   }, SYNC_INTERVAL_MS);
@@ -33,6 +38,7 @@ export function startFollowerSync(): void {
 }
 
 export function stopFollowerSync(): void {
+  if (_bootTimer) { clearTimeout(_bootTimer); _bootTimer = null; }
   if (_interval) { clearInterval(_interval); _interval = null; }
 }
 
@@ -56,7 +62,7 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     return { ok: false, reason: 'missing_handle', message, newFollowers: 0, queued: 0, total: 0 };
   }
 
-  if (getSetting('system_running', 'true') !== 'true') {
+  if (!getBooleanSetting('system_running', true)) {
     return {
       ok: false,
       reason: 'system_paused',
@@ -91,30 +97,59 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     if (!knownFollowers.has(handle.toLowerCase())) newOnes.push(handle);
   }
 
-  // Cap notifications: avoid spamming on first run after a long absence
-  const maxNotifyPerRun = 5;
+  // Cap to avoid thundering-herd on first run after a long absence
+  const maxPerRun = 5;
+  const blocklist = getListSetting('blocklist_classifications', ['BOT', 'SPAM', 'BRAND_PROMO'])
+    .map((v) => v.toUpperCase());
+  const windowHours = getIntSetting('follow_back_window_hours', 24, 1, 48);
+  const now = Math.floor(Date.now() / 1000);
+
   let queued = 0;
-  for (const handle of newOnes.slice(0, maxNotifyPerRun)) {
+  for (const handle of newOnes.slice(0, maxPerRun)) {
     try {
       const account = await classifyAccount(handle, null, { fetchProfileIfMissing: true });
-      const eventId = enqueueFollowerEvent(handle, 'NEW_FOLLOWER',
-        `classification=${account.classification ?? 'UNKNOWN'}; followers=${account.follower_count_seen}`);
+      const cls = (account.classification ?? 'UNKNOWN').toUpperCase();
+      const isBlocked = blocklist.includes(cls);
+
+      const detail = `classification=${cls}; followers=${account.follower_count_seen}; auto=${!isBlocked}`;
+      const eventId = enqueueFollowerEvent(handle, 'NEW_FOLLOWER', detail);
+
       if (eventId !== null) {
-        queued++;
-        await sendFollowerNotification(eventId, handle, account).catch((err) => {
-          logger.warn('Follower notification failed', { handle, err: String(err) });
-        });
-        logEvent('NEW_FOLLOWER_QUEUED', `@${handle}`, undefined);
+        if (isBlocked) {
+          // Auto-skip bots, spam, brand accounts
+          setFollowerEventStatus(eventId, 'SKIPPED', `blocklisted: ${cls}`);
+          logEvent('NEW_FOLLOWER_SKIPPED', `@${handle} (${cls} is blocklisted)`, undefined);
+          logger.info('Auto-skipped new follower (blocklisted)', { handle, cls });
+        } else {
+          // Schedule follow-back at a random time within the window
+          const minDelay = 30 * 60;  // minimum 30 minutes
+          const maxDelay = windowHours * 3600;
+          const delay = minDelay + Math.floor(Math.random() * (maxDelay - minDelay));
+          const scheduledAt = now + delay;
+          autoApproveFollowBack(eventId, scheduledAt, detail);
+          queued++;
+
+          const scheduledTime = new Date(scheduledAt * 1000).toLocaleTimeString('en-IN', {
+            hour: '2-digit', minute: '2-digit', hour12: true,
+          });
+          logEvent('NEW_FOLLOWER_SCHEDULED', `@${handle} → follow-back at ${scheduledTime}`, undefined);
+          logger.info('Scheduled auto follow-back', { handle, cls, scheduledAt, scheduledTime });
+
+          // Send informational notification (user can still skip via dashboard)
+          await sendFollowerNotification(eventId, handle, account).catch((err) => {
+            logger.warn('Follower notification failed', { handle, err: String(err) });
+          });
+        }
       }
     } catch (err) {
-      logger.warn('Failed to enqueue new follower', { handle, err: String(err) });
+      logger.warn('Failed to process new follower', { handle, err: String(err) });
     }
   }
 
-  if (newOnes.length > maxNotifyPerRun) {
+  if (newOnes.length > maxPerRun) {
     logEvent(
       'NEW_FOLLOWER_BATCH_TRUNCATED',
-      `${newOnes.length} new followers detected; queued ${maxNotifyPerRun}`,
+      `${newOnes.length} new followers; processed ${maxPerRun}`,
     );
   }
 

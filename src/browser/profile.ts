@@ -1,6 +1,7 @@
 import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
+import type { Locator } from 'playwright';
 
 export interface AuthorProfile {
   handle: string;
@@ -36,58 +37,62 @@ export async function fetchProfile(handle: string): Promise<AuthorProfile | null
       logger.warn('Profile page did not render primaryColumn', { handle });
     }
 
-    const data = await page.evaluate(() => {
-      const txt = (sel: string): string | null => {
-        const el = document.querySelector(sel);
-        return el?.textContent?.trim() ?? null;
-      };
+    const displayName = await textOrNull(page.locator('[data-testid="UserName"] span').first());
+    const bio = await textOrNull(page.locator('[data-testid="UserDescription"]').first());
+    const verified = await page
+      .locator('[data-testid="UserName"] svg[aria-label*="erified" i]')
+      .count()
+      .then((count) => count > 0)
+      .catch(() => false);
 
-      const display_name = txt('[data-testid="UserName"] span') ?? null;
-      const bio = txt('[data-testid="UserDescription"]') ?? null;
+    let followerCount = 0;
+    let followingCount = 0;
+    const links = page.locator('a[href$="/followers"], a[href$="/verified_followers"], a[href$="/following"]');
+    const linkCount = await links.count().catch(() => 0);
+    for (let i = 0; i < linkCount; i++) {
+      const link = links.nth(i);
+      const href = await link.getAttribute('href').catch(() => '') ?? '';
+      const ariaLabel = await link.getAttribute('aria-label').catch(() => null);
+      const labelText = await link.textContent().catch(() => '');
+      const label = ariaLabel ?? labelText ?? '';
+      const count = parseHumanCount(label);
+      if (/\/(?:verified_)?followers$/i.test(href)) followerCount = Math.max(followerCount, count);
+      if (/\/following$/i.test(href)) followingCount = Math.max(followingCount, count);
+    }
 
-      // Verified: blue check icon present
-      const verified = !!document.querySelector('[data-testid="UserName"] svg[aria-label*="erified" i]');
+    const pcfByTestId = await page.locator('[data-testid*="parody" i]').count().catch(() => 0);
+    const pcfByText = await page.getByText(/\b(parody|fan account|commentary)\b/i).count().catch(() => 0);
 
-      // Counts: aria-labels on the followers/following links contain the numbers
-      let follower_count = 0;
-      let following_count = 0;
-      const links = Array.from(document.querySelectorAll('a[href$="/followers"], a[href$="/verified_followers"], a[href$="/following"]'));
-
-      const parseHumanCount = (input: string): number => {
-        const m = input.match(/([\d.,]+)\s*([KMB])?/i);
-        if (!m) return 0;
-        const n = parseFloat(m[1].replace(/,/g, ''));
-        if (!isFinite(n)) return 0;
-        const unit = (m[2] ?? '').toUpperCase();
-        if (unit === 'K') return Math.round(n * 1_000);
-        if (unit === 'M') return Math.round(n * 1_000_000);
-        if (unit === 'B') return Math.round(n * 1_000_000_000);
-        return Math.round(n);
-      };
-
-      for (const a of links) {
-        const href = (a as HTMLAnchorElement).href;
-        const label = a.getAttribute('aria-label') ?? a.textContent ?? '';
-        const num = parseHumanCount(label);
-        if (/follower/i.test(href)) follower_count = Math.max(follower_count, num);
-        if (/following$/i.test(href)) following_count = Math.max(following_count, num);
-      }
-
-      // X's official PCF label appears as a chip near the username
-      const is_pcf_labelled =
-        !!document.querySelector('[data-testid*="parody" i]') ||
-        Array.from(document.querySelectorAll('span')).some((s) =>
-          /\b(parody|fan account|commentary)\b/i.test(s.textContent ?? '')
-        );
-
-      return { display_name, bio, verified, follower_count, following_count, is_pcf_labelled };
-    });
-
-    return { handle, ...data };
+    return {
+      handle,
+      display_name: displayName,
+      bio,
+      verified,
+      follower_count: followerCount,
+      following_count: followingCount,
+      is_pcf_labelled: pcfByTestId > 0 || pcfByText > 0,
+    };
   } catch (err) {
     logger.warn('Profile fetch failed', { handle, err: String(err) });
     return null;
   } finally {
     await page.close();
   }
+}
+
+async function textOrNull(locator: Locator): Promise<string | null> {
+  const text = await locator.textContent({ timeout: 2_000 }).catch(() => null);
+  return text?.trim() || null;
+}
+
+function parseHumanCount(input: string): number {
+  const match = input.match(/([\d.,]+)\s*([KMB])?/i);
+  if (!match) return 0;
+  const value = parseFloat(match[1].replace(/,/g, ''));
+  if (!Number.isFinite(value)) return 0;
+  const unit = (match[2] ?? '').toUpperCase();
+  if (unit === 'K') return Math.round(value * 1_000);
+  if (unit === 'M') return Math.round(value * 1_000_000);
+  if (unit === 'B') return Math.round(value * 1_000_000_000);
+  return Math.round(value);
 }

@@ -32,14 +32,16 @@ export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
       waitUntil: 'domcontentloaded', timeout: 30_000,
     });
 
-    // Wait for the heatmap grid to render. The card has ~168 rects.
+    // Wait for the heatmap grid to render. We accept a generous rect-count
+    // band because X has been known to add/remove decorative rects between
+    // releases; the detection logic below has further fallbacks.
     try {
       await page.waitForFunction(
         () => {
           const allSvg = Array.from(document.querySelectorAll('svg'));
           return allSvg.some((svg) => {
             const n = svg.querySelectorAll('rect').length;
-            return n >= 140 && n <= 220;
+            return n >= 50 && n <= 500;
           });
         },
         { timeout: 25_000 },
@@ -48,36 +50,78 @@ export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
       logger.warn('Audience heatmap rects did not appear in time');
     }
 
+    // Some analytics cards lazy-mount only once scrolled into view.
+    try {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await delay(randomBetween(800, 1400));
+      await page.evaluate(() => window.scrollTo(0, 0));
+    } catch { /* non-fatal */ }
+
     // Settle for any final animations
     await delay(randomBetween(1500, 2500));
 
     const data = await page.evaluate(() => {
+      // Shared bucketing — used by detection AND extraction.
+      const bucket = (n: number, eps = 2) => Math.round(n / eps) * eps;
+
+      const gridShape = (svg: SVGSVGElement) => {
+        const rs = Array.from(svg.querySelectorAll('rect')) as SVGRectElement[];
+        const xs = new Set<number>(); const ys = new Set<number>();
+        for (const r of rs) {
+          const w = parseFloat(r.getAttribute('width') ?? '0');
+          const h = parseFloat(r.getAttribute('height') ?? '0');
+          if (w <= 0 || h <= 0 || w > 200 || h > 200) continue;
+          const fill = r.getAttribute('fill') ?? '';
+          if (!fill || fill === 'none' || fill === 'transparent') continue;
+          xs.add(bucket(parseFloat(r.getAttribute('x') ?? '0')));
+          ys.add(bucket(parseFloat(r.getAttribute('y') ?? '0')));
+        }
+        return { xCount: xs.size, yCount: ys.size, total: rs.length };
+      };
+
       // ── 1. Find the heatmap SVG ───────────────────────────────────────
-      // Strategy A: look for an SVG containing roughly 168 rects (7×24).
-      // Strategy B: anchor on the "Active times" header and walk up.
+      // Strategy A — SVG with rect count in a plausible band for 7×24,
+      //              widened to absorb decorative rects.
+      // Strategy B — anchor on a header like "active times" / "audience
+      //              activity" / "when your audience is active" and walk
+      //              up to the nearest SVG.
+      // Strategy C — grid-shape detection: pick the SVG whose colored
+      //              rects form the most 7×24-like layout, regardless of
+      //              total rect count.
       let heatmapSvg: SVGSVGElement | null = null;
+      let strategyUsed = '';
 
       const allSvg = Array.from(document.querySelectorAll('svg')) as SVGSVGElement[];
+
+      // Strategy A
       const candidates = allSvg
         .map((svg) => ({ svg, n: svg.querySelectorAll('rect').length }))
-        .filter(({ n }) => n >= 140 && n <= 220)
+        .filter(({ n }) => n >= 100 && n <= 400)
         .sort((a, b) => Math.abs(168 - a.n) - Math.abs(168 - b.n));
+      if (candidates.length > 0) {
+        heatmapSvg = candidates[0].svg;
+        strategyUsed = `A(rects=${candidates[0].n})`;
+      }
 
-      if (candidates.length > 0) heatmapSvg = candidates[0].svg;
-
+      // Strategy B
       if (!heatmapSvg) {
-        const allEls = Array.from(document.querySelectorAll('h1,h2,h3,h4,span,div'));
+        const headerPattern =
+          /\b(active\s+times|most\s+active|audience\s+activity|when\s+your\s+audience)\b/i;
+        const allEls = Array.from(
+          document.querySelectorAll('h1,h2,h3,h4,h5,h6,span,div'),
+        );
         const header = allEls.find((el) =>
-          /^\s*active\s+times\s*$/i.test(el.textContent ?? ''),
+          headerPattern.test(el.textContent ?? ''),
         );
         if (header) {
           let p: Element | null = header;
-          for (let i = 0; i < 8 && p; i++) {
-            const svg = p.querySelector?.('svg');
-            if (svg) {
+          for (let i = 0; i < 10 && p && !heatmapSvg; i++) {
+            const svgs = Array.from(p.querySelectorAll?.('svg') ?? []);
+            for (const svg of svgs) {
               const rects = svg.querySelectorAll('rect').length;
-              if (rects >= 100) {
+              if (rects >= 50) {
                 heatmapSvg = svg as SVGSVGElement;
+                strategyUsed = `B(header,rects=${rects})`;
                 break;
               }
             }
@@ -86,7 +130,45 @@ export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
         }
       }
 
-      if (!heatmapSvg) return { error: 'heatmap svg not found' };
+      // Strategy C — grid-shape detection across all SVGs.
+      if (!heatmapSvg) {
+        const scored = allSvg
+          .map((svg) => ({ svg, grid: gridShape(svg) }))
+          .filter((s) => s.grid.xCount >= 5 && s.grid.yCount >= 12)
+          .sort((a, b) => {
+            const da = Math.abs(7 - a.grid.xCount) + Math.abs(24 - a.grid.yCount);
+            const db = Math.abs(7 - b.grid.xCount) + Math.abs(24 - b.grid.yCount);
+            return da - db;
+          });
+        if (scored.length > 0) {
+          heatmapSvg = scored[0].svg;
+          const g = scored[0].grid;
+          strategyUsed = `C(grid=${g.xCount}x${g.yCount},rects=${g.total})`;
+        }
+      }
+
+      if (!heatmapSvg) {
+        // Collect diagnostics so the next failure has actionable detail
+        // (rect/path counts per SVG, sample text, top-level headings).
+        const inventory = allSvg.slice(0, 20).map((svg) => ({
+          rects: svg.querySelectorAll('rect').length,
+          paths: svg.querySelectorAll('path').length,
+          texts: Array.from(svg.querySelectorAll('text'))
+            .slice(0, 6)
+            .map((t) => (t.textContent ?? '').trim())
+            .filter(Boolean),
+        }));
+        const headings = Array.from(
+          document.querySelectorAll('h1,h2,h3,h4,h5,h6'),
+        )
+          .slice(0, 20)
+          .map((h) => (h.textContent ?? '').trim())
+          .filter(Boolean);
+        return {
+          error: 'heatmap svg not found',
+          debug: { svgCount: allSvg.length, inventory, headings },
+        };
+      }
 
       // ── 2. Pull cell rects ────────────────────────────────────────────
       const rects = Array.from(heatmapSvg.querySelectorAll('rect')) as SVGRectElement[];
@@ -112,8 +194,8 @@ export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
       }
 
       // Distinct columns (x) and rows (y). Use rounded values to tolerate
-      // sub-pixel jitter, then dedupe within ±2px buckets.
-      const bucket = (n: number, eps = 2) => Math.round(n / eps) * eps;
+      // sub-pixel jitter, then dedupe within ±2px buckets (helper hoisted
+      // above for reuse during detection).
       const xSet = new Set<number>(); const ySet = new Set<number>();
       for (const c of cells) { xSet.add(bucket(c.x)); ySet.add(bucket(c.y)); }
       const xs = Array.from(xSet).sort((a, b) => a - b);
@@ -217,18 +299,44 @@ export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
         }
       }
 
-      return { matrix, levels, cellCount: filled };
+      return { matrix, levels, cellCount: filled, strategy: strategyUsed };
     });
 
     if ('error' in data && data.error) {
+      const debug = (data as { debug?: unknown }).debug;
+      if (debug) {
+        logger.warn('Audience scrape diagnostic', { error: data.error, debug });
+        // Save a screenshot so the next failure is debuggable from disk.
+        try {
+          const fs = await import('node:fs/promises');
+          const path = await import('node:path');
+          const dir = path.resolve(process.cwd(), 'logs');
+          await fs.mkdir(dir, { recursive: true });
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const png = path.join(dir, `audience-debug-${stamp}.png`);
+          await page.screenshot({ path: png, fullPage: true });
+          logger.warn('Audience debug screenshot saved', { path: png });
+        } catch (e) {
+          logger.warn('Audience debug screenshot failed', { err: String(e) });
+        }
+      }
       return { ok: false, error: data.error };
     }
 
+    const ok = data as {
+      matrix: number[][];
+      levels: number[][];
+      cellCount: number;
+      strategy?: string;
+    };
+    if (ok.strategy) {
+      logger.info('Audience heatmap detected', { strategy: ok.strategy });
+    }
     return {
       ok: true,
-      matrix: (data as { matrix: number[][] }).matrix,
-      levels: (data as { levels: number[][] }).levels,
-      cellCount: (data as { cellCount: number }).cellCount,
+      matrix: ok.matrix,
+      levels: ok.levels,
+      cellCount: ok.cellCount,
     };
   } catch (err) {
     logger.warn('Audience scrape threw', { err: String(err) });

@@ -1,10 +1,11 @@
 import {
   getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
   insertScheduledRun, markRunFired, ScheduledRun,
-} from '../storage/accounts.js';
-import { getSetting, logEvent } from '../storage/queries.js';
+} from '../storage/scheduled_runs.js';
+import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
-import { pickWeightedOffsetMinute } from './audience_weights.js';
+import { formatLocalTime, generateWeightedSlots, todayDateKey } from './daily_plan.js';
+import { getIntSetting } from '../storage/settings.js';
 
 /**
  * Randomized 5x-daily scheduler.
@@ -54,11 +55,11 @@ export function ensureTodayPlan(): ScheduledRun[] {
   const created = getScheduledRunsForDate(dateKey);
   logEvent(
     'SCHEDULE_PLAN_CREATED',
-    `${created.length} runs at: ${created.map((r) => formatTimeIST(r.run_at)).join(', ')}`,
+    `${created.length} runs at: ${created.map((r) => formatLocalTime(r.run_at)).join(', ')}`,
   );
   logger.info('Today\'s random run plan created', {
     date: dateKey,
-    times: created.map((r) => formatTimeIST(r.run_at)),
+    times: created.map((r) => formatLocalTime(r.run_at)),
   });
   return created;
 }
@@ -76,35 +77,8 @@ export function getNextRuns(limit = 5): ScheduledRun[] {
  * date (local), enforcing a minimum spacing.
  */
 function generateRandomTimes(dateKey: string): number[] {
-  const n = clampInt(getSetting('random_runs_per_day', '5'), 1, 12);
-  const startHour = clampInt(getSetting('active_window_start_hour', '9'), 0, 23);
-  const endHourRaw = clampInt(getSetting('active_window_end_hour', '22'), 1, 24);
-  const endHour = endHourRaw <= startHour ? startHour + 1 : endHourRaw;
-
-  const [y, m, d] = dateKey.split('-').map(Number);
-  const startMs = new Date(y, m - 1, d, startHour, 0, 0).getTime();
-  const endMs   = new Date(y, m - 1, d, endHour, 0, 0).getTime();
-
-  const totalMinutes = Math.floor((endMs - startMs) / 60_000);
-  if (totalMinutes <= 0) return [];
-
-  // Jittered grid: divide window into N equal slots, pick one time per slot
-  // weighted by the audience-engagement heatmap (falls back to uniform when
-  // no heatmap is available). Min-spacing is preserved by the slot boundaries.
-  const slotMin = Math.floor(totalMinutes / n);
-  const picks: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const slotStart = i * slotMin;
-    const slotEnd = (i + 1) * slotMin;
-    const offsetMin = pickWeightedOffsetMinute(startMs, slotStart, slotEnd);
-    const ts = Math.floor((startMs + offsetMin * 60_000) / 1000);
-
-    // Drop already-passed times for today — don't backfill on boot
-    if (ts > Math.floor(Date.now() / 1000) + 60) {
-      picks.push(ts);
-    }
-  }
-  return picks;
+  const n = getIntSetting('random_runs_per_day', 5, 1, 12);
+  return generateWeightedSlots(n, dateKey);
 }
 
 async function tick(): Promise<void> {
@@ -117,31 +91,12 @@ async function tick(): Promise<void> {
   // Fire only the oldest due run; remaining will fire on next tick.
   const next = due[0];
   markRunFired(next.id, 'fired by random scheduler');
-  logEvent('SCHEDULED_RUN_FIRED', `id=${next.id} time=${formatTimeIST(next.run_at)}`);
-  logger.info('Firing scheduled pipeline run', { id: next.id, runAt: formatTimeIST(next.run_at) });
+  logEvent('SCHEDULED_RUN_FIRED', `id=${next.id} time=${formatLocalTime(next.run_at)}`);
+  logger.info('Firing scheduled pipeline run', { id: next.id, runAt: formatLocalTime(next.run_at) });
 
   try {
     await _onFire();
   } catch (err) {
     logger.error('Scheduled run handler threw', { err: String(err) });
   }
-}
-
-function todayDateKey(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function formatTimeIST(unixSec: number): string {
-  const d = new Date(unixSec * 1000);
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-}
-
-function clampInt(value: string, min: number, max: number): number {
-  const n = parseInt(value, 10);
-  if (!Number.isFinite(n)) return min;
-  return Math.min(max, Math.max(min, n));
 }

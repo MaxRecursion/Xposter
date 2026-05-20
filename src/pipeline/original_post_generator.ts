@@ -1,22 +1,16 @@
-import Groq from 'groq-sdk';
-import { getRecentPosts, logEvent } from '../storage/queries.js';
+import { getRecentPosts } from '../storage/queries.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
+import { getGroqClient } from './groq_client.js';
+import { logPromptToConsole } from './prompt_logger.js';
+import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
 
-let _groq: Groq | null = null;
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_REPAIR_ATTEMPTS = 2;
 const MAX_COMPACTABLE_CHARS = 340;
-
-function getGroqClient(): Groq {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error('GROQ_API_KEY is not set');
-  if (!_groq) _groq = new Groq({ apiKey });
-  return _groq;
-}
 
 export type PostLanguage = 'english';
 
@@ -75,33 +69,19 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
 
 // ── Quality gate ──────────────────────────────────────────────────────────────
 
-function logPromptToConsole(kind: string, id: string, system: string, user: string): void {
-  if (process.env.LOG_PROMPTS === 'false') return;
-  const line = '─'.repeat(72);
-  process.stdout.write(
-    `\n${line}\n┃ GROQ ${kind} PROMPT  ${id}\n${line}\n` +
-    `── SYSTEM ──\n${system}\n` +
-    `── USER ──\n${user}\n${line}\n\n`,
-  );
-  logEvent('GROQ_PROMPT', `[${kind}] ${id} | ${user.slice(0, 500)}`);
-}
-
 function qualityCheck(content: string): string | null {
-  const chars = Array.from(content).length;
+  const chars = charLength(content);
   if (chars < 20) return `too short (${chars} chars)`;
   if (chars > MAX_ORIGINAL_CHARS) return `too long (${chars} chars)`;
+  if (/[ऀ-ॿ]/.test(content)) return 'contains Devanagari script despite English-only policy';
   const sentenceEnds = (content.match(/[.!?]/g) ?? []).length;
   if (sentenceEnds < 1) return 'no sentence-ending punctuation found';
   return null;
 }
 
-function cleanModelText(raw: string): string {
-  return raw.replace(/^["']|["']$/g, '').trim();
-}
-
 export function compactOriginalPostForX(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim();
-  if (Array.from(normalized).length <= MAX_ORIGINAL_CHARS) return normalized;
+  if (charLength(normalized) <= MAX_ORIGINAL_CHARS) return normalized;
 
   const clipped = Array.from(normalized).slice(0, MAX_ORIGINAL_CHARS).join('');
   const lastSpace = clipped.lastIndexOf(' ');
@@ -109,7 +89,7 @@ export function compactOriginalPostForX(content: string): string {
   out = out.replace(/[\s,;:.-]+$/g, '').trim();
 
   out = ensureTerminalPunctuation(out);
-  while (Array.from(out).length > MAX_ORIGINAL_CHARS) {
+  while (charLength(out) > MAX_ORIGINAL_CHARS) {
     const withoutPunctuation = out.replace(/[.!?]$/, '');
     const space = withoutPunctuation.lastIndexOf(' ');
     out = (space > 80 ? withoutPunctuation.slice(0, space) : withoutPunctuation)
@@ -124,7 +104,7 @@ export function compactOriginalPostForX(content: string): string {
 function ensureTerminalPunctuation(text: string): string {
   if (/[.!?]$/.test(text)) return text;
   let out = text;
-  if (Array.from(out).length >= MAX_ORIGINAL_CHARS) {
+  if (charLength(out) >= MAX_ORIGINAL_CHARS) {
     out = Array.from(out)
       .slice(0, MAX_ORIGINAL_CHARS - 1)
       .join('')
@@ -234,13 +214,14 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
   } as any);
 
   const raw = (completion.choices[0]?.message?.content ?? '').trim();
-  const cleaned = raw.replace(/^["']|["']$/g, '').trim();
-  const chars = Array.from(cleaned).length;
+  const cleaned = cleanModelText(raw);
+  const chars = charLength(cleaned);
 
   if (chars === 0) {
     logger.warn('Engagement farm: empty response, skipping this run');
     throw new EmptyReplyError('Engagement farm returned empty reply');
   }
+  assertEnglishOnly(cleaned, 'Engagement farm');
 
   if (chars < 30 || chars > 280) {
     throw new Error(`Engagement farm post failed length check: ${chars} chars`);
@@ -329,11 +310,11 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
 
     lastQualityError = qError;
     logger.warn('Original post draft failed quality check', {
-      topic, category, attempt, qualityError: qError, chars: Array.from(cleaned).length,
+      topic, category, attempt, qualityError: qError, chars: charLength(cleaned),
     });
 
     if (attempt === MAX_REPAIR_ATTEMPTS && qError.startsWith('too long')) {
-      const chars = Array.from(cleaned).length;
+      const chars = charLength(cleaned);
       if (chars <= MAX_COMPACTABLE_CHARS) {
         const compacted = compactOriginalPostForX(cleaned);
         const compactError = qualityCheck(compacted);
@@ -341,7 +322,7 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
           cleaned = compacted;
           lastQualityError = null;
           logger.info('Original post compacted to fit X limit', {
-            topic, category, charsBefore: chars, charsAfter: Array.from(cleaned).length,
+            topic, category, charsBefore: chars, charsAfter: charLength(cleaned),
           });
           break;
         }
@@ -355,8 +336,9 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
   }
 
   logger.info('Original post generated', {
-    topic, category, chars: Array.from(cleaned).length, preview: cleaned.slice(0, 60),
+    topic, category, chars: charLength(cleaned), preview: cleaned.slice(0, 60),
   });
 
+  assertEnglishOnly(cleaned, 'Original post');
   return { content: cleaned, language: 'english', topic, category, researchContext: context };
 }
