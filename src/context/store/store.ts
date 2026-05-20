@@ -38,12 +38,17 @@ export class ContextStore {
     const db = getDb();
     const existsStmt = db.prepare('SELECT 1 AS hit FROM context_items WHERE body_hash = ?');
 
+    const seenHashes = new Set<string>();
     const hashFresh = items
       .map((it) => ({
         ...it,
         bodyHash: crypto.createHash('sha256').update(it.body).digest('hex'),
       }))
-      .filter((it) => !existsStmt.get(it.bodyHash));
+      .filter((it) => {
+        if (seenHashes.has(it.bodyHash)) return false;
+        seenHashes.add(it.bodyHash);
+        return !existsStmt.get(it.bodyHash);
+      });
 
     if (hashFresh.length === 0) {
       logger.debug('Context upsert: all hash-duplicates', { source: items[0]?.source, count: items.length });

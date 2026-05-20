@@ -63,7 +63,10 @@ describe('runFollowerSync', () => {
 
     vi.doMock('../../src/browser/followers.js', () => ({
       resolveOwnHandle: vi.fn().mockResolvedValue('my_handle'),
-      fetchOurFollowers: vi.fn().mockResolvedValue(['new_follower']),
+      fetchOurFollowerEntries: vi.fn().mockResolvedValue([
+        { handle: 'new_follower', followedByUs: false },
+      ]),
+      fetchOurFollowers: vi.fn(),
       followBack: vi.fn(),
     }));
     vi.doMock('../../src/pipeline/classifier.js', () => ({
@@ -89,13 +92,48 @@ describe('runFollowerSync', () => {
     const events = listFollowerEvents('PENDING');
     expect(events).toHaveLength(1);
     expect(events[0].account_handle).toBe('new_follower');
+    expect(events[0].detail).toContain('relationship=not_followed_back');
     expect(getAccount('new_follower')?.following_us).toBe(1);
+    expect(getAccount('new_follower')?.followed_by_us).toBe(0);
     expect(sendFollowerNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not queue followers that are already followed back', async () => {
+    vi.doMock('../../src/browser/followers.js', () => ({
+      resolveOwnHandle: vi.fn().mockResolvedValue('my_handle'),
+      fetchOurFollowerEntries: vi.fn().mockResolvedValue([
+        { handle: 'mutual_friend', followedByUs: true },
+      ]),
+      fetchOurFollowers: vi.fn(),
+      followBack: vi.fn(),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockImplementation((handle: string) => Promise.resolve(mockAccount(handle))),
+    }));
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendFollowerNotification: vi.fn(),
+    }));
+
+    const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
+    const { listPendingFollowBackEvents, getAccount } = await import('../../src/storage/accounts.js');
+
+    const result = await runFollowerSync();
+
+    expect(result).toMatchObject({
+      ok: true,
+      total: 1,
+      notFollowedBack: 0,
+      queued: 0,
+    });
+    expect(listPendingFollowBackEvents()).toHaveLength(0);
+    expect(getAccount('mutual_friend')?.following_us).toBe(1);
+    expect(getAccount('mutual_friend')?.followed_by_us).toBe(1);
   });
 
   it('returns a visible failure when the account handle cannot be resolved', async () => {
     vi.doMock('../../src/browser/followers.js', () => ({
       resolveOwnHandle: vi.fn().mockResolvedValue(null),
+      fetchOurFollowerEntries: vi.fn(),
       fetchOurFollowers: vi.fn(),
       followBack: vi.fn(),
     }));

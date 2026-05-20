@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import {
-  countActionedFollowBacksToday, getFollowerEvent, listFollowerEvents,
+  countActionedFollowBacksToday, getFollowerEvent, listFollowerEvents, listPendingFollowBackEvents,
   setFollowerEventStatus, setFollowingState,
 } from '../../storage/accounts.js';
 import { getSetting, logEvent } from '../../storage/queries.js';
@@ -44,7 +44,7 @@ function htmlErr(req: Request, res: Response, status: number, title: string, msg
 
 // GET pending follower events
 followRouter.get('/pending', (_req: Request, res: Response) => {
-  res.json(listFollowerEvents('PENDING'));
+  res.json(listPendingFollowBackEvents());
 });
 
 followRouter.get('/all', (_req: Request, res: Response) => {
@@ -63,7 +63,7 @@ followRouter.post('/sync', requireApiKey, async (_req: Request, res: Response) =
     res.json({
       ...result,
       ok: true,
-      message: `Follower sync complete: ${result.total} followers scanned, ${result.newFollowers} new, ${result.queued} queued.`,
+      message: `Follower sync complete: ${result.total} followers scanned, ${result.notFollowedBack ?? 0} not followed back, ${result.queued} pending.`,
     });
   } catch (err) {
     logger.error('Manual follower sync failed', { err });

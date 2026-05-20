@@ -2,6 +2,11 @@ import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 
+export interface FollowerListEntry {
+  handle: string;
+  followedByUs: boolean | null;
+}
+
 export async function resolveOwnHandle(): Promise<string | null> {
   const configured = sanitizeHandle(process.env.X_HANDLE ?? '');
   if (configured) return configured;
@@ -38,18 +43,30 @@ export async function resolveOwnHandle(): Promise<string | null> {
 
 /**
  * Reads the current authenticated user's follower handles by visiting
- * /<me>/verified_followers (and falling back to /<me>/followers).
+ * /<me>/followers.
  *
  * Returns up to `maxFollowers` of the most recent followers (X shows newest first).
  */
 export async function fetchOurFollowers(meHandle: string, maxFollowers = 200): Promise<string[]> {
+  const entries = await fetchOurFollowerEntries(meHandle, maxFollowers);
+  return entries.map((entry) => entry.handle);
+}
+
+/**
+ * Reads the current authenticated user's follower rows from the main followers
+ * timeline and captures whether the logged-in account already follows each row.
+ */
+export async function fetchOurFollowerEntries(
+  meHandle: string,
+  maxFollowers = 200,
+): Promise<FollowerListEntry[]> {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 
   try {
     const candidatePaths = [
-      `https://x.com/${meHandle}/verified_followers`,
       `https://x.com/${meHandle}/followers`,
+      `https://x.com/${meHandle}/verified_followers`,
     ];
 
     let opened = false;
@@ -57,7 +74,7 @@ export async function fetchOurFollowers(meHandle: string, maxFollowers = 200): P
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 });
         await delay(randomBetween(2000, 3500));
-        const hasUserCells = await page.locator('[data-testid="UserCell"]').count() > 0;
+        const hasUserCells = await page.locator('[data-testid="primaryColumn"] [data-testid="UserCell"]').count() > 0;
         if (hasUserCells) { opened = true; break; }
       } catch {
         // try next
@@ -68,29 +85,63 @@ export async function fetchOurFollowers(meHandle: string, maxFollowers = 200): P
       return [];
     }
 
-    const seen = new Set<string>();
+    const seen = new Map<string, FollowerListEntry>();
     let stableScrolls = 0;
 
     while (seen.size < maxFollowers && stableScrolls < 4) {
-      const newHandles: string[] = await page.evaluate(() => {
-        const cells = Array.from(document.querySelectorAll('[data-testid="UserCell"]'));
-        const handles: string[] = [];
+      const newEntries: FollowerListEntry[] = await page.evaluate((ownHandle) => {
+        const primary = document.querySelector('[data-testid="primaryColumn"]') ?? document.querySelector('main');
+        const timeline = primary?.querySelector('[aria-label^="Timeline:"]') ?? primary;
+        const cells = Array.from(timeline?.querySelectorAll('[data-testid="UserCell"]') ?? []);
+        const entries: FollowerListEntry[] = [];
+
         for (const cell of cells) {
-          const links = cell.querySelectorAll('a[href^="/"]');
-          for (const a of Array.from(links)) {
-            const href = (a as HTMLAnchorElement).getAttribute('href') ?? '';
-            const m = href.match(/^\/([A-Za-z0-9_]{1,15})$/);
-            if (m) {
-              handles.push(m[1]);
-              break; // one handle per cell
+          const links = Array.from(cell.querySelectorAll<HTMLAnchorElement>('a[href^="/"]'));
+          let handle: string | null = null;
+
+          for (const a of links) {
+            const href = a.getAttribute('href') ?? '';
+            const m = href.match(/^\/([A-Za-z0-9_]{1,15})(?:[?#].*)?$/);
+            if (!m) continue;
+            if (m[1].toLowerCase() === String(ownHandle).toLowerCase()) continue;
+            handle = m[1];
+            break;
+          }
+
+          if (!handle) continue;
+
+          const controls = Array.from(cell.querySelectorAll<HTMLElement>('button,[role="button"]'));
+          let followedByUs: boolean | null = null;
+          for (const control of controls) {
+            const label = [
+              control.getAttribute('aria-label'),
+              control.getAttribute('data-testid'),
+              control.textContent,
+            ].filter(Boolean).join(' ').trim();
+
+            if (/\bunfollow\b|following/i.test(label)) {
+              followedByUs = true;
+              break;
+            }
+            if (/\bfollow\b/i.test(label)) {
+              followedByUs = false;
             }
           }
+
+          entries.push({ handle, followedByUs });
         }
-        return handles;
+
+        return entries;
       });
 
       const before = seen.size;
-      for (const h of newHandles) seen.add(h);
+      for (const entry of newEntries) {
+        const key = entry.handle.toLowerCase();
+        const existing = seen.get(key);
+        if (!existing || (existing.followedByUs === null && entry.followedByUs !== null)) {
+          seen.set(key, entry);
+        }
+      }
 
       if (seen.size === before) {
         stableScrolls++;
@@ -102,7 +153,7 @@ export async function fetchOurFollowers(meHandle: string, maxFollowers = 200): P
       await delay(randomBetween(1500, 2800));
     }
 
-    return Array.from(seen).slice(0, maxFollowers);
+    return Array.from(seen.values()).slice(0, maxFollowers);
   } finally {
     await page.close();
   }

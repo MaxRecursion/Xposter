@@ -15,6 +15,11 @@ export interface FollowerEvent {
   detail: string | null;
 }
 
+export interface UpsertFollowerEventResult {
+  id: number;
+  created: boolean;
+}
+
 export function enqueueFollowerEvent(
   handle: string,
   type: FollowerEventType,
@@ -32,6 +37,49 @@ export function enqueueFollowerEvent(
   return result.lastInsertRowid as number;
 }
 
+export function upsertPendingFollowBackEvent(
+  handle: string,
+  detail?: string,
+): UpsertFollowerEventResult | null {
+  const active = getDb().prepare(`
+    SELECT id FROM follower_events
+    WHERE account_handle = ?
+      AND event_type = 'NEW_FOLLOWER'
+      AND status IN ('PENDING','APPROVED')
+    ORDER BY detected_at DESC
+    LIMIT 1
+  `).get(handle) as { id: number } | undefined;
+
+  if (active) {
+    getDb().prepare(`
+      UPDATE follower_events
+      SET status = 'PENDING',
+          scheduled_at = NULL,
+          action_taken_at = NULL,
+          detail = COALESCE(?, detail)
+      WHERE id = ?
+    `).run(detail ?? null, active.id);
+    return { id: active.id, created: false };
+  }
+
+  const resolved = getDb().prepare(`
+    SELECT id FROM follower_events
+    WHERE account_handle = ?
+      AND event_type = 'NEW_FOLLOWER'
+      AND status IN ('SKIPPED','ACTIONED')
+    ORDER BY detected_at DESC
+    LIMIT 1
+  `).get(handle) as { id: number } | undefined;
+
+  if (resolved) return null;
+
+  const result = getDb().prepare(`
+    INSERT INTO follower_events (account_handle, event_type, detail)
+    VALUES (?, 'NEW_FOLLOWER', ?)
+  `).run(handle, detail ?? null);
+  return { id: result.lastInsertRowid as number, created: true };
+}
+
 export function getFollowerEvent(id: number): FollowerEvent | null {
   return (getDb()
     .prepare('SELECT * FROM follower_events WHERE id = ?')
@@ -47,6 +95,25 @@ export function listFollowerEvents(status?: FollowerEventStatus): FollowerEvent[
   return getDb()
     .prepare(`SELECT * FROM follower_events ORDER BY detected_at DESC LIMIT 200`)
     .all() as FollowerEvent[];
+}
+
+export function listPendingFollowBackEvents(): FollowerEvent[] {
+  return getDb().prepare(`
+    SELECT fe.*
+    FROM follower_events fe
+    WHERE fe.event_type = 'NEW_FOLLOWER'
+      AND fe.status = 'PENDING'
+      AND instr(COALESCE(fe.detail, ''), 'relationship=not_followed_back') > 0
+      AND EXISTS (
+        SELECT 1
+        FROM accounts a
+        WHERE lower(a.handle) = lower(fe.account_handle)
+          AND a.following_us = 1
+          AND a.followed_by_us = 0
+      )
+    ORDER BY fe.detected_at DESC
+    LIMIT 200
+  `).all() as FollowerEvent[];
 }
 
 export function setFollowerEventStatus(
@@ -84,6 +151,7 @@ export function getDueScheduledFollowBacks(): FollowerEvent[] {
     WHERE status = 'APPROVED'
       AND scheduled_at IS NOT NULL
       AND scheduled_at <= ?
+      AND instr(COALESCE(detail, ''), 'auto_follow=true') > 0
     ORDER BY scheduled_at ASC
     LIMIT 10
   `).all(now) as FollowerEvent[];
