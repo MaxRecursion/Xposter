@@ -9,16 +9,9 @@ import { updateGeneratedReply, updatePostStatus } from '../../storage/queries.js
 import { sendApprovalNotification } from '../../notifications/ntfy.js';
 import { logger } from '../../utils/logger.js';
 import { requireApiKey } from '../auth.js';
+import { clampInt, paramString } from '../http.js';
 
 export const postsRouter = Router();
-
-function id(req: Request): string { return String(req.params['id']); }
-
-function clampInt(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = parseInt(String(value ?? fallback), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
-}
 
 // Dashboard stats
 postsRouter.get('/stats', (_req: Request, res: Response) => {
@@ -38,7 +31,7 @@ postsRouter.get('/pending', (_req: Request, res: Response) => {
 
 // Single post
 postsRouter.get('/:id', (req: Request, res: Response) => {
-  const post = getPost(id(req));
+  const post = getPost(paramString(req, 'id'));
   if (!post) return res.status(404).json({ error: 'not found' });
   res.json(post);
 });
@@ -52,16 +45,16 @@ postsRouter.patch('/:id/reply', requireApiKey, (req: Request, res: Response) => 
   if (reply.length > 280) {
     return res.status(400).json({ error: 'reply must be 280 characters or less' });
   }
-  const post = getPost(id(req));
+  const post = getPost(paramString(req, 'id'));
   if (!post) return res.status(404).json({ error: 'not found' });
 
-  updateFinalReply(id(req), reply.trim());
+  updateFinalReply(post.id, reply.trim());
   res.json({ ok: true });
 });
 
 // Regenerate reply
 postsRouter.post('/:id/regenerate', requireApiKey, async (req: Request, res: Response) => {
-  const post = getPost(id(req));
+  const post = getPost(paramString(req, 'id'));
   if (!post) return res.status(404).json({ error: 'not found' });
 
   try {

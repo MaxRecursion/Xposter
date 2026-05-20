@@ -37,6 +37,7 @@ describe('POST /api/follow/sync', () => {
         handle: 'my_handle',
         total: 12,
         newFollowers: 2,
+        notFollowedBack: 2,
         queued: 2,
       }),
     }));
@@ -57,8 +58,9 @@ describe('POST /api/follow/sync', () => {
       handle: 'my_handle',
       total: 12,
       newFollowers: 2,
+      notFollowedBack: 2,
       queued: 2,
-      message: 'Follower sync complete: 12 followers scanned, 2 new, 2 queued.',
+      message: 'Follower sync complete: 12 followers scanned, 2 not followed back, 2 pending.',
     });
   });
 

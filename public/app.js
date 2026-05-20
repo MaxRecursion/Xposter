@@ -1301,7 +1301,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const result = await apiFetch('/api/follow/sync', { method: 'POST' });
         const message = result.message ??
-          `Follower sync complete: ${result.total ?? 0} followers scanned, ${result.newFollowers ?? 0} new.`;
+          `Follower sync complete: ${result.total ?? 0} followers scanned, ${result.notFollowedBack ?? 0} not followed back.`;
         setFollowerSyncStatus(message, 'success');
         toast(message, 'success');
         await loadFollowers();

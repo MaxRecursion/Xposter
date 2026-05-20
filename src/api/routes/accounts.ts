@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
 import {
-  Classification, getAccount, getInteractionStats, listAccounts,
-  listRecentInteractions,
+  Classification, getAccount, listAccounts,
 } from '../../storage/accounts.js';
+import { getInteractionStats, listRecentInteractions } from '../../storage/interactions.js';
 import { classifyAccount } from '../../pipeline/classifier.js';
 import { requireApiKey } from '../auth.js';
+import { clampInt } from '../http.js';
 
 export const accountsRouter = Router();
 
@@ -47,9 +48,3 @@ accountsRouter.get('/_/interactions', (req: Request, res: Response) => {
   const limit = clampInt(req.query['limit'], 50, 1, 500);
   res.json(listRecentInteractions(limit));
 });
-
-function clampInt(value: unknown, fallback: number, min: number, max: number): number {
-  const n = parseInt(String(value ?? fallback), 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}

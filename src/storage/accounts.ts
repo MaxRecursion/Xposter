@@ -142,192 +142,39 @@ export function classificationIsFresh(
   return ageSec < ttlDays * 86400;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Interaction tracking
-// ──────────────────────────────────────────────────────────────────────────
+export {
+  getInteractionStats,
+  listRecentInteractions,
+  recordInteraction,
+  updateInteractionMetrics,
+} from './interactions.js';
+export type { Interaction } from './interactions.js';
 
-export interface Interaction {
-  id: number;
-  post_id: string;
-  account_handle: string;
-  our_reply_text: string;
-  our_tweet_id: string | null;
-  our_tweet_url: string | null;
-  posted_at: number;
-  likes_received: number;
-  replies_received: number;
-  retweets_received: number;
-  impressions: number;
-  last_metric_check: number | null;
-  success_score: number;
-  author_engaged: number;
-  notes: string | null;
-}
+export {
+  countActionedFollowBacksToday,
+  enqueueFollowerEvent,
+  getFollowerEvent,
+  listFollowerEvents,
+  listPendingFollowBackEvents,
+  setFollowerEventStatus,
+  upsertPendingFollowBackEvent,
+} from './follower_events.js';
+export type {
+  FollowerEvent,
+  FollowerEventStatus,
+  FollowerEventType,
+  UpsertFollowerEventResult,
+} from './follower_events.js';
 
-export function recordInteraction(
-  postId: string,
-  accountHandle: string,
-  replyText: string,
-  posted: { tweetId?: string; tweetUrl?: string } = {},
-): number {
-  const db = getDb();
-  const result = db.prepare(`
-    INSERT INTO interactions (
-      post_id, account_handle, our_reply_text, our_tweet_id, our_tweet_url
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(postId, accountHandle, replyText, posted.tweetId ?? null, posted.tweetUrl ?? null);
-
-  // Bump aggregate counters on accounts
-  db.prepare(`
-    INSERT INTO accounts (handle, total_replies_sent, last_seen_at, updated_at)
-    VALUES (?, 1, unixepoch(), unixepoch())
-    ON CONFLICT(handle) DO UPDATE SET
-      total_replies_sent = accounts.total_replies_sent + 1,
-      last_seen_at       = unixepoch(),
-      updated_at         = unixepoch()
-  `).run(accountHandle);
-
-  return result.lastInsertRowid as number;
-}
-
-export function updateInteractionMetrics(
-  id: number,
-  metrics: {
-    likes?: number;
-    replies?: number;
-    retweets?: number;
-    impressions?: number;
-    authorEngaged?: boolean;
-  },
-): void {
-  const successScore =
-    (metrics.likes ?? 0) * 1 +
-    (metrics.replies ?? 0) * 13 +
-    (metrics.retweets ?? 0) * 20 +
-    (metrics.authorEngaged ? 25 : 0);
-
-  getDb().prepare(`
-    UPDATE interactions SET
-      likes_received    = COALESCE(?, likes_received),
-      replies_received  = COALESCE(?, replies_received),
-      retweets_received = COALESCE(?, retweets_received),
-      impressions       = COALESCE(?, impressions),
-      author_engaged    = COALESCE(?, author_engaged),
-      last_metric_check = unixepoch(),
-      success_score     = ?
-    WHERE id = ?
-  `).run(
-    metrics.likes ?? null,
-    metrics.replies ?? null,
-    metrics.retweets ?? null,
-    metrics.impressions ?? null,
-    metrics.authorEngaged === undefined ? null : (metrics.authorEngaged ? 1 : 0),
-    successScore,
-    id,
-  );
-}
-
-export function listRecentInteractions(limit = 50): Interaction[] {
-  return getDb()
-    .prepare(`SELECT * FROM interactions ORDER BY posted_at DESC LIMIT ?`)
-    .all(Math.min(Math.max(limit, 1), 500)) as Interaction[];
-}
-
-export function getInteractionStats(): {
-  total: number;
-  total_likes: number;
-  total_replies: number;
-  total_retweets: number;
-  avg_success: number;
-} {
-  const row = getDb().prepare(`
-    SELECT
-      COUNT(*)                       AS total,
-      COALESCE(SUM(likes_received),0)    AS total_likes,
-      COALESCE(SUM(replies_received),0)  AS total_replies,
-      COALESCE(SUM(retweets_received),0) AS total_retweets,
-      COALESCE(AVG(success_score),0)     AS avg_success
-    FROM interactions
-  `).get() as any;
-  return row;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Follower events
-// ──────────────────────────────────────────────────────────────────────────
-
-export type FollowerEventType = 'NEW_FOLLOWER' | 'UNFOLLOWED' | 'FOLLOW_BACK_DUE';
-export type FollowerEventStatus =
-  | 'PENDING' | 'APPROVED' | 'ACTIONED' | 'SKIPPED' | 'ERROR' | 'EXPIRED';
-
-export interface FollowerEvent {
-  id: number;
-  account_handle: string;
-  event_type: FollowerEventType;
-  status: FollowerEventStatus;
-  detected_at: number;
-  action_taken_at: number | null;
-  detail: string | null;
-}
-
-export function enqueueFollowerEvent(
-  handle: string,
-  type: FollowerEventType,
-  detail?: string,
-): number | null {
-  // Skip if there is already an open (pending/approved) event for this handle/type
-  const existing = getDb().prepare(`
-    SELECT id FROM follower_events
-    WHERE account_handle = ? AND event_type = ? AND status IN ('PENDING','APPROVED')
-  `).get(handle, type) as { id: number } | undefined;
-  if (existing) return null;
-
-  const result = getDb().prepare(`
-    INSERT INTO follower_events (account_handle, event_type, detail) VALUES (?, ?, ?)
-  `).run(handle, type, detail ?? null);
-  return result.lastInsertRowid as number;
-}
-
-export function getFollowerEvent(id: number): FollowerEvent | null {
-  return (getDb()
-    .prepare('SELECT * FROM follower_events WHERE id = ?')
-    .get(id) as FollowerEvent | undefined) ?? null;
-}
-
-export function listFollowerEvents(status?: FollowerEventStatus): FollowerEvent[] {
-  if (status) {
-    return getDb()
-      .prepare(`SELECT * FROM follower_events WHERE status = ? ORDER BY detected_at DESC LIMIT 200`)
-      .all(status) as FollowerEvent[];
-  }
-  return getDb()
-    .prepare(`SELECT * FROM follower_events ORDER BY detected_at DESC LIMIT 200`)
-    .all() as FollowerEvent[];
-}
-
-export function setFollowerEventStatus(
-  id: number,
-  status: FollowerEventStatus,
-  detail?: string,
-): void {
-  getDb().prepare(`
-    UPDATE follower_events
-    SET status = ?, action_taken_at = unixepoch(),
-        detail = COALESCE(?, detail)
-    WHERE id = ?
-  `).run(status, detail ?? null, id);
-}
-
-export function countActionedFollowBacksToday(): number {
-  const startOfDay = startOfTodayUnix();
-  const row = getDb().prepare(`
-    SELECT COUNT(*) AS n FROM follower_events
-    WHERE event_type = 'NEW_FOLLOWER'
-      AND status = 'ACTIONED'
-      AND COALESCE(action_taken_at, 0) >= ?
-  `).get(startOfDay) as { n: number };
-  return row.n;
-}
+export {
+  getDuePendingRuns,
+  getScheduledRunsForDate,
+  getUpcomingRuns,
+  insertScheduledRun,
+  markRunFired,
+  markRunSkipped,
+} from './scheduled_runs.js';
+export type { ScheduledRun } from './scheduled_runs.js';
 
 export function setFollowingState(handle: string, ourFollow: boolean): void {
   getDb().prepare(`
@@ -345,64 +192,4 @@ export function setFollowerState(handle: string, theyFollowUs: boolean): void {
     ON CONFLICT(handle) DO UPDATE SET
       following_us = ?, updated_at = unixepoch()
   `).run(handle, theyFollowUs ? 1 : 0, theyFollowUs ? 1 : 0);
-}
-
-function startOfTodayUnix(): number {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.floor(start.getTime() / 1000);
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Scheduled runs (today's randomized pipeline times)
-// ──────────────────────────────────────────────────────────────────────────
-
-export interface ScheduledRun {
-  id: number;
-  run_date: string;
-  run_at: number;
-  kind: string;
-  status: 'SCHEDULED' | 'FIRED' | 'SKIPPED' | 'ERROR';
-  fired_at: number | null;
-  detail: string | null;
-}
-
-export function insertScheduledRun(date: string, runAt: number, kind = 'PIPELINE', detail?: string): void {
-  getDb().prepare(`
-    INSERT OR IGNORE INTO scheduled_runs (run_date, run_at, kind, detail) VALUES (?, ?, ?, ?)
-  `).run(date, runAt, kind, detail ?? null);
-}
-
-export function getScheduledRunsForDate(date: string, kind = 'PIPELINE'): ScheduledRun[] {
-  return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE run_date = ? AND kind = ? ORDER BY run_at`)
-    .all(date, kind) as ScheduledRun[];
-}
-
-export function getDuePendingRuns(now: number, kind = 'PIPELINE'): ScheduledRun[] {
-  return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at <= ? AND kind = ? ORDER BY run_at`)
-    .all(now, kind) as ScheduledRun[];
-}
-
-export function getUpcomingRuns(now: number, limit = 10, kind = 'PIPELINE'): ScheduledRun[] {
-  return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at >= ? AND kind = ? ORDER BY run_at LIMIT ?`)
-    .all(now, kind, limit) as ScheduledRun[];
-}
-
-export function markRunFired(id: number, detail?: string): void {
-  getDb().prepare(`
-    UPDATE scheduled_runs
-    SET status='FIRED', fired_at=unixepoch(), detail=COALESCE(?, detail)
-    WHERE id=?
-  `).run(detail ?? null, id);
-}
-
-export function markRunSkipped(id: number, detail: string): void {
-  getDb().prepare(`
-    UPDATE scheduled_runs
-    SET status='SKIPPED', fired_at=unixepoch(), detail=?
-    WHERE id=?
-  `).run(detail, id);
 }

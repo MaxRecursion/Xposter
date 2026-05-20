@@ -1,10 +1,9 @@
-import { fetchOurFollowers, resolveOwnHandle } from '../browser/followers.js';
+import { fetchOurFollowerEntries, resolveOwnHandle, type FollowerListEntry } from '../browser/followers.js';
 import {
-  listAccounts, setFollowerState, getAccount,
+  listAccounts, setFollowerState, setFollowingState, upsertPendingFollowBackEvent,
 } from '../storage/accounts.js';
-import { enqueueFollowerEvent, autoApproveFollowBack, setFollowerEventStatus } from '../storage/follower_events.js';
 import { logEvent } from '../storage/queries.js';
-import { getBooleanSetting, getListSetting, getIntSetting } from '../storage/settings.js';
+import { getBooleanSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { sendFollowerNotification } from '../notifications/ntfy.js';
 import { classifyAccount } from '../pipeline/classifier.js';
@@ -18,6 +17,7 @@ export interface FollowerSyncResult {
   newFollowers: number;
   queued: number;
   total: number;
+  notFollowedBack?: number;
   handle?: string;
   reason?: string;
   message?: string;
@@ -45,13 +45,12 @@ export function stopFollowerSync(): void {
 /**
  * One pass:
  *   1. Read X_HANDLE env var (our own handle). If missing, log and skip.
- *   2. Fetch follower handles via Playwright.
- *   3. Diff against accounts.following_us = 1 in DB.
- *   4. For each new follower:
- *        - mark following_us = 1
- *        - classify (cached) so we have bio/classification before notifying
- *        - enqueue NEW_FOLLOWER event (PENDING)
- *        - send a single ntfy notification
+ *   2. Fetch follower rows via Playwright from the main followers timeline.
+ *   3. Mark accounts as following us and record whether we already follow them.
+ *   4. For confirmed followers we do not follow back:
+ *        - classify (cached) so the pending decision has useful context
+ *        - enqueue or refresh a PENDING follow-back decision
+ *        - send one ntfy notification only for newly-created decisions
  */
 export async function runFollowerSync(): Promise<FollowerSyncResult> {
   const me = await resolveOwnHandle();
@@ -75,9 +74,9 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
   }
 
   logEvent('FOLLOWER_SYNC_START');
-  let followers: string[] = [];
+  let followers: FollowerListEntry[] = [];
   try {
-    followers = await fetchOurFollowers(me, 200);
+    followers = await fetchOurFollowerEntries(me, 200);
   } catch (err) {
     const message = `Follower fetch failed: ${String(err)}`;
     logger.error('Follower fetch failed', { err: String(err) });
@@ -92,68 +91,65 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
   );
 
   const newOnes: string[] = [];
-  for (const handle of followers) {
+  const notFollowedBack: string[] = [];
+  for (const entry of followers) {
+    const handle = entry.handle;
     setFollowerState(handle, true);
     if (!knownFollowers.has(handle.toLowerCase())) newOnes.push(handle);
+    if (entry.followedByUs !== null) {
+      setFollowingState(handle, entry.followedByUs);
+    }
+    if (entry.followedByUs === false) {
+      notFollowedBack.push(handle);
+    }
   }
 
-  // Cap to avoid thundering-herd on first run after a long absence
+  // Cap to avoid notification/classification bursts on first run after a long absence.
   const maxPerRun = 5;
-  const blocklist = getListSetting('blocklist_classifications', ['BOT', 'SPAM', 'BRAND_PROMO'])
-    .map((v) => v.toUpperCase());
-  const windowHours = getIntSetting('follow_back_window_hours', 24, 1, 48);
-  const now = Math.floor(Date.now() / 1000);
 
   let queued = 0;
-  for (const handle of newOnes.slice(0, maxPerRun)) {
+  for (const handle of notFollowedBack.slice(0, maxPerRun)) {
     try {
       const account = await classifyAccount(handle, null, { fetchProfileIfMissing: true });
       const cls = (account.classification ?? 'UNKNOWN').toUpperCase();
-      const isBlocked = blocklist.includes(cls);
+      const detail = `source=follower_scan_v2; relationship=not_followed_back; classification=${cls}; followers=${account.follower_count_seen}`;
+      const event = upsertPendingFollowBackEvent(handle, detail);
 
-      const detail = `classification=${cls}; followers=${account.follower_count_seen}; auto=${!isBlocked}`;
-      const eventId = enqueueFollowerEvent(handle, 'NEW_FOLLOWER', detail);
+      if (event !== null) {
+        queued++;
+        logEvent('FOLLOW_BACK_PENDING', `@${handle} follows you; you do not follow back`, undefined);
+        logger.info('Queued pending follow-back decision', { handle, cls, created: event.created });
 
-      if (eventId !== null) {
-        if (isBlocked) {
-          // Auto-skip bots, spam, brand accounts
-          setFollowerEventStatus(eventId, 'SKIPPED', `blocklisted: ${cls}`);
-          logEvent('NEW_FOLLOWER_SKIPPED', `@${handle} (${cls} is blocklisted)`, undefined);
-          logger.info('Auto-skipped new follower (blocklisted)', { handle, cls });
-        } else {
-          // Schedule follow-back at a random time within the window
-          const minDelay = 30 * 60;  // minimum 30 minutes
-          const maxDelay = windowHours * 3600;
-          const delay = minDelay + Math.floor(Math.random() * (maxDelay - minDelay));
-          const scheduledAt = now + delay;
-          autoApproveFollowBack(eventId, scheduledAt, detail);
-          queued++;
-
-          const scheduledTime = new Date(scheduledAt * 1000).toLocaleTimeString('en-IN', {
-            hour: '2-digit', minute: '2-digit', hour12: true,
-          });
-          logEvent('NEW_FOLLOWER_SCHEDULED', `@${handle} → follow-back at ${scheduledTime}`, undefined);
-          logger.info('Scheduled auto follow-back', { handle, cls, scheduledAt, scheduledTime });
-
-          // Send informational notification (user can still skip via dashboard)
-          await sendFollowerNotification(eventId, handle, account).catch((err) => {
+        if (event.created) {
+          await sendFollowerNotification(event.id, handle, account).catch((err) => {
             logger.warn('Follower notification failed', { handle, err: String(err) });
           });
         }
       }
     } catch (err) {
-      logger.warn('Failed to process new follower', { handle, err: String(err) });
+      logger.warn('Failed to process pending follow-back candidate', { handle, err: String(err) });
     }
   }
 
-  if (newOnes.length > maxPerRun) {
+  if (notFollowedBack.length > maxPerRun) {
     logEvent(
-      'NEW_FOLLOWER_BATCH_TRUNCATED',
-      `${newOnes.length} new followers; processed ${maxPerRun}`,
+      'FOLLOW_BACK_BATCH_TRUNCATED',
+      `${notFollowedBack.length} not-followed-back followers; processed ${maxPerRun}`,
     );
   }
 
-  logEvent('FOLLOWER_SYNC_COMPLETE', `total=${followers.length} new=${newOnes.length}`);
-  logger.info('Follower sync complete', { total: followers.length, new: newOnes.length });
-  return { ok: true, newFollowers: newOnes.length, queued, total: followers.length, handle: me };
+  logEvent('FOLLOWER_SYNC_COMPLETE', `total=${followers.length} new=${newOnes.length} notFollowedBack=${notFollowedBack.length}`);
+  logger.info('Follower sync complete', {
+    total: followers.length,
+    new: newOnes.length,
+    notFollowedBack: notFollowedBack.length,
+  });
+  return {
+    ok: true,
+    newFollowers: newOnes.length,
+    queued,
+    total: followers.length,
+    notFollowedBack: notFollowedBack.length,
+    handle: me,
+  };
 }

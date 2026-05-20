@@ -41,6 +41,18 @@ export async function getBrowserContext(): Promise<BrowserContext> {
 
   await injectAuthCookiesFromEnv(_context);
 
+  // tsx/esbuild injects __name(fn, "name") calls into compiled code to
+  // preserve function .name in dev mode. When Playwright serialises a
+  // page.evaluate() callback via Function.toString(), those __name() calls
+  // are included but the __name helper itself (defined at module scope) is
+  // not — causing "ReferenceError: __name is not defined" in the browser.
+  // Defining it as a harmless polyfill here fixes every evaluate() call
+  // across the whole codebase without touching individual files.
+  await _context.addInitScript(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__name = (fn: unknown, _name?: string) => fn;
+  });
+
   logger.info('Browser context ready');
   return _context;
 }
