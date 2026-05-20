@@ -1,231 +1,625 @@
 # Xposter
 
-A personal X/Twitter automation tool that runs locally on your Mac. It ingests your timeline via Playwright, scores and filters tweets, generates sharp AI replies, posts them automatically, and publishes 7 original posts per day — all while sending real-time push notifications to your iPhone through ntfy.
+A personal X/Twitter automation system for Pune-based operators. Xposter runs locally on macOS, ingests your home timeline via Playwright, scores and filters tweets, generates AI-powered replies with Groq, posts automatically, and publishes 7 original posts per day — all with real-time iPhone notifications via ntfy.
 
-Built for a Pune-based operator. Knows Pune, Marathi, Hinjewadi, the monsoon, and has opinions about PMC.
+Built with TypeScript, SQLite, Playwright stealth, Voyage AI embeddings for RAG, and an optional Claude-powered self-healing agent.
 
 ---
 
-## Key Features
+## Table of Contents
 
-- **Automated reply pipeline** — timeline ingestion → language detection → scoring → author classification → AI reply generation → Playwright posting → iPhone push notification
-- **Original post scheduler** — 7 posts/day (5 research-backed originals + 2 engagement-farm hot takes), randomly distributed across a configurable active window
-- **Neural schema memory** — concept graph built from every post and reply ever made; recency × engagement weighted; injected into prompts to avoid repetition and maintain voice consistency
-- **Context RAG layer** — Voyage AI embeddings + sqlite-vec ANN search over RSS feeds, Reddit, and live weather; re-ranked by similarity × recency × credibility × topic overlap
-- **Trend detection** — 6h vs 24h velocity computed from the context corpus; influences topic selection for originals
-- **Dual persona system** — "Pune Punekar" persona for Pune-topic tweets, "sharp observer" for everything else; auto-detected from tweet content
-- **Adjustable wit level** — 0–100 slider maps to five tiers (SERIOUS → MEASURED → BALANCED → WITTY → SHARP) with distinct prompt instructions per tier
-- **Account classifier** — LLM-based (with heuristic short-circuit) into 9 types; cached with a 7-day TTL; classification shapes the reply tone
-- **Language detection** — Devanagari Marathi, Roman-script Marathi (transliterated), Hindi, English; custom marker-based detection with `franc` fallback
-- **Impression sync** — every 2 hours, Playwright scrapes engagement metrics for recently posted originals
-- **iPhone dashboard** — accessible on LAN or via Tailscale; full-featured SPA with 8 tabs
-- **ntfy push notifications** — "Reply Posted" alert with one-tap Delete button; follower alerts with Follow Back / Skip
+1. [What It Does](#what-it-does)
+2. [Architecture](#architecture)
+3. [Features](#features)
+4. [Setup & Installation](#setup--installation)
+5. [Configuration Reference](#configuration-reference)
+6. [API Reference](#api-reference)
+7. [Scheduler Overview](#scheduler-overview)
+8. [Dashboard Overview](#dashboard-overview)
+9. [Database Schema](#database-schema)
+10. [Context / RAG System](#context--rag-system)
+11. [Claude Agent (Self-Healing)](#claude-agent-self-healing)
+12. [Tech Stack](#tech-stack)
+
+---
+
+## What It Does
+
+Xposter runs five things on a schedule:
+
+| Job | What happens |
+|---|---|
+| **Reply pipeline** (5×/day) | Playwright scrapes timeline → filters by topic/language → scores by recency+engagement+opportunity → generates reply via Groq → awaits your ntfy tap → posts |
+| **Original posts** (7×/day) | Picks topic weighted by RAG trends → gathers research context → drafts via Groq → posts to your timeline |
+| **Follower sync** (periodic) | Detects new followers → ntfy alert with one-tap "Follow Back / Skip" |
+| **Impression sync** (every 2 h) | Playwright scrapes likes/replies/retweets/impressions for recent originals → stores for dashboard charting |
+| **Audience heatmap** (periodic) | Scrapes a 7×24 activity matrix of your followers → biases post times toward high-engagement hours |
+
+Everything is controlled from a local web dashboard backed by a single SQLite database.
 
 ---
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│  Mac (runs 24/7)                                              │
-│                                                               │
-│  ┌─────────────┐    ┌─────────────────────────────────────┐  │
-│  │  Express    │    │  Scheduler                          │  │
-│  │  Server     │    │  ├─ random_runs.ts  (5x/day reply)  │  │
-│  │  :3000      │    │  ├─ original_posts.ts (7x/day OG)   │  │
-│  │  ├─ /api/*  │    │  ├─ follower_sync.ts                │  │
-│  │  └─ SPA     │    │  └─ context/ingest/scheduler.ts     │  │
-│  └──────┬──────┘    └──────────────┬────────────────────--┘  │
-│         │                          │                           │
-│         │           ┌──────────────▼──────────────────────┐  │
-│         │           │  Reply Pipeline (runPipeline)        │  │
-│         │           │  1. Playwright → ingest timeline     │  │
-│         │           │  2. filter.ts  → language + keyword  │  │
-│         │           │  3. scorer.ts  → 0–100 score         │  │
-│         │           │  4. classifier.ts → account type     │  │
-│         │           │  5. generator.ts → Groq LLM reply    │  │
-│         │           │  6. posting.ts → Playwright post     │  │
-│         │           │  7. ntfy notification to iPhone       │  │
-│         │           └─────────────────────────────────────-┘  │
-│         │                                                       │
-│         │           ┌─────────────────────────────────────┐   │
-│         │           │  Original Post Pipeline              │   │
-│         │           │  1. pickTopicAndCategory()           │   │
-│         │           │  2. gatherResearchContext()          │   │
-│         │           │  3. Groq LLM → draft + quality gate  │   │
-│         │           │  4. compose.ts → Playwright post     │   │
-│         │           └─────────────────────────────────────-┘   │
-│         │                                                       │
-│         │    ┌──────────────────────────────────────────────┐  │
-│         │    │  Context Layer                                │  │
-│         │    │  ├─ neural_memory.ts  (concept graph)        │  │
-│         │    │  ├─ store/store.ts    (Voyage + sqlite-vec)  │  │
-│         │    │  ├─ retrieve/retriever.ts (re-ranker)        │  │
-│         │    │  └─ sources: rss.ts / reddit.ts / weather.ts │  │
-│         │    └──────────────────────────────────────────────┘  │
-│         │                                                       │
-│         │    ┌──────────────────────────────────────────────┐  │
-│         │    │  SQLite (WAL)  data/xposter.db               │  │
-│         │    │  posts · accounts · interactions · settings  │  │
-│         │    │  original_posts · context_items · vec_context│  │
-│         │    │  activity_log · follower_events · scheduled_ │  │
-│         │    └──────────────────────────────────────────────┘  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-        │                             │
-   iPhone (Safari / Tailscale)    ntfy app
-   Dashboard tabs                 push alerts + Delete button
+┌──────────────────────────────────────────────────────────────────┐
+│  Mac (runs 24/7)                                                 │
+│                                                                  │
+│  ┌────────────────┐   ┌──────────────────────────────────────┐  │
+│  │  Express :3000 │   │  Scheduler                           │  │
+│  │  ├─ REST /api  │   │  ├─ random_runs.ts   (5×/day reply)  │  │
+│  │  └─ SPA        │   │  ├─ original_posts.ts (7×/day OG)    │  │
+│  └───────┬────────┘   │  ├─ follower_sync.ts                 │  │
+│          │            │  ├─ audience_sync.ts                  │  │
+│          │            │  └─ context/ingest/scheduler.ts       │  │
+│          │            └──────────────┬───────────────────────┘  │
+│          │                           │                           │
+│          │     ┌─────────────────────▼──────────────────────┐   │
+│          │     │  Reply Pipeline (reply_pipeline.ts)         │   │
+│          │     │  1. ingestTimeline()  — Playwright scroll   │   │
+│          │     │  2. filterPost()      — language+keywords   │   │
+│          │     │  3. scorePost()       — 0-100 composite     │   │
+│          │     │  4. classifyAccount() — heuristic→Groq LLM  │   │
+│          │     │  5. generateReply()   — Groq+context+memory │   │
+│          │     │  6. postReply()       — Playwright post     │   │
+│          │     │  7. ntfy notification — approve/skip        │   │
+│          │     └────────────────────────────────────────────-┘   │
+│          │                                                        │
+│          │     ┌──────────────────────────────────────────────┐  │
+│          │     │  Original Post Pipeline                      │  │
+│          │     │  1. generateRandomSlots() — jittered grid    │  │
+│          │     │  2. pickTopicAndCategory()— trend-weighted   │  │
+│          │     │  3. gatherResearchContext()                   │  │
+│          │     │  4. generateOriginalPost() — Groq + quality  │  │
+│          │     │  5. postOriginalTweet()   — Playwright       │  │
+│          │     │  6. impressionSync() every 2h                │  │
+│          │     └──────────────────────────────────────────────┘  │
+│          │                                                        │
+│          │     ┌──────────────────────────────────────────────┐  │
+│          │     │  Intelligence Layers                         │  │
+│          │     │  ├─ neural_memory.ts  (concept graph)        │  │
+│          │     │  ├─ store/store.ts    (Voyage + sqlite-vec)  │  │
+│          │     │  ├─ retrieve/retriever.ts (re-ranker)        │  │
+│          │     │  └─ sources: rss · reddit · weather          │  │
+│          │     └──────────────────────────────────────────────┘  │
+│          │                                                        │
+│          │     ┌──────────────────────────────────────────────┐  │
+│          │     │  Agent (optional, agent/)                    │  │
+│          │     │  ├─ watcher.ts  — polls activity_log         │  │
+│          │     │  ├─ investigator.ts — Claude Code analysis   │  │
+│          │     │  └─ implementer.ts — codes fix, opens PR     │  │
+│          │     └──────────────────────────────────────────────┘  │
+│          │                                                        │
+│          │     ┌──────────────────────────────────────────────┐  │
+│          │     │  SQLite WAL  data/xposter.db                 │  │
+│          │     │  posts · accounts · interactions · settings  │  │
+│          │     │  original_posts · context_items · vec_context│  │
+│          │     │  activity_log · follower_events · audience   │  │
+│          │     └──────────────────────────────────────────────┘  │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+       │                              │
+  iPhone (Safari / Tailscale)    ntfy app
+  Dashboard (8 tabs)             Push alerts + action buttons
+```
+
+### End-to-End Data Flows
+
+**Tweet ingestion → reply posting:**
+```
+Playwright scrolls home timeline (up to 40 tweets)
+  → upsertPost()             status: INGESTED
+  → filterPost()             language detection + keyword match → FILTERED or dropped
+  → scorePost()              recency(0-30) + topic(0-30) + opportunity(0-20) + engagement(0-10) → SCORED
+  → top-N candidates         (max_candidates_per_run, default 3; min_score threshold, default 40)
+  → classifyAccount()        heuristic fast-path OR Groq 9-class LLM; 7-day cache
+  → generateReply()          system prompt (Pune/General persona, wit tier) +
+                             [CURRENT CONTEXT] (Voyage ANN retrieval) +
+                             [LEARNED MEMORY] (neural concept graph) → Groq LLM
+                             status: PENDING_APPROVAL
+  → ntfy push notification   signed approve/skip action URLs (HMAC, TTL-bound)
+  → user taps Approve        
+  → postReply()              Playwright navigates tweet URL, submits reply
+  → recordInteraction()      status: POSTED
+  → ntfy confirmation
+```
+
+**Original post flow:**
+```
+generateRandomSlots() — Fisher-Yates shuffle over 7 jittered slots (09:00–22:00)
+  → at each slot:
+    pickTopicAndCategory()   weighted by trend velocity + past performance + recency penalty
+    gatherResearchContext()  neural memory recall + context RAG retrieval
+    generateOriginalPost()   Groq draft, quality gate, 280-char enforcement (2 retries)
+    postOriginalTweet()      Playwright compose box
+    insertOriginalPost()
+  → every 2 h:
+    scrapeEngagement()       Playwright scrapes likes/replies/retweets/impressions
+    insertImpression()
+```
+
+**Follow-back flow:**
+```
+follower_sync scrapes follower list via Playwright
+  → detect new handles not seen before
+  → insert follower_events (status: PENDING)
+  → sendFollowerNotification() — ntfy push with Follow Back / Skip action buttons
+  → user taps on iPhone
+  → follow_back_processor executes follow,
+    respects max_follow_backs_per_day + blocklist_classifications
+```
+
+**Audience heatmap flow:**
+```
+audience_sync (periodic) scrapes follower activity page via Playwright
+  → parse 7×24 activity matrix
+  → store in audience table (cells_json)
+  → audience_weights.ts applies matrix to bias scheduler toward high-engagement slots
+```
+
+**Context RAG ingestion:**
+```
+For each source (RSS every 30 min, Reddit/weather every 60 min):
+  fetch items
+  → SHA-256 dedup (drop exact duplicates before embedding)
+  → batch Voyage embed (voyage-3-lite, 512 dim)
+  → cosine near-duplicate filter (dist < 0.06 against recent 48h items → drop)
+  → insert context_items + vec_context in single transaction
+
+On query (per reply/original-post generation):
+  embed query via Voyage
+  → vec0 KNN on vec_context (fetch k×3 candidates)
+  → re-rank: 0.55×similarity + 0.25×recency + 0.10×credibility + 0.10×topicOverlap
+  → return top-K as [CURRENT CONTEXT] block
 ```
 
 ---
 
-## Core Subsystems
+## Features
 
-### 1. Reply Pipeline
+### Core Automation
+- **Timeline ingestion** — Playwright stealth scrolls home timeline, extracts tweet_id, author, text, and engagement counts
+- **Keyword + language filtering** — English requires topic keyword match; Marathi/Devanagari posts pass automatically
+- **Multi-factor scoring** — recency decay (6 h half-life), topic relevance, reply opportunity (question/complaint/help patterns), engagement sweet spot (1–50 replies ideal)
+- **Account classification** — 9-class Groq LLM classifier (SERIOUS, NEWS, PARODY, COMEDY, INFLUENCER, REGULAR, BOT, BRAND_PROMO, UNKNOWN) with heuristic fast-path (PCF label, bot patterns, follower counts); 7-day TTL cache
+- **Approval queue** — every reply waits in PENDING_APPROVAL; ntfy iPhone notification with one-tap Approve/Skip; auto-expires after `approval_timeout_min`
+- **Original post generation** — 7 posts/day (5 ORIGINAL + 2 ENGAGEMENT_FARM); topic picked by trend velocity + historical engagement; quality gate with up to 2 retries
+- **Impression tracking** — every 2 h scrapes likes/replies/retweets/impressions for recent originals
 
-**Entry point:** `src/scheduler/cron.ts → runPipeline()`
+### Intelligence Layers
+- **Dual persona** — Pune flavor (satirical Punekar: PMC, FC Road, Mula-Mutha, Hinjewadi) or General (sharp observer); auto-selected per tweet by content regex + topic tags
+- **Wit level** — 0–100 slider maps to 5 tiers (SERIOUS → MEASURED → BALANCED → WITTY → SHARP); controls Groq temperature and system prompt tone
+- **Neural schema memory** — concept graph built from 220 recent posts/replies; co-occurrence edges weighted by recency × engagement; top-3 events injected as `[LEARNED MEMORY]` block to maintain voice consistency
+- **Context RAG** (optional, `CONTEXT_ENABLED=true`) — RSS feeds, Reddit, weather via Voyage AI embeddings + sqlite-vec ANN; re-ranked by similarity × recency × credibility × topic overlap; injected as `[CURRENT CONTEXT]` block
+- **Trend detection** — topic velocity (6 h vs 24 h event ratio) biases original post topic selection toward hot topics
+- **Audience heatmap** — 7×24 follower activity matrix biases scheduler toward high-engagement time slots
 
-The pipeline is guarded by a mutex (`_running`) so concurrent runs are dropped, not queued.
+### Notifications (ntfy)
+- Reply approval request with signed approve/skip URLs (HMAC, TTL-bound)
+- Reply posted confirmation with tweet URL
+- New follower alert with Follow Back / Skip action buttons
+- Action mode: `view` (opens dashboard) or `http` (fires API silently from phone)
 
-| Stage | File | What happens |
+### Safety & Control
+- **Approval gate** — no reply posts without explicit approval
+- **Classification blocklist** — BOT and BRAND_PROMO skipped from follow-back by default
+- **Min reply interval** — configurable floor between posted replies
+- **Pause/resume** — `system_running` toggle in dashboard header; all schedulers respect it
+- **Expiry sweep** — pending approvals expire after `approval_timeout_min` (default 30 min)
+
+### Developer Features
+- **Live dashboard** — 8-tab SPA served by Express, auto-refreshing via polling
+- **Live settings** — all operational parameters editable from Settings tab, no restart required
+- **Activity log** — append-only event stream, queryable, shown in Console and History tabs
+- **Diagnostic endpoint** — `/api/diagnostics` reports connectivity, config, DB health
+- **Claude Agent** (optional) — watcher monitors activity log for recurring errors, spawns investigator agent (Claude Code CLI); proposed fix shown on dashboard; one-click implementer opens a PR in a fresh git worktree
+- **SSE streaming** — agent run progress streamed to dashboard in real time
+
+### Language Support
+- Devanagari Marathi (23 script markers)
+- Transliterated Roman Marathi (9 phonetic markers: ahe, ahet, hota, karto, jato, mala, tula, khup, paus)
+- Hindi (17 Devanagari markers) — detected separately, filtered unless mixed with Marathi
+- English — requires topic keyword match to pass filter
+
+---
+
+## Setup & Installation
+
+### Prerequisites
+- Node.js 22+
+- Google Chrome installed (the bot uses your system Chrome, not Playwright's bundled Chromium)
+- A Groq API key ([console.groq.com](https://console.groq.com), free tier works)
+- An X/Twitter account with `auth_token` + `ct0` cookies (obtained after first browser login)
+- ntfy app on iPhone (optional but strongly recommended)
+
+### Install
+
+```bash
+git clone <repo>
+cd Xposter
+npm run setup          # npm install + playwright install chromium + cp .env.example .env
+```
+
+### Configure
+
+Edit `.env` — minimum required fields:
+
+```env
+GROQ_API_KEY=...          # from console.groq.com
+X_AUTH_TOKEN=             # fill in after first browser login (step below)
+X_CT0=                    # fill in after first browser login
+API_KEY=                  # openssl rand -hex 32
+NTFY_TOPIC=...            # hard-to-guess string; subscribe to it in the ntfy iOS app
+```
+
+### First Login (X Cookie Auth)
+
+X blocks Playwright-driven login flows. Instead:
+
+1. Set `BROWSER_HEADLESS=false` in `.env`
+2. Run `npm run dev` — Chromium opens
+3. Log in to x.com manually
+4. Open DevTools → Application → Cookies → `https://x.com`
+5. Copy `auth_token` → `X_AUTH_TOKEN`, copy `ct0` → `X_CT0` in `.env`
+6. Set `BROWSER_HEADLESS=true`, restart
+
+Cookies typically last ~1 year. Repeat this step if the bot stops posting.
+
+### Run
+
+```bash
+# Development (hot reload)
+npm run dev
+
+# Production
+npm run build
+npm start
+```
+
+Dashboard: `http://localhost:3000`  
+iPhone (same WiFi): LAN URL is logged on startup, e.g. `http://192.168.1.42:3000`  
+iPhone (remote): install Tailscale on Mac + iPhone, set `CALLBACK_NETWORK=tailscale`
+
+### Optional: Context RAG
+
+```env
+CONTEXT_ENABLED=true
+VOYAGE_API_KEY=your_voyage_key   # voyage.ai; free tier = 50M tokens/month
+```
+
+### Optional: Claude Agent
+
+Requires `claude` CLI and `gh` CLI in PATH.
+
+```env
+AGENT_ENABLED=true
+AGENT_MODEL=claude-sonnet-4-5
+```
+
+---
+
+## Configuration Reference
+
+### Server
+
+| Variable | Default | Description |
 |---|---|---|
-| Ingest | `browser/ingestion.ts` | Playwright scrapes last 60 tweets from your timeline |
-| Upsert | `storage/queries.ts` | New tweets are inserted; duplicates by `tweet_id` are silently dropped |
-| Filter | `pipeline/filter.ts` | Language detection (Devanagari/Roman Marathi, English pass; Hindi/Unknown fail) + keyword matching. Marathi posts pass unconditionally; English posts require at least one topic keyword match |
-| Score | `pipeline/scorer.ts` | 0–100 composite: recency (0–30, 6h decay), topic relevance (0–30, keyword weights), reply opportunity (0–20, question/complaint/help patterns), engagement sweet spot (0–10, avoids zero and viral) |
-| Rank | `pipeline/scorer.ts` | Sort descending; take top `max_candidates_per_run` (default 3) above `min_score` threshold (default 40); fallback: take single best if none qualify |
-| Classify | `pipeline/classifier.ts` | Heuristic short-circuit (PCF label, bot handle pattern, news keywords, follower counts) → Groq LLM classify → store in `accounts` table with 7-day TTL. Types: SERIOUS, NEWS, PARODY, COMEDY, INFLUENCER, REGULAR, BOT, BRAND_PROMO, UNKNOWN |
-| Generate | `pipeline/generator.ts` | Picks `Flavor` (pune vs. general) by regex + topic tags; reads `wit_level` setting → maps to WitTier; assembles system prompt + classification guidance + context block (Voyage retrieval, up to 4 items) + neural memory block (up to 3 past events, 900 chars); calls Groq at temp 0.8–0.95 |
-| Post | `browser/posting.ts` | Playwright navigates to tweet URL and submits reply |
-| Notify | `notifications/ntfy.ts` | iPhone push with score, classification, tweet/reply text, and a one-tap "Delete Reply" HTTP action |
+| `PORT` | `3000` | Dashboard / API port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `NODE_ENV` | `development` | Environment flag |
+| `API_KEY` | — | Secret for all mutation endpoints. Generate: `openssl rand -hex 32` |
+| `TRUST_DASHBOARD_ORIGIN` | `true` | Trust same-LAN origins without API key |
 
-**Status lifecycle:** `INGESTED → FILTERED → SCORED → GENERATING → POSTING → POSTED` (or `SKIPPED / ERROR / EXPIRED / DELETED`)
+### Browser / X Auth
 
-### 2. Original Post Pipeline
+| Variable | Default | Description |
+|---|---|---|
+| `BROWSER_HEADLESS` | `true` | Set `false` to see the Chrome window during debugging |
+| `BROWSER_USER_DATA_DIR` | `./browser-profile` | Playwright persistent context directory |
+| `X_AUTH_TOKEN` | **required** | X `auth_token` cookie value |
+| `X_CT0` | **required** | X `ct0` CSRF cookie value |
 
-**Entry points:** `src/scheduler/original_posts.ts`
+### LLM (Groq)
 
-**Schedule generation** (`generateRandomSlots`):
-- At boot and midnight, generates 7 random timestamps for the day
-- Active window: `active_window_start_hour` (9) to `active_window_end_hour` (22)
-- Window split into N equal slots; one random offset picked per slot (jittered grid — guarantees even distribution, no two runs within ~`window/2N` of each other)
-- **Fisher-Yates shuffle** over a `[ENGAGEMENT_FARM, ENGAGEMENT_FARM, ORIGINAL, ORIGINAL, ORIGINAL, ORIGINAL, ORIGINAL]` array assigns types to slots
+| Variable | Default | Description |
+|---|---|---|
+| `GROQ_API_KEY` | **required** | Groq API key |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model for reply + original post generation |
+| `LOG_PROMPTS` | `true` | Print full prompts to stdout |
 
-**Post types:**
-- `ORIGINAL` — topic picked from category pools; research context gathered from recent timeline tweets + context store + neural memory; 3–4 sentence take ending with an open question; up to 2 re-attempts on quality failure; compacts to 280 chars if slightly over
-- `ENGAGEMENT_FARM` — provocative hot take with an open debate question; 40% chance of strategic Pune-tech-economy slant; temp 0.95
+### Scheduler
 
-**Topic selection** (`pickTopicAndCategory`):
-1. Weighted random category pick (default weights: `pune-tech-economy` 40%, `local-pune` 20%, `tech` 15%, `sports` 8%, `politics` 7%, `culture` 7%, `observation` 3%)
-2. Within the category, topic weighted by: past engagement performance × trend velocity (clamped 0.6–2.5) × recency penalty (30% weight for topics used in last 5 posts)
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_CANDIDATES_PER_RUN` | `3` | Max replies generated per pipeline run |
+| `APPROVAL_TIMEOUT_MINUTES` | `30` | Minutes before PENDING_APPROVAL auto-expires |
+| `MIN_REPLY_INTERVAL_SECONDS` | `300` | Minimum seconds between posted replies |
+| `ACTION_TOKEN_TTL_SECONDS` | `86400` | ntfy action URL validity window |
 
-**Impression sync:** every 2 hours, Playwright scrapes likes/replies/retweets/impressions for all recently posted originals; stored in `post_impressions` table.
+### Notifications (ntfy)
 
-### 3. Neural Memory Layer
+| Variable | Default | Description |
+|---|---|---|
+| `NTFY_TOPIC` | **required** | Topic name (acts as shared secret) |
+| `NTFY_SERVER` | `https://ntfy.sh` | ntfy server URL; use self-hosted for privacy |
+| `NTFY_ACTION_MODE` | `view` | `view` = open dashboard in browser; `http` = fire API directly from phone |
+| `CALLBACK_NETWORK` | `lan` | `lan` or `tailscale` — network used to build ntfy callback URLs |
+| `CALLBACK_BASE_URL` | auto-detected | Override callback base URL |
+| `TAILSCALE_IP` | auto-detected | Override Tailscale IP if auto-detection fails |
 
-**File:** `src/context/neural_memory.ts`
+### Filtering
 
-A lightweight associative memory graph inspired by neural schema theory. Built entirely from SQLite data — no external store — so it accumulates automatically as the account posts.
+| Variable | Default | Description |
+|---|---|---|
+| `TOPIC_KEYWORDS` | `pune,rain,traffic,…` | Comma-separated keywords English tweets must match |
+| `MIN_SCORE` | `40` | Minimum score (0–100) for a tweet to be a candidate |
 
-**Structure:**
-- **Nodes** — concepts extracted from all past originals and replies: topic tags (from `detectTopics()`), strategic terms (AI, automation, jobs, pune, hinjewadi, …), bigrams matching strategic patterns
-- **Edges** — concept co-occurrence pairs, weighted by the event's score
-- **Event weight** = `recencyWeight × engagementWeight`
-  - Recency: `0.35 + exp(-ageDays / 45)` — 45-day half-life, floor at 0.35
-  - Engagement: `1 + log1p(engagement) / 4`
+### Context / RAG (optional)
 
-**Recall** (`recallNeuralMemory`):
-1. Load up to 220 events from `original_posts` + `interactions` tables
-2. Extract query concepts from the current tweet text
-3. Score each past event: `overlap × 2.2 + edgeBoost × 0.18 + nodeBoost × 0.04 + eventScore`
-4. Return top 3–4 events as a `[LEARNED MEMORY]` block injected before the tweet in the prompt
+| Variable | Default | Description |
+|---|---|---|
+| `CONTEXT_ENABLED` | `false` | Master switch for the RAG system |
+| `VOYAGE_API_KEY` | required if enabled | Voyage AI API key |
+| `VOYAGE_DIM` | `512` | Embedding dimension (256/512/1024). Changing requires dropping `vec_context` |
+| `VOYAGE_RPM` | `2.7` | Rate limit cap (requests/min). Free tier is 3 RPM |
+| `CONTEXT_INGEST_INTERVAL_MIN` | per-source defaults | Override polling interval for all sources |
+| `CONTEXT_RSS_*` | built-in feeds | Override individual RSS feed URLs; set to `""` to disable |
+| `CONTEXT_REDDIT_PUNE` | `pune` | Subreddit for Pune posts |
+| `CONTEXT_REDDIT_INDIA` | `india` | Subreddit for India posts |
+| `CONTEXT_WEATHER_PUNE` | `Pune` | wttr.in location string |
 
-The block tells the model to treat past patterns as **preference signal only**, not as facts — avoiding hallucination while preserving voice continuity.
+### Claude Agent (optional)
 
-**Dashboard visualization:** the `🧠 Mind` tab renders nodes/edges as a D3 force-directed graph (top 35 nodes, 60 edges), with node size proportional to weight.
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_ENABLED` | `true` | Infrastructure kill switch (also toggleable from dashboard) |
+| `AGENT_MODEL` | `claude-sonnet-4-5` | Claude model for agent runs |
+| `AGENT_MAX_RUNS_PER_DAY` | `10` | Daily cap on agent invocations |
+| `AGENT_INVESTIGATOR_MAX_TURNS` | `30` | Max turns for the investigator agent |
+| `AGENT_IMPLEMENTER_MAX_TURNS` | `60` | Max turns for the implementer agent |
+| `AGENT_WATCH_INTERVAL_MS` | `300000` | Watcher poll interval (5 min default) |
+| `AGENT_DISALLOWED_PATHS` | — | Comma-separated paths the agent cannot read or modify |
+| `AGENT_ALLOW_WEB` | `false` | Enable WebFetch/WebSearch for the agent |
+| `AGENT_BASE_BRANCH` | `main` | Branch implementer opens PRs against |
 
-### 4. Context RAG Layer
+### Live Settings (Dashboard → Settings Tab)
 
-**Files:** `src/context/store/store.ts`, `src/context/retrieve/retriever.ts`, `src/context/enrich.ts`
+Stored in the `settings` table; take effect immediately without restart.
 
-Enabled by `CONTEXT_ENABLED=true`. Requires `VOYAGE_API_KEY`.
-
-**Embedding:** Voyage AI `voyage-3-lite` at 512 dimensions (configurable). Both `document` and `query` embedding types used to match Voyage's asymmetric retrieval design.
-
-**Ingestion** (`ContextStore.upsertAndEmbed`):
-1. SHA-256 hash dedup — exact duplicate bodies are dropped before any embedding is spent
-2. Batch embed the remaining items
-3. Cosine near-duplicate check against recent (48h) items in `vec_context` — items within distance 0.06 are dropped as near-duplicates
-4. Insert into `context_items` + `vec_context` in a single SQLite transaction
-
-**Sources** (all configurable via `.env`):
-| Source | Default interval | Credibility | TTL |
+| Key | Type | Default | Range |
 |---|---|---|---|
-| RSS feeds (IE Pune, HT Pune, Mint AI, Inc42, YourStory, RBI, etc.) | 30 min | 0.7–0.85 | 7 days |
-| Reddit r/pune, r/india | 60 min | 0.55–0.60 | 3 days |
-| wttr.in weather (Pune) | 60 min | 0.80 | 6 hours |
+| `system_running` | bool | `true` | — |
+| `wit_level` | int | `55` | 0–100 |
+| `topic_keywords` | string | `pune,rain,…` | comma list |
+| `min_score` | int | `40` | 0–100 |
+| `max_candidates_per_run` | int | `3` | 1–10 |
+| `approval_timeout_min` | int | `30` | 5–1440 |
+| `random_runs_per_day` | int | `5` | 1–12 |
+| `active_window_start_hour` | int | `9` | 0–23 |
+| `active_window_end_hour` | int | `22` | 1–24 |
+| `classification_ttl_days` | int | `7` | 1–90 |
+| `blocklist_classifications` | string | `BOT,BRAND_PROMO` | comma list |
+| `max_follow_backs_per_day` | int | `15` | 0–100 |
+| `original_posts_per_day` | int | `5` | 0–12 |
+| `agent_enabled` | bool | `false` | — |
+| `agent_error_threshold` | int | `3` | 1–50 |
 
-RSS parsing includes a tolerant fallback for malformed XML (bare ampersands, unescaped entities) common in Indian news feeds.
+---
 
-**Retrieval** (`Retriever.retrieve`):
-1. Embed query via Voyage
-2. ANN search (`vec0 KNN`) over `vec_context`, fetching `k×3` candidates
-3. Filter: drop items with cosine distance > 0.95; fall back to top 3 if all filtered
-4. Re-rank by composite score: `0.55×similarity + 0.25×recency + 0.10×credibility + 0.10×topicOverlap`
-5. Recency uses a 12-hour half-life exponential decay
+## API Reference
 
-The resulting items are rendered as a `[CURRENT CONTEXT]` block with source label, age, and truncated body — injected into both reply and original post prompts.
+All mutation endpoints require `X-API-Key` header matching `API_KEY` in `.env`. Read endpoints are accessible from the local network without a key (controlled by `TRUST_DASHBOARD_ORIGIN`).
 
-### 5. Trend Detection
+### System
 
-**File:** `src/context/trends.ts`
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | System health check |
+| `GET` | `/api/diagnostics` | Config, connectivity, and DB health report |
+| `POST` | `/api/run` | Manually trigger reply pipeline now |
+| `POST` | `/api/test/notification` | Send a test ntfy push |
 
-Reads topic JSON arrays from all `context_items` published in the last 24 hours. Computes per-topic **velocity** = `(last6h_count + 1) / (last24h_count / 4 + 1)`. A velocity > 1 means the topic is over-represented in the last 6 hours relative to its 24-hour average — i.e., it's trending.
+### Posts (Reply Queue)
 
-The velocity map feeds into `pickTopicAndCategory()` to boost trending topics for original posts, and is exposed on the dashboard's `🧠 Mind` tab and the `/api/context/trends` endpoint.
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/posts` | Recent posts (default: last 24 h). `?hours=N` |
+| `GET` | `/api/posts/:id` | Single post by ID |
+| `GET` | `/api/posts/pending` | All PENDING_APPROVAL posts |
+| `GET` | `/api/posts/stats` | Dashboard stats (pending, posted, skipped, total 24 h) |
+| `GET` | `/api/posts/log/activity` | Activity log. `?limit=N` (default 100) |
+| `GET` | `/api/posts/settings/all` | All settings key-value pairs |
+| `PATCH` | `/api/posts/:id/reply` | Edit pending reply text before posting |
+| `POST` | `/api/posts/:id/regenerate` | Regenerate reply for a post |
+| `PATCH` | `/api/posts/settings/update` | Bulk update settings |
 
-### 6. Dashboard
+### Actions
 
-A single-page application served from `public/index.html`. Accessible at `http://localhost:3000` or on your iPhone via LAN or Tailscale.
+| Method | Path | Description |
+|---|---|---|
+| `POST` or `GET` | `/api/actions/approve/:id` | Approve a pending reply (GET supports signed token query param for ntfy HTTP actions) |
+| `POST` or `GET` | `/api/actions/skip/:id` | Skip a pending reply |
+| `GET` | `/api/actions/status` | Whether system is currently running |
+| `POST` | `/api/actions/toggle` | Pause / resume system |
+
+### Schedule
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/schedule/today` | All of today's scheduled pipeline + original-post times |
+| `GET` | `/api/schedule/upcoming` | Next N run times across all job types. `?limit=N` |
+
+### Original Posts
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/original-posts` | Recent original posts with impression data |
+| `GET` | `/api/original-posts/topic-performance` | Per-topic engagement stats |
+| `GET` | `/api/original-posts/schedule/today` | Today's scheduled original post times |
+| `GET` | `/api/original-posts/schedule/upcoming` | Next N upcoming slots. `?limit=N` |
+| `POST` | `/api/original-posts/trigger` | Post an original tweet now (bypasses schedule) |
+| `POST` | `/api/original-posts/sync-impressions` | Sync engagement for recent originals now |
+
+### Audience
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/audience/heatmap` | 7×24 follower activity matrix |
+| `POST` | `/api/audience/refresh` | Scrape and refresh heatmap now |
+
+### Context / RAG
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/context/health` | RAG system health + per-source status |
+| `GET` | `/api/context/trends` | Topic velocity map (6 h vs 24 h ratio) |
+| `GET` | `/api/context/recent` | Recent ingested context items. `?limit=N` |
+| `GET` | `/api/context/preview` | Preview enrichment block for a query. `?q=TEXT&k=5&tokens=500` (costs one Voyage call) |
+| `GET` | `/api/context/neural-memory` | Full neural concept graph (nodes + edges) for D3 visualization |
+| `POST` | `/api/context/test-reply` | Debug full reply generation with live context. Body: `{text, handle, language}` |
+
+### Agent
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/agent/status` | Agent readiness (Claude CLI present, config) |
+| `GET` | `/api/agent/investigations` | Error investigations. `?status=PROPOSED\|DISMISSED\|APPLIED` |
+| `GET` | `/api/agent/investigations/:id` | Single investigation + associated agent run |
+| `GET` | `/api/agent/features` | Feature task list. `?status=PENDING\|IN_PROGRESS\|COMPLETED` |
+| `GET` | `/api/agent/runs` | Agent run history. `?limit=50` |
+| `GET` | `/api/agent/runs/:id` | Single agent run detail |
+| `GET` | `/api/agent/runs/:id/stream` | SSE stream of live agent run progress |
+| `POST` | `/api/agent/watch/tick` | Force watcher poll now |
+| `POST` | `/api/agent/investigate` | Spawn investigator for selected activity log entries. Body: `{activityIds: []}` |
+| `POST` | `/api/agent/investigations/:id/apply` | Spawn implementer to code the fix and open a PR |
+| `POST` | `/api/agent/investigations/:id/dismiss` | Dismiss an investigation |
+| `POST` | `/api/agent/features` | Submit a feature request. Body: `{title, description}` |
+| `GET` | `/api/agent/features/:id` | Feature task + associated run |
+
+---
+
+## Scheduler Overview
+
+All scheduler jobs are backed by the `scheduled_runs` SQLite table with jittered-grid timestamps generated at boot and midnight each day.
+
+| Job | File | Trigger | What it does |
+|---|---|---|---|
+| **Reply pipeline** | `scheduler/random_runs.ts` | 5×/day (configurable), random offsets within active window (default 09:00–22:00), 60 s tick | Ingest timeline → filter → score → classify → generate reply → ntfy approval |
+| **Original posts** | `scheduler/original_posts.ts` | 7×/day (5 ORIGINAL + 2 ENGAGEMENT_FARM), jittered grid, 60 s tick | Draft + post original tweet to timeline |
+| **Impression sync** | `scheduler/original_posts.ts` | Every 2 h (10 min initial delay), `setTimeout` chain | Playwright scrapes engagement for recent originals |
+| **Follower sync** | `scheduler/follower_sync.ts` | Periodic (configurable interval) | Detect new followers, send ntfy alerts with action buttons |
+| **Follow-back processor** | `scheduler/follow_back_processor.ts` | Periodic | Execute approved follow-back actions, respect daily cap + blocklist |
+| **Audience heatmap sync** | `scheduler/audience_sync.ts` | Periodic (configurable interval) | Playwright scrapes 7×24 follower activity matrix |
+| **Context ingest** | `context/ingest/scheduler.ts` | RSS: 30 min, Reddit: 60 min, weather: 60 min (per-source configurable) | Fetch, SHA-256 dedup, near-dup filter, Voyage embed, store to vec_context |
+| **Agent watcher** | `agent/watcher.ts` | Every `AGENT_WATCH_INTERVAL_MS` (5 min default) | Poll activity_log for recurring errors; spawn investigator if threshold hit |
+| **Approval expiry sweep** | `scheduler/cron.ts` | Every 5 min | Expire PENDING_APPROVAL posts older than `approval_timeout_min` |
+
+**Jittered grid scheduling:** the active window is divided into N equal slots; each slot gets a random offset to avoid predictable posting patterns. Types are assigned to slots via Fisher-Yates shuffle (original posts). Daily slots are written to `scheduled_runs` at midnight.
+
+---
+
+## Dashboard Overview
+
+A single-page app served from `public/` at `http://localhost:3000`. Accessible on iPhone via LAN or Tailscale.
+
+### Header
+- System on/off toggle (pauses/resumes all scheduler jobs)
+- **Run Now** button (manual pipeline trigger)
+- Refresh button
+- Light/dark theme toggle
+- Stats bar: Pending · Posted · Skipped · Total (24 h) · New Followers
+
+### Primary Tabs
 
 | Tab | What it shows |
 |---|---|
-| **Queue** | Tweets currently scored/generating/pending; shows score breakdown |
-| **Followers** | Pending follower events (NEW_FOLLOWER, FOLLOW_BACK_DUE) with approve/skip |
-| **Accounts** | All seen accounts with classification, follower counts, Marathi flag |
-| **Originals** | Posted original tweets with live impression counts (likes/replies/retweets/impressions) |
-| **History** | Full activity log (`activity_log` table); every pipeline event visible |
-| **Console** | Hacker-style event feed; latest system events |
-| **🧠 Mind** | D3 force-directed neural memory graph + trending topics + context source health |
-| **Settings** | Live-edit all key settings (wit_level, min_score, topic_keywords, category weights, etc.) without restart |
+| **Queue** | PENDING_APPROVAL posts. Each card shows: tweet text, author, score breakdown (recency/topic/opportunity/engagement), generated reply. Actions: Edit reply · Approve · Skip · Regenerate |
+| **Followers** | Pending follower events with Follow Back / Skip actions; recent follow-back history |
+| **Accounts** | All classified accounts with filters by classification type; shows bio, follower count, classification confidence, Marathi creator flag |
+| **Originals** | Recent original posts with impression sparklines (likes/replies/retweets/impressions over time); per-topic engagement performance chart |
+| **Activity** | Audience heatmap — 7-day × 24-hour follower activity grid showing when your followers are most active |
+| **Agent** | Investigations list (proposed error diagnoses + fix descriptions); feature task queue; agent run history with live SSE progress stream |
+| **History** | Full activity log of all pipeline events (INGESTED → FILTERED → SCORED → PENDING_APPROVAL → POSTED/SKIPPED/EXPIRED) |
+| **Console** | Real-time log stream, hacker-green terminal style; most recent system events |
 
-### 7. Scheduler
+### Secondary Tabs
 
-Three parallel scheduling loops, all backed by the `scheduled_runs` SQLite table:
+| Tab | What it shows |
+|---|---|
+| **Mind (🧠)** | D3 force-directed graph of the neural schema memory: concept nodes sized by recency×engagement weight, edges by co-occurrence strength; trending topics panel; context source health |
+| **Settings** | Live-editable operational parameters (wit level slider, topic keywords, score threshold, window hours, follow-back limits, agent controls, etc.); no restart required |
 
-**Reply pipeline** (`scheduler/random_runs.ts`):
-- At boot, generates N random timestamps (default 5) for today within the active window
-- Uses a jittered grid: window split into N equal slots, one random offset per slot
-- 60-second `setInterval` tick polls for due rows; fires one at a time
+---
 
-**Original post scheduler** (`scheduler/original_posts.ts`):
-- Same jittered-grid approach; 7 slots/day with Fisher-Yates shuffled types
-- Separate tick (60s); impression sync runs every 2 hours via `setTimeout` chain
+## Database Schema
 
-**Follower sync** (`scheduler/follower_sync.ts`):
-- Periodically scrapes follower list via Playwright; detects new followers; sends ntfy notification with Follow Back / Skip action buttons
+All data lives in `data/xposter.db` (SQLite WAL mode). Override path with `DB_PATH_OVERRIDE`. Safe to hot-backup while running: `cp data/xposter.db ~/backup/`
 
-**Stale post expiry:** a 5-minute `setInterval` sweeps `PENDING_APPROVAL` posts older than `approval_timeout_min` (default 30) and marks them `EXPIRED`.
+| Table | Purpose | Key Fields |
+|---|---|---|
+| `posts` | Every ingested tweet with full lifecycle | tweet_id (UNIQUE), author_handle, text, status (INGESTED→FILTERED→SCORED→GENERATING→PENDING_APPROVAL→APPROVED→POSTING→POSTED / SKIPPED / EXPIRED / ERROR), score, score_breakdown (JSON), generated_reply, final_reply, posted_tweet_id |
+| `accounts` | X account metadata + classification cache | handle (PK), display_name, bio, verified, follower_count_seen, is_marathi_creator, classification (9 types), classification_confidence, classified_at |
+| `interactions` | Outbound replies with engagement tracking | post_id (FK posts), reply_text, tweet_url, engagement (JSON: likes/replies/retweets) |
+| `activity_log` | Append-only pipeline event log | post_id, event type, detail, created_at |
+| `settings` | Key-value store for live-editable settings | key (PK), value (TEXT) |
+| `original_posts` | Posts we authored (not replies) | content, language, topic, post_type (ORIGINAL/ENGAGEMENT_FARM), status, tweet_id, tweet_url, research_context |
+| `post_impressions` | Periodic engagement snapshots | original_post_id (FK), impressions, likes, replies, retweets, checked_at |
+| `follower_events` | New-follower events pending action | author_handle, event (NEW_FOLLOWER/FOLLOW_BACK_DUE), status (PENDING/FOLLOWED_BACK/SKIPPED) |
+| `scheduled_runs` | Today's jittered run timestamps | date_key, run_at (unix sec), kind (RANDOM_RUN/ORIGINAL_POST), detail (post type), fired |
+| `context_items` | RSS/Reddit/weather items | source, source_url, title, body, topics (JSON), published_at, credibility (0–1), body_hash (SHA-256 dedup) |
+| `context_source_health` | Per-source polling health | source (PK), last_ok_at, consecutive_failures |
+| `vec_context` | sqlite-vec virtual table (ANN) | rowid (FK context_items), embedding (float32 blob, 512 dim default) |
+| `audience` | Follower activity heatmap | cells_json (7×24 JSON matrix), fetched_at |
 
-### 8. Browser Automation
+Logs rotate daily in `logs/` via `winston-daily-rotate-file`.
 
-**File:** `src/browser/session.ts`
+---
 
-Playwright with `playwright-extra` and the `puppeteer-extra-plugin-stealth` plugin. Uses a **persistent browser context** (stored in `./browser-profile`) so session cookies survive restarts.
+## Context / RAG System
 
-**Login strategy:** X silently blocks Playwright-driven login flows. Instead, the user logs in to x.com in their regular Chrome, copies the `auth_token` and `ct0` cookies from DevTools, and sets them in `.env` as `X_AUTH_TOKEN` / `X_CT0`. These are injected into the persistent context at boot. Cookies typically last ~1 year.
+Enable with `CONTEXT_ENABLED=true` and a `VOYAGE_API_KEY`.
 
-Uses the system's installed Google Chrome (`channel: 'chrome'`) rather than Playwright's bundled Chromium, which is more aggressively flagged as automation.
+**Sources polled automatically:**
+
+| Source | Interval | Credibility |
+|---|---|---|
+| Indian Express Pune RSS | 30 min | 0.85 |
+| Hindustan Times Pune RSS | 30 min | 0.80 |
+| Mint AI/Tech RSS | 30 min | 0.80 |
+| Inc42 RSS | 30 min | 0.75 |
+| YourStory RSS | 30 min | 0.70 |
+| RBI RSS | 30 min | 0.85 |
+| Reddit r/pune | 60 min | 0.60 |
+| Reddit r/india | 60 min | 0.55 |
+| wttr.in weather (Pune) | 60 min | 0.80 |
+
+**Deduplication:** SHA-256 hash of body prevents re-embedding the same article. Cosine distance < 0.06 against recent (48 h) embeddings filters near-duplicates before any embed cost is incurred.
+
+**Retrieval pipeline:** query → Voyage embed → sqlite-vec KNN (k×3 candidates) → filter cosine distance > 0.95 → re-rank by `0.55×similarity + 0.25×recency + 0.10×credibility + 0.10×topicOverlap` → top-K injected as `[CURRENT CONTEXT]` block.
+
+**Monitoring:** `/api/context/health` shows per-source last-ok timestamps and consecutive failure counts. `/api/context/preview?q=TEXT` previews the exact enrichment block that would be injected for a given query.
+
+---
+
+## Claude Agent (Self-Healing)
+
+An optional autonomous error-investigation and fix system. Requires `claude` CLI and `gh` CLI in PATH.
+
+**How it works:**
+
+1. **Watcher** (`agent/watcher.ts`) polls `activity_log` every 5 min for recurring error events
+2. When an error type exceeds `agent_error_threshold` consecutive occurrences, an **investigation** is created in the `investigations` table
+3. An **investigator** agent (Claude Code CLI) analyzes the codebase, proposes a root-cause diagnosis and fix — output stored as structured `Investigation` record
+4. Investigation appears in the **Agent** tab on the dashboard for your review
+5. Clicking **Apply** spawns an **implementer** agent in a fresh git worktree; it codes the fix, runs tests, and opens a PR against `main`
+6. You can also submit **feature tasks** from the dashboard; these queue up for the implementer
+
+**Safety guardrails:**
+- `AGENT_DISALLOWED_PATHS` — paths the agent cannot read or modify
+- `AGENT_MAX_RUNS_PER_DAY` — hard daily cap on invocations
+- `AGENT_ALLOW_WEB` (default `false`) — must opt in to external web access
+- All implementer work happens in an isolated worktree; nothing merges until you approve the PR on GitHub
+- SSE stream (`/api/agent/runs/:id/stream`) lets you watch the agent run token-by-token in the dashboard
 
 ---
 
@@ -233,160 +627,19 @@ Uses the system's installed Google Chrome (`channel: 'chrome'`) rather than Play
 
 | Layer | Technology |
 |---|---|
-| Runtime | Node.js (ESM), TypeScript 5.7, `tsx` for hot-reload dev |
+| Runtime | Node.js (ESM), TypeScript 5.7, `tsx` hot reload |
 | Browser automation | Playwright 1.49 + playwright-extra + puppeteer-extra-plugin-stealth |
 | LLM | Groq SDK → `llama-3.3-70b-versatile` (configurable) |
 | Embeddings | Voyage AI `voyage-3-lite` via REST API |
-| Vector search | `sqlite-vec` (vec0 virtual table) |
-| Database | `better-sqlite3` 9.4 with WAL mode + foreign keys |
+| Vector search | `sqlite-vec` (vec0 virtual table, ANN) |
+| Database | `better-sqlite3` 9.4, WAL mode, foreign keys |
 | Web server | Express 4, CORS, Morgan |
-| Notifications | ntfy (self-hosted or ntfy.sh) |
-| Language detection | `franc` + custom marker sets |
+| Notifications | ntfy (ntfy.sh or self-hosted) |
+| Language detection | `franc` + custom Marathi marker sets |
 | HTTP client | `axios` |
-| RSS parsing | `rss-parser` with malformed-XML tolerant fallback |
-| Dashboard charts | D3.js v7 (loaded from jsDelivr CDN) |
-| Logging | `winston` + `winston-daily-rotate-file` |
+| RSS parsing | `rss-parser` + malformed-XML tolerant fallback |
+| Dashboard charts | D3.js v7 (force graph, heatmap) |
+| Logging | `winston` + `winston-daily-rotate-file` (`logs/`) |
 | Validation | `zod` |
-| Testing | Vitest |
-
----
-
-## Setup & Configuration
-
-### Prerequisites
-
-- Node.js 22+
-- Google Chrome installed (the bot uses your system Chrome, not Playwright's bundled one)
-- A Groq API key (free tier is sufficient)
-- X account with `auth_token` + `ct0` cookies (see below)
-- ntfy app on iPhone (optional but strongly recommended)
-
-### Installation
-
-```bash
-git clone <repo>
-cd Xposter
-npm run setup        # npm install + playwright install chromium + copy .env.example
-cp .env.example .env # already done by setup
-```
-
-Edit `.env` — minimum required fields:
-
-```bash
-GROQ_API_KEY=...         # from console.groq.com
-X_AUTH_TOKEN=...         # from x.com DevTools → Application → Cookies
-X_CT0=...                # same location as auth_token
-API_KEY=...              # openssl rand -hex 32
-NTFY_TOPIC=...           # hard-to-guess string, subscribe in ntfy iOS app
-```
-
-### Environment Variables
-
-#### Server
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `3000` | Dashboard/API port |
-| `HOST` | `0.0.0.0` | Bind address (0.0.0.0 for LAN access) |
-| `API_KEY` | — | Secret for mutation endpoints; generate with `openssl rand -hex 32` |
-| `TRUST_DASHBOARD_ORIGIN` | `true` | Trust same-LAN origins without API key |
-
-#### Browser / X Auth
-| Variable | Default | Description |
-|---|---|---|
-| `BROWSER_HEADLESS` | `true` | Set `false` to see the browser window |
-| `BROWSER_USER_DATA_DIR` | `./browser-profile` | Playwright persistent context directory |
-| `X_AUTH_TOKEN` | — | X session cookie; copy from DevTools |
-| `X_CT0` | — | X CSRF cookie; copy from DevTools |
-
-#### LLM
-| Variable | Default | Description |
-|---|---|---|
-| `GROQ_API_KEY` | — | Required |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model for reply and original post generation |
-| `GROQ_CLASSIFIER_MODEL` | (GROQ_MODEL) | Separate model override for account classification |
-| `LOG_PROMPTS` | `true` | Print full system+user prompts to stdout |
-
-#### Notifications
-| Variable | Default | Description |
-|---|---|---|
-| `NTFY_TOPIC` | — | Subscribe to this in the ntfy iOS app |
-| `NTFY_SERVER` | `https://ntfy.sh` | Use a self-hosted server if preferred |
-| `NTFY_ACTION_MODE` | `view` | `view` opens signed URL in browser; `http` does silent background POST |
-| `CALLBACK_NETWORK` | `lan` | `lan` or `tailscale` — how ntfy action buttons reach back to your Mac |
-| `CALLBACK_BASE_URL` | (auto-detected) | Override the callback base URL explicitly |
-| `TAILSCALE_IP` | (auto-detected) | Override Tailscale IP if auto-detection fails |
-
-#### Scheduler
-| Variable | Default | Description |
-|---|---|---|
-| `INGEST_CRON` | `*/15 * * * *` | Legacy cron expression (informational; actual scheduling is via random_runs) |
-| `MAX_CANDIDATES_PER_RUN` | `3` | Max replies to generate per pipeline run |
-| `APPROVAL_TIMEOUT_MINUTES` | `30` | Minutes before a pending reply auto-expires |
-| `MIN_REPLY_INTERVAL_SECONDS` | `300` | Safety floor between posted replies |
-| `ACTION_TOKEN_TTL_SECONDS` | `86400` | Signed ntfy action URL expiry |
-
-#### Context / RAG (optional)
-| Variable | Default | Description |
-|---|---|---|
-| `CONTEXT_ENABLED` | `false` | Master switch; set `true` to enable RAG |
-| `VOYAGE_API_KEY` | — | Required when context is enabled |
-| `VOYAGE_DIM` | `512` | Embedding dimension (256/512/1024); changing requires a fresh vec_context table |
-| `VOYAGE_RPM` | `2.7` | Rate limit cap (free tier = 3 RPM) |
-| `CONTEXT_INGEST_INTERVAL_MIN` | (per-source defaults) | Override poll interval for all sources |
-| `CONTEXT_RSS_IE_PUNE` | `(IE Pune feed)` | RSS feed URLs — set to `""` to disable any source |
-| `CONTEXT_REDDIT_PUNE` | `pune` | Reddit subreddit name |
-| `CONTEXT_WEATHER_PUNE` | `Pune` | wttr.in location string |
-
----
-
-## Running
-
-```bash
-# Development (hot-reload)
-npm run dev
-
-# Production (build first)
-npm run build
-npm start
-```
-
-**On first boot**, if `X_AUTH_TOKEN` is not set or is expired:
-1. Set `BROWSER_HEADLESS=false` in `.env`
-2. Run `npm run dev` — a Chrome window opens
-3. Log in to x.com manually
-4. Open DevTools → Application → Cookies → `https://x.com`
-5. Copy `auth_token` → `X_AUTH_TOKEN`, copy `ct0` → `X_CT0` in `.env`
-6. Set `BROWSER_HEADLESS=true`, restart
-
-**Dashboard:** `http://localhost:3000`
-**iPhone (same WiFi):** the LAN URL is logged on startup, e.g. `http://192.168.1.42:3000`
-**iPhone (Tailscale):** install Tailscale on Mac + iPhone, set `CALLBACK_NETWORK=tailscale`
-
----
-
-## Data Persistence
-
-All data lives in `data/xposter.db` (SQLite, WAL mode). Override with `DB_PATH_OVERRIDE`.
-
-### Tables
-
-| Table | Purpose |
-|---|---|
-| `posts` | Every ingested tweet + full lifecycle status, score, generated reply |
-| `accounts` | Every X account encountered + LLM classification, bio, follower counts |
-| `interactions` | Every reply we posted, with engagement tracking (likes/replies/retweets received) |
-| `activity_log` | Append-only event log; powers the Console and History tabs |
-| `settings` | Key-value store; live-editable from the dashboard Settings tab |
-| `original_posts` | Every original tweet we authored (not a reply), with topic and research context |
-| `post_impressions` | Periodic engagement snapshots for original posts (scraped every 2h) |
-| `follower_events` | Detected follower changes pending user action |
-| `scheduled_runs` | Today's randomly-picked pipeline and original-post run timestamps |
-| `context_items` | RSS/Reddit/weather items with metadata, deduped by SHA-256 body hash |
-| `context_source_health` | Per-source polling health (last ok, consecutive failures) |
-| `vec_context` | sqlite-vec virtual table; stores Voyage embeddings for ANN retrieval |
-
-### Backup
-
-The database file can be copied at any time while the app is running — WAL mode makes hot backups safe. For iCloud: `cp data/xposter.db ~/Library/Mobile\ Documents/com~apple~CloudDocs/Xposter/` or set up a cron.
-
-Logs rotate daily in `logs/` via `winston-daily-rotate-file`.
+| Agent SDK | `@anthropic-ai/claude-agent-sdk` 0.3 (optional) |
+| Testing | Vitest + coverage |
