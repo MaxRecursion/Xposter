@@ -89,4 +89,21 @@ describe('generateOriginalPost', () => {
     expect(Array.from(result).length).toBeLessThanOrEqual(280);
     expect(result).toMatch(/[.!?]$/);
   });
+
+  it('adds recent originals to the retry prompt when avoiding duplicates', async () => {
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate.mockResolvedValue({
+      choices: [{ message: { content: validDraft } }],
+    });
+
+    const { generateOriginalPost } = await import('../../src/pipeline/original_post_generator.js');
+    await generateOriginalPost({
+      avoidTexts: ['Pune founders keep recycling the same automation take.'],
+    });
+
+    const callArgs = __mockCreate.mock.calls[0][0];
+    const userMsg = callArgs.messages.find((m: any) => m.role === 'user').content;
+    expect(userMsg).toContain('VARIETY REQUIREMENT');
+    expect(userMsg).toContain('Pune founders keep recycling the same automation take.');
+  });
 });

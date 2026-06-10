@@ -3,7 +3,7 @@ import { postReply } from '../browser/posting.js';
 import { sendApprovalNotification, sendReplyPostedNotification } from '../notifications/ntfy.js';
 import { getPost, logEvent, markPostAsPosted, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
-import { recordInteraction } from '../storage/interactions.js';
+import { listRecentReplyTexts, recordInteraction } from '../storage/interactions.js';
 import { getBooleanSetting, getFloatSetting, getIntSetting, getListSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
@@ -12,6 +12,7 @@ import { EmptyReplyError } from './errors.js';
 import { DetectedLanguage, filterPost } from './filter.js';
 import { generateReply } from './generator.js';
 import { rankCandidates, scorePost, ScoredPost } from './scorer.js';
+import { generateDistinct } from './dedup.js';
 
 interface FilteredPost {
   post: Post;
@@ -195,7 +196,26 @@ async function processCandidate(candidate: ScoredPost, blocklist: string[]): Pro
     }
 
     updatePostStatus(post.id, 'GENERATING');
-    const reply = await generateReply(post, account);
+    const recentReplies = listRecentReplyTexts(25);
+    const distinct = await generateDistinct({
+      existingTexts: recentReplies,
+      generate: (attempt) => generateReply(
+        post,
+        account,
+        attempt > 1 ? { avoidTexts: recentReplies } : {},
+      ),
+      getText: (value) => value,
+      onDuplicate: (_value, attempt) => {
+        logEvent('DUPLICATE_REPLY_REJECTED', `attempt=${attempt}`, post.id);
+        logger.warn('Generated reply matched recent reply history', { postId: post.id, attempt });
+      },
+    });
+    if (!distinct.value) {
+      updatePostStatus(post.id, 'SKIPPED');
+      logEvent('CANDIDATE_SKIPPED_DUPLICATE', 'two duplicate drafts', post.id);
+      return 'skipped';
+    }
+    const reply = distinct.value;
     updateGeneratedReply(post.id, reply);
 
     // Human-in-the-loop mode: stop at PENDING_APPROVAL and ask via ntfy.

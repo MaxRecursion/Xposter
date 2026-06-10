@@ -139,4 +139,21 @@ describe('generateReply', () => {
     expect(systemMsg).toContain('sharp, polished English only');
     expect(result).toBe('Pune monsoon hits like clockwork.');
   });
+
+  it('adds recent replies to the retry prompt when avoiding duplicates', async () => {
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate.mockResolvedValue({
+      choices: [{ message: { content: 'A genuinely different angle.' } }],
+    });
+
+    const { generateReply } = await import('../../src/pipeline/generator.js');
+    await generateReply(makePost(), null, {
+      avoidTexts: ['Pune traffic has impeccable timing.'],
+    });
+
+    const callArgs = __mockCreate.mock.calls[0][0];
+    const userMsg = callArgs.messages.find((m: any) => m.role === 'user').content;
+    expect(userMsg).toContain('VARIETY REQUIREMENT');
+    expect(userMsg).toContain('Pune traffic has impeccable timing.');
+  });
 });

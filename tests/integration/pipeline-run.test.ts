@@ -158,4 +158,62 @@ describe('runPipeline', () => {
     expect(approvalMock).toHaveBeenCalledTimes(1);
     expect(approvalMock.mock.calls[0][0].id).toBe(post?.id);
   });
+
+  it('regenerates a reply that duplicates recent interaction history', async () => {
+    const tweet = {
+      tweet_id: '1723456789012347003',
+      author_handle: 'duplicate_user',
+      author_name: 'Duplicate User',
+      text: 'Pune traffic near Baner is stuck again tonight.',
+      timestamp: Math.floor(Date.now() / 1000) - 180,
+      likes: 4,
+      replies: 1,
+      retweets: 0,
+      tweet_url: 'https://x.com/duplicate_user/status/1723456789012347003',
+    };
+
+    vi.doMock('../../src/browser/ingestion.js', () => ({
+      ingestTimeline: vi.fn().mockResolvedValue([tweet]),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockResolvedValue(null),
+    }));
+    const generateReply = vi.fn()
+      .mockResolvedValueOnce('Pune traffic has impeccable timing.')
+      .mockResolvedValueOnce('Baner rush hour is applying for permanent residency.');
+    vi.doMock('../../src/pipeline/generator.js', () => ({ generateReply }));
+    vi.doMock('../../src/browser/posting.js', () => ({
+      postReply: vi.fn(),
+      deleteReply: vi.fn(),
+    }));
+    const approvalMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendApprovalNotification: approvalMock,
+      sendReplyPostedNotification: vi.fn(),
+    }));
+
+    const queries = await import('../../src/storage/queries.js');
+    const seedPost = queries.upsertPost({
+      ...tweet,
+      tweet_id: '1723456789012347999',
+      author_handle: 'seed_user',
+      author_name: 'Seed User',
+      tweet_url: 'https://x.com/seed_user/status/1723456789012347999',
+    });
+    expect(seedPost).not.toBeNull();
+    const { recordInteraction } = await import('../../src/storage/interactions.js');
+    recordInteraction(seedPost!.id, 'seed_user', 'Pune traffic has impeccable timing.');
+
+    const { runPipeline } = await import('../../src/scheduler/cron.js');
+    await runPipeline();
+
+    const post = queries.getPostByTweetId(tweet.tweet_id);
+    expect(post?.status).toBe('PENDING_APPROVAL');
+    expect(post?.generated_reply).toBe('Baner rush hour is applying for permanent residency.');
+    expect(generateReply).toHaveBeenCalledTimes(2);
+    expect(generateReply.mock.calls[1][2]).toMatchObject({
+      avoidTexts: expect.arrayContaining(['Pune traffic has impeccable timing.']),
+    });
+    expect(approvalMock).toHaveBeenCalledTimes(1);
+  });
 });

@@ -240,6 +240,7 @@ function classificationGuidanceFor(c: Classification | null): string {
 export async function generateReply(
   post: Post,
   authorAccount: Account | null = null,
+  options: { avoidTexts?: string[] } = {},
 ): Promise<string> {
   const client = getGroqClient();
   const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
@@ -252,7 +253,12 @@ export async function generateReply(
     ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 4, maxTokens: 500 })
     : '';
   const memoryBlock = recallNeuralMemory(post.text, { maxItems: 3, maxChars: 900 });
-  const userPrompt = buildUserPrompt(post, authorAccount, [contextBlock, memoryBlock].filter(Boolean).join('\n\n'));
+  const userPrompt = buildUserPrompt(
+    post,
+    authorAccount,
+    [contextBlock, memoryBlock].filter(Boolean).join('\n\n'),
+    options.avoidTexts,
+  );
 
   logger.info('Calling Groq for reply generation', {
     postId: post.id,
@@ -294,7 +300,12 @@ export async function generateReply(
   return cleaned;
 }
 
-function buildUserPrompt(post: Post, account: Account | null, contextBlock = ''): string {
+function buildUserPrompt(
+  post: Post,
+  account: Account | null,
+  contextBlock = '',
+  avoidTexts: string[] = [],
+): string {
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
 
   const lines = [
@@ -312,6 +323,14 @@ function buildUserPrompt(post: Post, account: Account | null, contextBlock = '')
   );
   if (contextBlock) {
     lines.push('', contextBlock);
+  }
+  if (avoidTexts.length > 0) {
+    lines.push(
+      '',
+      'VARIETY REQUIREMENT: The previous draft was too similar to a recent reply.',
+      'Use a genuinely different angle, sentence structure, and opening. Do not paraphrase these:',
+      ...avoidTexts.slice(0, 8).map((text, i) => `${i + 1}. ${truncateForPrompt(text, 180)}`),
+    );
   }
   lines.push('', 'Tweet:', post.text);
 

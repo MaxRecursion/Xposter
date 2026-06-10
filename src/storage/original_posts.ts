@@ -113,6 +113,18 @@ export function listOriginalPosts(limit = 50): OriginalPost[] {
     .all(Math.min(limit, 500)) as OriginalPost[];
 }
 
+export function listRecentOriginalPostContents(limit = 25): string[] {
+  return getDb()
+    .prepare(`
+      SELECT content FROM original_posts
+      WHERE status = 'POSTED' AND TRIM(content) <> ''
+      ORDER BY posted_at DESC, created_at DESC
+      LIMIT ?
+    `)
+    .all(Math.min(Math.max(limit, 1), 100))
+    .map((row) => (row as { content: string }).content);
+}
+
 /** Posts that have been published and need impression checking (no check in the last N hours). */
 export function getPostsNeedingImpressionSync(olderThanSeconds = 7200): OriginalPost[] {
   const db = getDb();

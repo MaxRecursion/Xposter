@@ -22,6 +22,10 @@ export interface GeneratedOriginalPost {
   researchContext: string;
 }
 
+export interface OriginalGenerationOptions {
+  avoidTexts?: string[];
+}
+
 // ── Research step ─────────────────────────────────────────────────────────────
 
 /**
@@ -193,11 +197,14 @@ const ENGAGEMENT_FARM_STRATEGIC_USER = `Write a single short X (Twitter) post th
 
 Reply with ONLY the tweet text, nothing else.`;
 
-export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPost> {
+export async function generateEngagementFarmPost(
+  options: OriginalGenerationOptions = {},
+): Promise<GeneratedOriginalPost> {
   const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
   const client = getGroqClient();
   const strategic = Math.random() < 0.40;
-  const userPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
+  const baseUserPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
+  const userPrompt = appendAvoidancePrompt(baseUserPrompt, options.avoidTexts);
 
   logger.info('Generating engagement farm post', { model, strategic });
 
@@ -242,13 +249,15 @@ export async function generateEngagementFarmPost(): Promise<GeneratedOriginalPos
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
+export async function generateOriginalPost(
+  options: OriginalGenerationOptions = {},
+): Promise<GeneratedOriginalPost> {
   const { topic, category } = pickTopicAndCategory();
   const { context, snippets } = await gatherResearchContext(topic);
 
   const systemPrompt = buildSystemPrompt(category);
 
-  const userPrompt = [
+  const userPrompt = appendAvoidancePrompt([
     `Category: ${category}`,
     `Topic: ${topic}`,
     '',
@@ -260,7 +269,7 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
       : '',
     '',
     'Write the tweet now:',
-  ].filter((l) => l !== undefined).join('\n');
+  ].filter((l) => l !== undefined).join('\n'), options.avoidTexts);
 
   const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
   const client = getGroqClient();
@@ -341,4 +350,15 @@ export async function generateOriginalPost(): Promise<GeneratedOriginalPost> {
 
   assertEnglishOnly(cleaned, 'Original post');
   return { content: cleaned, language: 'english', topic, category, researchContext: context };
+}
+
+function appendAvoidancePrompt(prompt: string, avoidTexts: string[] = []): string {
+  if (avoidTexts.length === 0) return prompt;
+  return [
+    prompt,
+    '',
+    'VARIETY REQUIREMENT: The previous draft was too similar to a recent post.',
+    'Choose a different angle, opening, and sentence structure. Do not paraphrase these:',
+    ...avoidTexts.slice(0, 8).map((text, i) => `${i + 1}. ${text.slice(0, 180)}`),
+  ].join('\n');
 }

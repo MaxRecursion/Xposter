@@ -4,7 +4,7 @@ import {
 } from '../storage/scheduled_runs.js';
 import {
   insertOriginalPost, markOriginalPostPosted, markOriginalPostError,
-  getPostsNeedingImpressionSync, insertImpression,
+  getPostsNeedingImpressionSync, insertImpression, listRecentOriginalPostContents,
 } from '../storage/original_posts.js';
 import { generateOriginalPost, generateEngagementFarmPost } from '../pipeline/original_post_generator.js';
 import { EmptyReplyError } from '../pipeline/errors.js';
@@ -16,6 +16,7 @@ import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import { formatLocalTime, generateWeightedSlots, todayDateKey } from './daily_plan.js';
 import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
+import { generateDistinct } from '../pipeline/dedup.js';
 
 const KIND = 'ORIGINAL_POST';
 const TICK_INTERVAL_MS = 60_000;
@@ -149,9 +150,23 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
 
   try {
     // 1. Generate
-    const generated = postType === 'ENGAGEMENT_FARM'
-      ? await generateEngagementFarmPost()
-      : await generateOriginalPost();
+    const recentContents = listRecentOriginalPostContents(25);
+    const distinct = await generateDistinct({
+      existingTexts: recentContents,
+      generate: (attempt) => postType === 'ENGAGEMENT_FARM'
+        ? generateEngagementFarmPost(attempt > 1 ? { avoidTexts: recentContents } : {})
+        : generateOriginalPost(attempt > 1 ? { avoidTexts: recentContents } : {}),
+      getText: (value) => value.content,
+      onDuplicate: (_value, attempt) => {
+        logEvent('DUPLICATE_ORIGINAL_REJECTED', `type=${postType} attempt=${attempt}`);
+        logger.warn('Generated original post matched recent history', { postType, attempt });
+      },
+    });
+    if (!distinct.value) {
+      logEvent('ORIGINAL_POST_SKIPPED_DUPLICATE', `type=${postType}; two duplicate drafts`);
+      return { ok: false, error: 'duplicate drafts (skipped)' };
+    }
+    const generated = distinct.value;
 
     // 2. Persist draft
     const post = insertOriginalPost({

@@ -143,6 +143,18 @@ export function listRecentInteractions(limit = 50): Interaction[] {
     .all(Math.min(Math.max(limit, 1), 500)) as Interaction[];
 }
 
+export function listRecentReplyTexts(limit = 25): string[] {
+  return getDb()
+    .prepare(`
+      SELECT our_reply_text FROM interactions
+      WHERE TRIM(our_reply_text) <> ''
+      ORDER BY posted_at DESC
+      LIMIT ?
+    `)
+    .all(Math.min(Math.max(limit, 1), 100))
+    .map((row) => (row as { our_reply_text: string }).our_reply_text);
+}
+
 export function getInteractionStats(): {
   total: number;
   total_likes: number;
