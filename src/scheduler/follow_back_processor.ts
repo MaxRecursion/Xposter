@@ -9,7 +9,7 @@
 import { getDueScheduledFollowBacks, setFollowerEventStatus, countActionedFollowBacksToday } from '../storage/follower_events.js';
 import { setFollowingState } from '../storage/accounts.js';
 import { followBack } from '../browser/followers.js';
-import { getIntSetting } from '../storage/settings.js';
+import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 
@@ -34,6 +34,8 @@ export function stopFollowBackProcessor(): void {
 }
 
 export async function processScheduledFollowBacks(): Promise<void> {
+  if (!getBooleanSetting('system_running', true)) return;
+
   const due = getDueScheduledFollowBacks();
   if (due.length === 0) return;
 

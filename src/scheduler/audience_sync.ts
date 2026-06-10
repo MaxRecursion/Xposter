@@ -3,6 +3,7 @@ import { saveHeatmap, getLatestHeatmap } from '../storage/audience.js';
 import { invalidateHeatmapCache } from './audience_weights.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
+import { getBooleanSetting } from '../storage/settings.js';
 
 /**
  * Daily refresh of the audience-activity heatmap.
@@ -48,6 +49,9 @@ export async function runAudienceSync(
   trigger: 'boot' | 'interval' | 'manual' = 'manual',
 ): Promise<{ ok: boolean; error?: string; cells?: number }> {
   if (_running) return { ok: false, error: 'sync already running' };
+  if (!getBooleanSetting('system_running', true)) {
+    return { ok: false, error: 'system paused' };
+  }
   _running = true;
   logEvent('AUDIENCE_SYNC_START', trigger);
 

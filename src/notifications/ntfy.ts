@@ -290,6 +290,27 @@ export async function sendUnfollowNotification(handles: string[]): Promise<NtfyR
   }, { unfollows: handles.length });
 }
 
+// ── Session health notification ──────────────────────────────────────────────
+
+/** High-priority alert sent once when the X browser session becomes logged out. */
+export async function sendSessionExpiredNotification(): Promise<NtfyResult> {
+  const cfg = getNtfyConfig();
+  if (!cfg) return notConfiguredResult();
+
+  const base = getCallbackBase();
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
+    title: 'Xposter: X Session Expired',
+    message: 'The X browser session is logged out. Xposter paused all posting and sync jobs. Refresh the auth cookies, then resume the system from the dashboard.',
+    priority: 5,
+    tags: ['warning'],
+    actions: [
+      { action: 'view', label: 'Open dashboard', url: base },
+    ],
+    click: base,
+  }, { event: 'session_expired' });
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function truncate(text: string, max: number): string {

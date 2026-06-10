@@ -74,4 +74,14 @@ describe('ntfy notification links', () => {
     expect(payload.actions[2].label).toBe('Open profile');
     expect(payload.actions[2].url).toBe('twitter://user?screen_name=puneri_user');
   });
+
+  it('sends session-expiry alerts at maximum priority', async () => {
+    const { sendSessionExpiredNotification } = await import('../../src/notifications/ntfy.js');
+
+    await sendSessionExpiredNotification();
+
+    const payload = postMock.mock.calls[0]?.[1];
+    expect(payload.priority).toBe(5);
+    expect(payload.title).toContain('Session Expired');
+  });
 });

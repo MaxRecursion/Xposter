@@ -87,6 +87,8 @@ export function getNextOriginalRuns(limit = 5): ScheduledRun[] {
 // ── Impression sync ───────────────────────────────────────────────────────────
 
 export async function runImpressionSync(): Promise<{ synced: number }> {
+  if (!getBooleanSetting('system_running', true)) return { synced: 0 };
+
   const posts = getPostsNeedingImpressionSync(IMPRESSION_SYNC_MS / 1000);
   if (posts.length === 0) return { synced: 0 };
 

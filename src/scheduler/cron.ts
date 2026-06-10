@@ -8,6 +8,7 @@ import { startFollowBackProcessor, stopFollowBackProcessor } from './follow_back
 import { startOriginalPostScheduler, stopOriginalPostScheduler } from './original_posts.js';
 import { startAudienceSync, stopAudienceSync } from './audience_sync.js';
 import { startReplyMetricsSync, stopReplyMetricsSync } from './reply_metrics_sync.js';
+import { startSessionHealthWatchdog, stopSessionHealthWatchdog } from './session_health.js';
 import { startAgentWatcher, stopAgentWatcher } from '../agent/watcher.js';
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
@@ -25,6 +26,7 @@ export function startScheduler(): void {
   startOriginalPostScheduler();
   startAudienceSync();
   startReplyMetricsSync();
+  startSessionHealthWatchdog();
   startAgentWatcher();
 
   if (isContextEnabled()) {
@@ -58,6 +60,7 @@ export function stopScheduler(): void {
   stopOriginalPostScheduler();
   stopAudienceSync();
   stopReplyMetricsSync();
+  stopSessionHealthWatchdog();
   stopAgentWatcher();
   stopContextIngest();
   if (_expiryHandle) {

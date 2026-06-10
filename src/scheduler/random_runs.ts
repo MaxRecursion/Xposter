@@ -6,6 +6,7 @@ import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import { formatLocalTime, generateWeightedSlots, todayDateKey } from './daily_plan.js';
 import { getIntSetting } from '../storage/settings.js';
+import { getBooleanSetting } from '../storage/settings.js';
 
 /**
  * Randomized 5x-daily scheduler.
@@ -84,6 +85,7 @@ function generateRandomTimes(dateKey: string): number[] {
 async function tick(): Promise<void> {
   // Maybe roll into a new day
   ensureTodayPlan();
+  if (!getBooleanSetting('system_running', true)) return;
 
   const due = getDuePendingRuns(Math.floor(Date.now() / 1000));
   if (due.length === 0) return;
