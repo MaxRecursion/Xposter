@@ -84,4 +84,42 @@ describe('ntfy notification links', () => {
     expect(payload.priority).toBe(5);
     expect(payload.title).toContain('Session Expired');
   });
+
+  it('formats the weekly digest metrics', async () => {
+    const { sendWeeklyDigestNotification } = await import('../../src/notifications/ntfy.js');
+
+    await sendWeeklyDigestNotification({
+      since: 1,
+      until: 2,
+      replies_posted: 12,
+      originals_posted: 5,
+      approval_rate: 75,
+      approvals: 3,
+      skips: 1,
+      follower_delta: 4,
+      followers_gained: 6,
+      followers_lost: 2,
+      top_reply: {
+        text: 'A strong reply.',
+        author_handle: 'author',
+        tweet_url: 'https://x.com/i/web/status/1',
+        success_score: 20,
+        likes: 4,
+        replies: 1,
+        retweets: 0,
+      },
+      best_topic: {
+        topic: 'pune metro',
+        posts: 2,
+        avg_engagement_score: 24,
+      },
+    });
+
+    const payload = postMock.mock.calls[0]?.[1];
+    expect(payload.title).toContain('Weekly Digest');
+    expect(payload.message).toContain('Replies posted: 12');
+    expect(payload.message).toContain('Approval rate: 75%');
+    expect(payload.message).toContain('Follower delta: +4');
+    expect(payload.message).toContain('Best topic: pune metro');
+  });
 });

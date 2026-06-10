@@ -338,6 +338,13 @@ function applyMigrations(db: Database.Database): void {
       ('agent_error_threshold',  '3')
   `).run();
 
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('weekly_digest_enabled',        'true'),
+      ('weekly_digest_hour',           '9'),
+      ('weekly_digest_last_sent_week', '')
+  `).run();
+
   // Insert default settings for original posts feature
   db.prepare(`
     INSERT OR IGNORE INTO settings(key, value) VALUES

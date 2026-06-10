@@ -68,6 +68,8 @@ describe('analytics overview', () => {
       retweets: 0,
       impressions: 100,
     });
+    queries.logEvent('APPROVE', 'test approval', source.id);
+    queries.logEvent('SKIP', 'test skip', source.id);
 
     const original = originals.insertOriginalPost({
       content: 'Pune Metro is becoming a reliability test.',
@@ -110,5 +112,16 @@ describe('analytics overview', () => {
     expect(result.posting_hours.length).toBeGreaterThan(0);
     expect(result.follower_growth.reduce((sum, row) => sum + row.gained, 0)).toBe(1);
     expect(result.follower_growth.reduce((sum, row) => sum + row.lost, 0)).toBe(1);
+
+    const { getWeeklyDigest } = await import('../../src/storage/digest.js');
+    const digest = getWeeklyDigest(now + 60);
+    expect(digest).toMatchObject({
+      replies_posted: 1,
+      originals_posted: 1,
+      approval_rate: 50,
+      follower_delta: 0,
+    });
+    expect(digest.top_reply?.success_score).toBeGreaterThan(0);
+    expect(digest.best_topic?.topic).toBe('pune metro');
   });
 });

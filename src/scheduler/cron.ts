@@ -9,6 +9,7 @@ import { startOriginalPostScheduler, stopOriginalPostScheduler } from './origina
 import { startAudienceSync, stopAudienceSync } from './audience_sync.js';
 import { startReplyMetricsSync, stopReplyMetricsSync } from './reply_metrics_sync.js';
 import { startSessionHealthWatchdog, stopSessionHealthWatchdog } from './session_health.js';
+import { startWeeklyDigestScheduler, stopWeeklyDigestScheduler } from './weekly_digest.js';
 import { startAgentWatcher, stopAgentWatcher } from '../agent/watcher.js';
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
@@ -27,6 +28,7 @@ export function startScheduler(): void {
   startAudienceSync();
   startReplyMetricsSync();
   startSessionHealthWatchdog();
+  startWeeklyDigestScheduler();
   startAgentWatcher();
 
   if (isContextEnabled()) {
@@ -61,6 +63,7 @@ export function stopScheduler(): void {
   stopAudienceSync();
   stopReplyMetricsSync();
   stopSessionHealthWatchdog();
+  stopWeeklyDigestScheduler();
   stopAgentWatcher();
   stopContextIngest();
   if (_expiryHandle) {

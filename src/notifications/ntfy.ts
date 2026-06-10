@@ -4,6 +4,7 @@ import { Account } from '../storage/accounts.js';
 import { getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { createActionToken } from '../api/auth.js';
+import type { WeeklyDigest } from '../storage/digest.js';
 
 export interface NtfyResult {
   ok: boolean;
@@ -309,6 +310,52 @@ export async function sendSessionExpiredNotification(): Promise<NtfyResult> {
     ],
     click: base,
   }, { event: 'session_expired' });
+}
+
+// ── Weekly digest ────────────────────────────────────────────────────────────
+
+export async function sendWeeklyDigestNotification(
+  digest: WeeklyDigest,
+): Promise<NtfyResult> {
+  const cfg = getNtfyConfig();
+  if (!cfg) return notConfiguredResult();
+
+  const base = getCallbackBase();
+  const approval = digest.approval_rate == null ? 'n/a' : `${digest.approval_rate}%`;
+  const followerDelta = digest.follower_delta > 0
+    ? `+${digest.follower_delta}`
+    : String(digest.follower_delta);
+  const topReply = digest.top_reply
+    ? [
+      `Top reply: ${truncate(digest.top_reply.text, 140)}`,
+      `@${digest.top_reply.author_handle} · score ${digest.top_reply.success_score} · ${digest.top_reply.likes} likes / ${digest.top_reply.replies} replies / ${digest.top_reply.retweets} reposts`,
+    ]
+    : ['Top reply: no replies posted'];
+  const bestTopic = digest.best_topic
+    ? `${digest.best_topic.topic} (${digest.best_topic.avg_engagement_score} avg engagement)`
+    : 'no topic data yet';
+
+  const message = [
+    `Replies posted: ${digest.replies_posted}`,
+    `Originals posted: ${digest.originals_posted}`,
+    `Approval rate: ${approval} (${digest.approvals} approved / ${digest.skips} skipped)`,
+    `Follower delta: ${followerDelta} (${digest.followers_gained} gained / ${digest.followers_lost} lost)`,
+    `Best topic: ${bestTopic}`,
+    '',
+    ...topReply,
+  ].join('\n');
+
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
+    title: 'Xposter: Weekly Digest',
+    message,
+    priority: 3,
+    tags: ['bar_chart'],
+    actions: [
+      { action: 'view', label: 'Open dashboard', url: base },
+    ],
+    click: base,
+  }, { event: 'weekly_digest' });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

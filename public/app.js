@@ -210,6 +210,8 @@ async function loadSettings() {
     if ($('s-orig-marathi-ratio'))  $('s-orig-marathi-ratio').value  = s.original_post_marathi_ratio ?? '40';
     if ($('s-agent-enabled'))       $('s-agent-enabled').checked     = s.agent_enabled === 'true';
     if ($('s-agent-threshold'))     $('s-agent-threshold').value     = s.agent_error_threshold ?? '3';
+    if ($('s-weekly-digest'))       $('s-weekly-digest').checked     = s.weekly_digest_enabled !== 'false';
+    if ($('s-weekly-digest-hour'))  $('s-weekly-digest-hour').value  = s.weekly_digest_hour ?? '9';
   } catch { /* ignore */ }
   await loadDiagnostics();
   await refreshAgentSettingsNote();
@@ -1379,6 +1381,8 @@ document.addEventListener('DOMContentLoaded', () => {
           original_post_marathi_ratio:  $('s-orig-marathi-ratio')?.value,
           agent_enabled:                $('s-agent-enabled')?.checked ? 'true' : 'false',
           agent_error_threshold:        $('s-agent-threshold')?.value,
+          weekly_digest_enabled:        $('s-weekly-digest')?.checked ? 'true' : 'false',
+          weekly_digest_hour:           $('s-weekly-digest-hour')?.value,
         }),
       });
       toast('Settings saved', 'success');
@@ -1423,6 +1427,20 @@ document.addEventListener('DOMContentLoaded', () => {
   if ($('acc-filter-class'))    $('acc-filter-class').addEventListener('change', loadAccounts);
   if ($('acc-filter-marathi'))  $('acc-filter-marathi').addEventListener('change', loadAccounts);
   if ($('btn-analytics-refresh')) $('btn-analytics-refresh').addEventListener('click', loadAnalytics);
+  if ($('btn-weekly-digest')) {
+    $('btn-weekly-digest').addEventListener('click', async () => {
+      const btn = $('btn-weekly-digest');
+      btn.disabled = true;
+      try {
+        const result = await apiFetch('/api/analytics/weekly-digest/send', { method: 'POST' });
+        toast(result.sent ? 'Weekly digest sent' : (result.skipped || 'Digest not sent'), result.sent ? 'success' : 'info');
+      } catch (e) {
+        toast(`Digest failed: ${e.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 
   // Original Posts tab buttons
   if ($('btn-post-now')) {

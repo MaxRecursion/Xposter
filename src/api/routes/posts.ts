@@ -113,6 +113,8 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   auto_follow_back_enabled:    boolSetting,
   auto_follow_back_classifications: textSetting(200),
   auto_follow_back_min_confidence:  intSetting(60, 0, 100),
+  weekly_digest_enabled:            boolSetting,
+  weekly_digest_hour:               intSetting(9, 0, 23),
 };
 
 postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {

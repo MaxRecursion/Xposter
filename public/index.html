@@ -136,7 +136,10 @@
             <h3 class="audience-title">Performance Analytics</h3>
             <div class="audience-sub">Rolling 30-day view across followers, replies, and original posts.</div>
           </div>
-          <button class="btn btn-ghost" id="btn-analytics-refresh">↻ Refresh</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" id="btn-weekly-digest">Send digest now</button>
+            <button class="btn btn-ghost" id="btn-analytics-refresh">↻ Refresh</button>
+          </div>
         </div>
         <div class="analytics-summary" id="analytics-summary"></div>
         <div class="analytics-grid">
@@ -438,6 +441,24 @@
           <div class="settings-field">
             <label>Blocklist Classifications (comma-separated)</label>
             <input type="text" id="s-blocklist" placeholder="BOT,BRAND_PROMO" />
+          </div>
+        </div>
+
+        <h3 class="section-h">Notifications</h3>
+        <div class="settings-grid">
+          <div class="settings-field settings-field-toggle">
+            <label for="s-weekly-digest">
+              <span>Weekly Sunday Digest</span>
+              <span class="settings-field-help">Sends follower, reply, and topic performance through ntfy once per week.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-weekly-digest" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label>Digest Hour (local time, 0–23)</label>
+            <input type="number" id="s-weekly-digest-hour" min="0" max="23" />
           </div>
         </div>
 
