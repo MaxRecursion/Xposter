@@ -11,6 +11,7 @@ import { repliesRouter } from './routes/replies.js';
 import { contextRouter } from './routes/context.js';
 import { audienceRouter } from './routes/audience.js';
 import { agentRouter } from './routes/agent.js';
+import { analyticsRouter } from './routes/analytics.js';
 import { isAgentEnabled, isClaudeCliFound, isGhCliFound, getAgentModel } from '../agent/client.js';
 import { runPipeline, isPipelineRunning } from '../scheduler/cron.js';
 import { sendTestNotification } from '../notifications/ntfy.js';
@@ -70,6 +71,7 @@ export function createServer(): express.Express {
   app.use('/api/context', contextRouter);
   app.use('/api/audience', audienceRouter);
   app.use('/api/agent', agentRouter);
+  app.use('/api/analytics', analyticsRouter);
 
   // Schedule visibility
   app.get('/api/schedule/today', (_req, res) => {

@@ -712,6 +712,184 @@ function renderOriginalPost(post) {
     </div>`;
 }
 
+// ── Analytics dashboard ──────────────────────────────────────────────────────
+
+async function loadAnalytics() {
+  const empty = $('analytics-empty');
+  try {
+    const data = await apiFetch('/api/analytics/overview?days=30');
+    const summary = data.summary || {};
+    $('analytics-summary').innerHTML = [
+      ['Follower delta', formatSigned(summary.follower_delta || 0)],
+      ['Replies posted', summary.replies || 0],
+      ['Successful replies', summary.successful_replies || 0],
+      ['Original posts', summary.originals || 0],
+    ].map(([label, value]) => `
+      <div class="analytics-summary-card">
+        <div class="analytics-summary-value">${escHtml(value)}</div>
+        <div class="analytics-summary-label">${escHtml(label)}</div>
+      </div>
+    `).join('');
+
+    const hasData = (data.reply_by_classification?.length || 0) +
+      (data.topic_trends?.length || 0) +
+      (data.posting_hours?.length || 0) +
+      (data.follower_growth?.some((row) => row.net !== 0) ? 1 : 0);
+    empty.style.display = hasData ? 'none' : 'block';
+
+    renderFollowerGrowth(data.follower_growth || []);
+    renderReplyClassPerformance(data.reply_by_classification || []);
+    renderTopicTrends(data.topic_trends || []);
+    renderPostingHours(data.posting_hours || []);
+  } catch (e) {
+    empty.style.display = 'block';
+    empty.textContent = `Analytics failed to load: ${e.message}`;
+  }
+}
+
+function formatSigned(value) {
+  const n = Number(value) || 0;
+  return n > 0 ? `+${n}` : String(n);
+}
+
+function analyticsSvg(id, height = 230) {
+  const svg = d3.select(`#${id}`);
+  svg.selectAll('*').remove();
+  const width = 760;
+  svg.attr('viewBox', `0 0 ${width} ${height}`).attr('width', '100%').attr('height', height);
+  return { svg, width, height };
+}
+
+function renderFollowerGrowth(rows) {
+  const { svg, width, height } = analyticsSvg('analytics-followers');
+  if (!rows.length) return;
+  const margin = { top: 18, right: 20, bottom: 32, left: 42 };
+  const x = d3.scaleTime()
+    .domain(d3.extent(rows, (d) => new Date(`${d.day}T12:00:00`)))
+    .range([margin.left, width - margin.right]);
+  const extent = d3.extent(rows, (d) => d.cumulative);
+  const y = d3.scaleLinear()
+    .domain([Math.min(0, extent[0] || 0), Math.max(1, extent[1] || 0)])
+    .nice()
+    .range([height - margin.bottom, margin.top]);
+
+  svg.append('path')
+    .datum(rows)
+    .attr('fill', 'none')
+    .attr('stroke', '#1d8bf0')
+    .attr('stroke-width', 3)
+    .attr('d', d3.line()
+      .x((d) => x(new Date(`${d.day}T12:00:00`)))
+      .y((d) => y(d.cumulative)));
+  svg.selectAll('.analytics-follower-dot')
+    .data(rows.filter((d) => d.net !== 0))
+    .join('circle')
+    .attr('cx', (d) => x(new Date(`${d.day}T12:00:00`)))
+    .attr('cy', (d) => y(d.cumulative))
+    .attr('r', 3.5)
+    .attr('fill', (d) => d.net >= 0 ? '#34c759' : '#ff453a');
+  addAnalyticsAxes(svg, x, y, height, margin, d3.timeFormat('%d %b'));
+}
+
+function renderReplyClassPerformance(rows) {
+  const el = $('analytics-reply-classes');
+  if (!rows.length) {
+    el.innerHTML = '<div class="analytics-no-data">No reply engagement data yet.</div>';
+    return;
+  }
+  const maxScore = Math.max(...rows.map((row) => row.avg_success_score || 0), 1);
+  el.innerHTML = rows.map((row) => `
+    <div class="analytics-bar-row">
+      <div class="analytics-bar-label">${escHtml(row.classification)}</div>
+      <div class="analytics-bar-track">
+        <div class="analytics-bar-fill" style="width:${Math.max(2, (row.avg_success_score / maxScore) * 100)}%"></div>
+      </div>
+      <div class="analytics-bar-value">${row.avg_success_score} avg · ${row.success_rate}% success · ${row.total_replies}</div>
+    </div>
+  `).join('');
+}
+
+function renderTopicTrends(rows) {
+  const { svg, width, height } = analyticsSvg('analytics-topics', 260);
+  if (!rows.length) return;
+  const byTopic = d3.group(rows, (d) => d.topic);
+  const topics = [...byTopic.entries()]
+    .sort((a, b) => d3.max(b[1], (d) => d.engagement_score) - d3.max(a[1], (d) => d.engagement_score))
+    .slice(0, 5);
+  const shown = topics.flatMap(([, values]) => values);
+  const margin = { top: 22, right: 150, bottom: 34, left: 46 };
+  const x = d3.scaleTime()
+    .domain(d3.extent(shown, (d) => new Date(d.checked_at * 1000)))
+    .range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(shown, (d) => d.engagement_score) || 1])
+    .nice()
+    .range([height - margin.bottom, margin.top]);
+  const colors = d3.scaleOrdinal(d3.schemeTableau10).domain(topics.map(([topic]) => topic));
+
+  for (const [topic, values] of topics) {
+    const sorted = [...values].sort((a, b) => a.checked_at - b.checked_at);
+    svg.append('path')
+      .datum(sorted)
+      .attr('fill', 'none')
+      .attr('stroke', colors(topic))
+      .attr('stroke-width', 2.5)
+      .attr('d', d3.line()
+        .x((d) => x(new Date(d.checked_at * 1000)))
+        .y((d) => y(d.engagement_score)));
+  }
+  addAnalyticsAxes(svg, x, y, height, margin, d3.timeFormat('%d %b'));
+  const legend = svg.append('g').attr('transform', `translate(${width - margin.right + 12}, ${margin.top})`);
+  topics.forEach(([topic], index) => {
+    const row = legend.append('g').attr('transform', `translate(0, ${index * 24})`);
+    row.append('circle').attr('r', 5).attr('fill', colors(topic));
+    row.append('text').attr('x', 10).attr('y', 4).attr('class', 'analytics-axis-text')
+      .text(topic.length > 18 ? `${topic.slice(0, 17)}…` : topic);
+  });
+}
+
+function renderPostingHours(rows) {
+  const { svg, width, height } = analyticsSvg('analytics-hours', 240);
+  const allHours = Array.from({ length: 24 }, (_, hour) => {
+    const row = rows.find((item) => item.hour === hour);
+    return row || { hour, posts: 0, avg_engagement_score: 0 };
+  });
+  const margin = { top: 18, right: 20, bottom: 36, left: 44 };
+  const x = d3.scaleBand().domain(allHours.map((d) => d.hour)).range([margin.left, width - margin.right]).padding(0.18);
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(allHours, (d) => d.avg_engagement_score) || 1])
+    .nice()
+    .range([height - margin.bottom, margin.top]);
+  svg.selectAll('.analytics-hour-bar')
+    .data(allHours)
+    .join('rect')
+    .attr('x', (d) => x(d.hour))
+    .attr('y', (d) => y(d.avg_engagement_score))
+    .attr('width', x.bandwidth())
+    .attr('height', (d) => y(0) - y(d.avg_engagement_score))
+    .attr('rx', 2)
+    .attr('fill', (d) => d.posts > 0 ? '#8b5cf6' : 'var(--border)');
+  svg.append('g')
+    .attr('transform', `translate(0, ${height - margin.bottom})`)
+    .call(d3.axisBottom(x).tickValues([0, 3, 6, 9, 12, 15, 18, 21]).tickFormat((d) => `${String(d).padStart(2, '0')}:00`))
+    .call((g) => g.selectAll('text').attr('class', 'analytics-axis-text'));
+  svg.append('g')
+    .attr('transform', `translate(${margin.left}, 0)`)
+    .call(d3.axisLeft(y).ticks(5))
+    .call((g) => g.selectAll('text').attr('class', 'analytics-axis-text'));
+}
+
+function addAnalyticsAxes(svg, x, y, height, margin, formatX) {
+  svg.append('g')
+    .attr('transform', `translate(0, ${height - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(5).tickFormat(formatX))
+    .call((g) => g.selectAll('text').attr('class', 'analytics-axis-text'));
+  svg.append('g')
+    .attr('transform', `translate(${margin.left}, 0)`)
+    .call(d3.axisLeft(y).ticks(5))
+    .call((g) => g.selectAll('text').attr('class', 'analytics-axis-text'));
+}
+
 // ── Audience Activity tab ─────────────────────────────────────────────────────
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1116,6 +1294,7 @@ async function refresh() {
   if (activeTab === 'followers') await loadFollowers();
   if (activeTab === 'accounts')  await loadAccounts();
   if (activeTab === 'originals') await loadOriginals();
+  if (activeTab === 'analytics') await loadAnalytics();
   if (activeTab === 'audience')  await loadAudience();
   if (activeTab === 'agent')     await loadAgent();
   // Console runs its own loop independently
@@ -1243,6 +1422,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if ($('btn-reload-accounts')) $('btn-reload-accounts').addEventListener('click', loadAccounts);
   if ($('acc-filter-class'))    $('acc-filter-class').addEventListener('change', loadAccounts);
   if ($('acc-filter-marathi'))  $('acc-filter-marathi').addEventListener('change', loadAccounts);
+  if ($('btn-analytics-refresh')) $('btn-analytics-refresh').addEventListener('click', loadAnalytics);
 
   // Original Posts tab buttons
   if ($('btn-post-now')) {

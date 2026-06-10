@@ -1,7 +1,7 @@
 import { fetchOurFollowerEntries, resolveOwnHandle, type FollowerListEntry } from '../browser/followers.js';
 import {
   enqueueFollowerEvent, listFollowerHandles, setFollowerState, setFollowingState,
-  upsertPendingFollowBackEvent,
+  setFollowerEventStatus, upsertPendingFollowBackEvent,
 } from '../storage/accounts.js';
 import { autoApproveFollowBack } from '../storage/follower_events.js';
 import { logEvent } from '../storage/queries.js';
@@ -161,6 +161,21 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     }
     if (entry.followedByUs === false) {
       notFollowedBack.push(handle);
+    }
+  }
+
+  // New mutual followers do not enter the follow-back queue, so record a
+  // resolved event here to keep follower-growth analytics complete.
+  const notFollowedBackLower = new Set(notFollowedBack.map((handle) => handle.toLowerCase()));
+  for (const handle of newOnes) {
+    if (notFollowedBackLower.has(handle.toLowerCase())) continue;
+    const eventId = enqueueFollowerEvent(
+      handle,
+      'NEW_FOLLOWER',
+      'source=follower_scan_v2; relationship=already_followed_back',
+    );
+    if (eventId) {
+      setFollowerEventStatus(eventId, 'ACTIONED', 'already followed back');
     }
   }
 

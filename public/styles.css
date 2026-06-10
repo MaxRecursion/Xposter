@@ -936,6 +936,113 @@ select.select-input {
 .op-quote-source:hover {
   text-decoration: underline;
 }
+
+/* ── Analytics dashboard ─────────────────────────────────────────────────── */
+.analytics-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.analytics-summary {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+.analytics-summary-card,
+.analytics-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.analytics-summary-card {
+  padding: 14px;
+}
+.analytics-summary-value {
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 750;
+}
+.analytics-summary-label {
+  color: var(--text2);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  margin-top: 3px;
+  text-transform: uppercase;
+}
+.analytics-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.analytics-card {
+  min-width: 0;
+  padding: 14px;
+}
+.analytics-card-wide {
+  grid-column: 1 / -1;
+}
+.analytics-card-title {
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.analytics-card svg {
+  display: block;
+  max-width: 100%;
+}
+.analytics-axis-text {
+  fill: var(--text2);
+  font-size: 10px;
+}
+.analytics-bar-row {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 92px minmax(80px, 1fr) 150px;
+  margin: 11px 0;
+}
+.analytics-bar-label {
+  color: var(--text2);
+  font-size: 11px;
+  font-weight: 700;
+}
+.analytics-bar-track {
+  align-self: center;
+  background: var(--border);
+  border-radius: 999px;
+  height: 9px;
+  overflow: hidden;
+}
+.analytics-bar-fill {
+  background: linear-gradient(90deg, #1d8bf0, #8b5cf6);
+  border-radius: inherit;
+  height: 100%;
+}
+.analytics-bar-value,
+.analytics-no-data {
+  color: var(--text2);
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .analytics-summary,
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+  .analytics-card-wide {
+    grid-column: auto;
+  }
+  .analytics-bar-row {
+    grid-template-columns: 80px 1fr;
+  }
+  .analytics-bar-value {
+    grid-column: 1 / -1;
+  }
+}
 .op-footer {
   display: flex;
   align-items: center;
