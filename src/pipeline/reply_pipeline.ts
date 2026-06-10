@@ -240,8 +240,8 @@ async function processCandidate(candidate: ScoredPost, blocklist: string[]): Pro
     updateGeneratedReply(post.id, reply);
 
     // Human-in-the-loop mode: stop at PENDING_APPROVAL and ask via ntfy.
-    // The approve endpoint posts the reply; the expiry sweep handles ignores.
-    if (getBooleanSetting('require_approval', true)) {
+    // Default is autonomous (require_approval=false). Enable in dashboard Settings to require approval.
+    if (getBooleanSetting('require_approval', false)) {
       const pending = getPost(post.id)!;
       const notification = await sendApprovalNotification(pending);
       logEvent(

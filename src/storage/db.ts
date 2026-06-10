@@ -93,7 +93,7 @@ function applyMigrations(db: Database.Database): void {
       ('topic_keywords',          'pune,rain,traffic,flooding,waterlogging,pothole,event'),
       ('min_score',               '40'),
       ('max_candidates_per_run',  '3'),
-      ('require_approval',        'true'),
+      ('require_approval',        'false'),
       ('approval_timeout_min',    '30'),
       ('wit_level',               '55'),
       ('random_runs_per_day',     '5'),
