@@ -347,6 +347,14 @@ function applyMigrations(db: Database.Database): void {
       ('topic_category_weights',    '{"pune-tech-economy":0.40,"local-pune":0.20,"tech":0.15,"politics":0.07,"sports":0.08,"culture":0.07,"observation":0.03}')
   `).run();
 
+  // Auto-follow-back policy (FEATURE_PLAN P0-2) — off by default
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('auto_follow_back_enabled',         'false'),
+      ('auto_follow_back_classifications', 'REGULAR,SERIOUS'),
+      ('auto_follow_back_min_confidence',  '60')
+  `).run();
+
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');

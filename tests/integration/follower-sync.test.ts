@@ -130,6 +130,41 @@ describe('runFollowerSync', () => {
     expect(getAccount('mutual_friend')?.followed_by_us).toBe(1);
   });
 
+  it('auto-schedules a follow-back for safe classifications when enabled', async () => {
+    const sendFollowerNotification = vi.fn().mockResolvedValue({ ok: true });
+
+    vi.doMock('../../src/browser/followers.js', () => ({
+      resolveOwnHandle: vi.fn().mockResolvedValue('my_handle'),
+      fetchOurFollowerEntries: vi.fn().mockResolvedValue([
+        { handle: 'safe_follower', followedByUs: false },
+      ]),
+      followBack: vi.fn(),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockImplementation((handle: string) => Promise.resolve(mockAccount(handle))),
+    }));
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendFollowerNotification,
+    }));
+
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('auto_follow_back_enabled', 'true');
+
+    const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
+    const result = await runFollowerSync();
+
+    expect(result).toMatchObject({ ok: true, queued: 1, autoScheduled: 1 });
+
+    const { listFollowerEvents } = await import('../../src/storage/accounts.js');
+    const approved = listFollowerEvents('APPROVED');
+    expect(approved).toHaveLength(1);
+    expect(approved[0].account_handle).toBe('safe_follower');
+    expect(approved[0].detail).toContain('auto_follow=true');
+    expect(approved[0].scheduled_at).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    // Auto-scheduled follows must not ping the user for approval
+    expect(sendFollowerNotification).not.toHaveBeenCalled();
+  });
+
   it('returns a visible failure when the account handle cannot be resolved', async () => {
     vi.doMock('../../src/browser/followers.js', () => ({
       resolveOwnHandle: vi.fn().mockResolvedValue(null),

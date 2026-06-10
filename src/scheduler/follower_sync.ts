@@ -2,9 +2,11 @@ import { fetchOurFollowerEntries, resolveOwnHandle, type FollowerListEntry } fro
 import {
   listFollowerHandles, setFollowerState, setFollowingState, upsertPendingFollowBackEvent,
 } from '../storage/accounts.js';
+import { autoApproveFollowBack } from '../storage/follower_events.js';
 import { logEvent } from '../storage/queries.js';
-import { getBooleanSetting } from '../storage/settings.js';
+import { getBooleanSetting, getIntSetting, getListSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
+import { randomBetween } from '../utils/delay.js';
 import { sendFollowerNotification } from '../notifications/ntfy.js';
 import { classifyAccount } from '../pipeline/classifier.js';
 
@@ -18,9 +20,42 @@ export interface FollowerSyncResult {
   queued: number;
   total: number;
   notFollowedBack?: number;
+  autoScheduled?: number;
   handle?: string;
   reason?: string;
   message?: string;
+}
+
+// ── Auto-follow-back policy ───────────────────────────────────────────────────
+
+export interface AutoFollowBackConfig {
+  enabled: boolean;
+  /** Uppercased classifications that qualify for an automatic follow-back. */
+  classifications: Set<string>;
+  /** Minimum classification confidence, as a 0–100 percentage. */
+  minConfidencePct: number;
+}
+
+export function getAutoFollowBackConfig(): AutoFollowBackConfig {
+  return {
+    enabled: getBooleanSetting('auto_follow_back_enabled', false),
+    classifications: new Set(
+      getListSetting('auto_follow_back_classifications', ['REGULAR', 'SERIOUS'])
+        .map((c) => c.toUpperCase()),
+    ),
+    minConfidencePct: getIntSetting('auto_follow_back_min_confidence', 60, 0, 100),
+  };
+}
+
+/** Pure decision: should this follower be followed back without asking? */
+export function shouldAutoFollowBack(
+  cfg: AutoFollowBackConfig,
+  classification: string | null,
+  confidence: number,
+): boolean {
+  if (!cfg.enabled || !classification) return false;
+  if (!cfg.classifications.has(classification.toUpperCase())) return false;
+  return confidence * 100 >= cfg.minConfidencePct;
 }
 
 export function startFollowerSync(): void {
@@ -102,8 +137,10 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
 
   // Cap to avoid notification/classification bursts on first run after a long absence.
   const maxPerRun = 5;
+  const autoCfg = getAutoFollowBackConfig();
 
   let queued = 0;
+  let autoScheduled = 0;
   for (const handle of notFollowedBack.slice(0, maxPerRun)) {
     try {
       const account = await classifyAccount(handle, null, { fetchProfileIfMissing: true });
@@ -116,7 +153,17 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
         logEvent('FOLLOW_BACK_PENDING', `@${handle} follows you; you do not follow back`, undefined);
         logger.info('Queued pending follow-back decision', { handle, cls, created: event.created });
 
-        if (event.created) {
+        if (shouldAutoFollowBack(autoCfg, account.classification, account.classification_confidence)) {
+          // Safe classification → schedule the follow automatically at a
+          // randomized delay; the 5-minute processor executes it (and
+          // enforces the daily cap). No approval notification needed.
+          const delayMin = randomBetween(5, 60);
+          const scheduledAt = Math.floor(Date.now() / 1000) + delayMin * 60;
+          autoApproveFollowBack(event.id, scheduledAt, `${detail}; auto_follow=true`);
+          autoScheduled++;
+          logEvent('FOLLOW_BACK_AUTO_SCHEDULED', `@${handle} (${cls}) in ~${delayMin}m`);
+          logger.info('Auto follow-back scheduled', { handle, cls, delayMin });
+        } else if (event.created) {
           await sendFollowerNotification(event.id, handle, account).catch((err) => {
             logger.warn('Follower notification failed', { handle, err: String(err) });
           });
@@ -134,11 +181,12 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     );
   }
 
-  logEvent('FOLLOWER_SYNC_COMPLETE', `total=${followers.length} new=${newOnes.length} notFollowedBack=${notFollowedBack.length}`);
+  logEvent('FOLLOWER_SYNC_COMPLETE', `total=${followers.length} new=${newOnes.length} notFollowedBack=${notFollowedBack.length} autoScheduled=${autoScheduled}`);
   logger.info('Follower sync complete', {
     total: followers.length,
     new: newOnes.length,
     notFollowedBack: notFollowedBack.length,
+    autoScheduled,
   });
   return {
     ok: true,
@@ -146,6 +194,7 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     queued,
     total: followers.length,
     notFollowedBack: notFollowedBack.length,
+    autoScheduled,
     handle: me,
   };
 }
