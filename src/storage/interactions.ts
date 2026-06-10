@@ -25,12 +25,9 @@ export function recordInteraction(
   posted: { tweetId?: string; tweetUrl?: string } = {},
 ): number {
   const db = getDb();
-  const result = db.prepare(`
-    INSERT INTO interactions (
-      post_id, account_handle, our_reply_text, our_tweet_id, our_tweet_url
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(postId, accountHandle, replyText, posted.tweetId ?? null, posted.tweetUrl ?? null);
 
+  // Upsert the account first — interactions.account_handle has a FK on
+  // accounts(handle), so the insert below fails for a never-seen account.
   db.prepare(`
     INSERT INTO accounts (handle, total_replies_sent, last_seen_at, updated_at)
     VALUES (?, 1, unixepoch(), unixepoch())
@@ -39,6 +36,12 @@ export function recordInteraction(
       last_seen_at       = unixepoch(),
       updated_at         = unixepoch()
   `).run(accountHandle);
+
+  const result = db.prepare(`
+    INSERT INTO interactions (
+      post_id, account_handle, our_reply_text, our_tweet_id, our_tweet_url
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(postId, accountHandle, replyText, posted.tweetId ?? null, posted.tweetUrl ?? null);
 
   return result.lastInsertRowid as number;
 }
@@ -78,6 +81,60 @@ export function updateInteractionMetrics(
     successScore,
     id,
   );
+}
+
+/**
+ * Replies that have a captured tweet id and are due for an engagement check:
+ * posted within the recency window and not checked in the last
+ * `olderThanSeconds`. Newest first so fresh replies get tracked promptly.
+ */
+export function getInteractionsNeedingMetricSync(opts: {
+  olderThanSeconds: number;
+  postedWithinSeconds: number;
+  limit: number;
+}): Interaction[] {
+  const now = Math.floor(Date.now() / 1000);
+  return getDb().prepare(`
+    SELECT * FROM interactions
+    WHERE our_tweet_id IS NOT NULL
+      AND posted_at >= ?
+      AND COALESCE(last_metric_check, 0) <= ?
+    ORDER BY posted_at DESC
+    LIMIT ?
+  `).all(
+    now - opts.postedWithinSeconds,
+    now - opts.olderThanSeconds,
+    Math.min(Math.max(opts.limit, 1), 100),
+  ) as Interaction[];
+}
+
+// A reply counts as "successful" once it has meaningful engagement:
+// success_score = likes + replies*13 + retweets*20, so 5 ≈ several likes
+// or any reply/retweet.
+const SUCCESSFUL_REPLY_MIN_SCORE = 5;
+
+/**
+ * Recompute an account's aggregate reply-performance stats from its
+ * interactions. Called after a metric sync so the scorer can favor authors
+ * who actually engage with our replies.
+ */
+export function refreshAccountReplyStats(accountHandle: string): void {
+  getDb().prepare(`
+    UPDATE accounts SET
+      total_engagement = COALESCE((
+        SELECT SUM(likes_received + replies_received + retweets_received)
+        FROM interactions WHERE account_handle = ?
+      ), 0),
+      avg_reply_score = COALESCE((
+        SELECT AVG(success_score) FROM interactions WHERE account_handle = ?
+      ), 0),
+      successful_replies = COALESCE((
+        SELECT COUNT(*) FROM interactions
+        WHERE account_handle = ? AND success_score >= ${SUCCESSFUL_REPLY_MIN_SCORE}
+      ), 0),
+      updated_at = unixepoch()
+    WHERE handle = ?
+  `).run(accountHandle, accountHandle, accountHandle, accountHandle);
 }
 
 export function listRecentInteractions(limit = 50): Interaction[] {

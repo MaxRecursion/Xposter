@@ -1,10 +1,17 @@
 import { Router, Request, Response } from 'express';
 import { getPost, getPostByPostedTweetId, markReplyDeleted, logEvent } from '../../storage/queries.js';
 import { deleteReply } from '../../browser/posting.js';
+import { runReplyMetricsSync } from '../../scheduler/reply_metrics_sync.js';
 import { logger } from '../../utils/logger.js';
 import { requireApiKey } from '../auth.js';
 
 export const repliesRouter = Router();
+
+// Manually trigger an engagement sync for recently posted replies
+repliesRouter.post('/sync-metrics', requireApiKey, async (_req: Request, res: Response) => {
+  const result = await runReplyMetricsSync('manual');
+  res.json({ ok: true, ...result });
+});
 
 async function deletePostedReply(postId: string, res: Response): Promise<void> {
   const post = getPost(postId);
