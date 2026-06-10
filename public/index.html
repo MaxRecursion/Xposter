@@ -353,6 +353,16 @@
             <label>Max Candidates Per Run</label>
             <input type="number" id="s-max-candidates" min="1" max="10" />
           </div>
+          <div class="settings-field settings-field-toggle">
+            <label for="s-require-approval">
+              <span>Require Reply Approval</span>
+              <span class="settings-field-help">When enabled, generated replies wait in the approval queue instead of posting automatically.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-require-approval" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
           <div class="settings-field">
             <label>Approval Timeout (minutes)</label>
             <input type="number" id="s-timeout" min="5" max="1440" />

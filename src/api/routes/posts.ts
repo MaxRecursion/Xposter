@@ -96,6 +96,7 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   topic_keywords:              textSetting(500),
   min_score:                   intSetting(40, 0, 100),
   max_candidates_per_run:      intSetting(3, 1, 10),
+  require_approval:            boolSetting,
   approval_timeout_min:        intSetting(30, 5, 1440),
   system_running:              boolSetting,
   wit_level:                   intSetting(55, 0, 100),

@@ -1,6 +1,6 @@
 import { ingestTimeline } from '../browser/ingestion.js';
 import { postReply } from '../browser/posting.js';
-import { sendReplyPostedNotification } from '../notifications/ntfy.js';
+import { sendApprovalNotification, sendReplyPostedNotification } from '../notifications/ntfy.js';
 import { getPost, logEvent, markPostAsPosted, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
 import { recordInteraction } from '../storage/interactions.js';
@@ -57,17 +57,19 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
       .map((value) => value.toUpperCase());
 
     let posted = 0;
+    let pendingApproval = 0;
     for (let i = 0; i < topCandidates.length; i++) {
-      const ok = await processCandidate(topCandidates[i], blocklist);
-      if (ok) posted++;
-      if (ok && i < topCandidates.length - 1) {
+      const outcome = await processCandidate(topCandidates[i], blocklist);
+      if (outcome === 'posted') posted++;
+      if (outcome === 'pending_approval') pendingApproval++;
+      if (outcome === 'posted' && i < topCandidates.length - 1) {
         await delay(randomBetween(8000, 15000));
       }
     }
 
-    logEvent('PIPELINE_COMPLETE', `ingested=${ingested} posted=${posted}`);
-    logger.info('Pipeline complete', { ingested, posted });
-    return { ingested, candidates: posted };
+    logEvent('PIPELINE_COMPLETE', `ingested=${ingested} posted=${posted} pending=${pendingApproval}`);
+    logger.info('Pipeline complete', { ingested, posted, pendingApproval });
+    return { ingested, candidates: posted + pendingApproval };
   } catch (err) {
     logger.error('Pipeline failed', { err });
     logEvent('PIPELINE_ERROR', String(err));
@@ -165,10 +167,12 @@ function selectFallbackCandidate(
   return fallback;
 }
 
-async function processCandidate(candidate: ScoredPost, blocklist: string[]): Promise<boolean> {
+type CandidateOutcome = 'posted' | 'pending_approval' | 'skipped' | 'error';
+
+async function processCandidate(candidate: ScoredPost, blocklist: string[]): Promise<CandidateOutcome> {
   try {
     const post = getPost(candidate.id);
-    if (!post) return false;
+    if (!post) return 'skipped';
 
     let account = null;
     try {
@@ -187,12 +191,25 @@ async function processCandidate(candidate: ScoredPost, blocklist: string[]): Pro
     if (account?.classification && blocklist.includes(account.classification)) {
       updatePostStatus(post.id, 'SKIPPED');
       logEvent('SKIPPED_BY_CLASSIFICATION', `${account.classification} on blocklist`, post.id);
-      return false;
+      return 'skipped';
     }
 
     updatePostStatus(post.id, 'GENERATING');
     const reply = await generateReply(post, account);
     updateGeneratedReply(post.id, reply);
+
+    // Human-in-the-loop mode: stop at PENDING_APPROVAL and ask via ntfy.
+    // The approve endpoint posts the reply; the expiry sweep handles ignores.
+    if (getBooleanSetting('require_approval', true)) {
+      const pending = getPost(post.id)!;
+      const notification = await sendApprovalNotification(pending);
+      logEvent(
+        notification.ok ? 'AWAITING_APPROVAL' : 'NOTIFICATION_FAILED',
+        notification.ok ? `score=${candidate.score}` : (notification.error ?? 'unknown error'),
+        post.id,
+      );
+      return 'pending_approval';
+    }
 
     updatePostStatus(post.id, 'POSTING');
     logEvent('AUTO_POSTING', `score=${candidate.score}`, post.id);
@@ -216,18 +233,18 @@ async function processCandidate(candidate: ScoredPost, blocklist: string[]): Pro
     } else {
       logEvent('NOTIFICATION_FAILED', notification.error ?? 'unknown error', post.id);
     }
-    return true;
+    return 'posted';
   } catch (err) {
     if (err instanceof EmptyReplyError) {
       logger.warn('Empty reply from Groq - skipping candidate, waiting for next run', { id: candidate.id });
       updatePostStatus(candidate.id, 'SKIPPED');
       logEvent('CANDIDATE_SKIPPED_EMPTY', 'empty reply, skipped', candidate.id);
-      return false;
+      return 'skipped';
     }
 
     logger.error('Error processing candidate', { id: candidate.id, err });
     updatePostStatus(candidate.id, 'ERROR');
     logEvent('CANDIDATE_ERROR', String(err), candidate.id);
-    return false;
+    return 'error';
   }
 }

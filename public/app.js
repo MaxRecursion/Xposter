@@ -197,6 +197,7 @@ async function loadSettings() {
     if ($('s-keywords'))       $('s-keywords').value       = s.topic_keywords ?? '';
     if ($('s-min-score'))      $('s-min-score').value      = s.min_score ?? '40';
     if ($('s-max-candidates')) $('s-max-candidates').value = s.max_candidates_per_run ?? '3';
+    if ($('s-require-approval')) $('s-require-approval').checked = s.require_approval !== 'false';
     if ($('s-timeout'))        $('s-timeout').value        = s.approval_timeout_min ?? '30';
     if ($('s-wit'))            { $('s-wit').value          = s.wit_level ?? '55'; updateWitDisplay(); }
     if ($('s-runs-per-day'))   $('s-runs-per-day').value   = s.random_runs_per_day ?? '5';
@@ -1159,6 +1160,7 @@ document.addEventListener('DOMContentLoaded', () => {
           topic_keywords:           $('s-keywords').value,
           min_score:                $('s-min-score').value,
           max_candidates_per_run:   $('s-max-candidates').value,
+          require_approval:         $('s-require-approval')?.checked ? 'true' : 'false',
           approval_timeout_min:     $('s-timeout').value,
           wit_level:                $('s-wit')?.value,
           random_runs_per_day:      $('s-runs-per-day')?.value,

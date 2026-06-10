@@ -86,10 +86,13 @@ describe('runPipeline', () => {
     }));
     const notifyMock = vi.fn().mockResolvedValue({ ok: true, topic: 'test-topic' });
     vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendApprovalNotification: vi.fn(),
       sendReplyPostedNotification: notifyMock,
     }));
 
     const { runPipeline } = await import('../../src/scheduler/cron.js');
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('require_approval', 'false');
     const result = await runPipeline();
 
     const { getPostByTweetId } = await import('../../src/storage/queries.js');
@@ -107,5 +110,52 @@ describe('runPipeline', () => {
     expect(notifyArgs[1]).toBe('That sounds like a fun watch.');
     expect(notifyArgs[2]).toBe('9999000011112222');
     expect(notifyArgs[3]).toBe('REGULAR');
+  });
+
+  it('queues the generated reply and sends an approval notification when enabled', async () => {
+    const tweet = {
+      tweet_id: '1723456789012347002',
+      author_handle: 'approval_user',
+      author_name: 'Approval User',
+      text: 'Traffic near Baner is unusually slow this evening.',
+      timestamp: Math.floor(Date.now() / 1000) - 300,
+      likes: 3,
+      replies: 1,
+      retweets: 0,
+      tweet_url: 'https://x.com/approval_user/status/1723456789012347002',
+    };
+
+    vi.doMock('../../src/browser/ingestion.js', () => ({
+      ingestTimeline: vi.fn().mockResolvedValue([tweet]),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockResolvedValue(null),
+    }));
+    vi.doMock('../../src/pipeline/generator.js', () => ({
+      generateReply: vi.fn().mockResolvedValue('Baner traffic has impeccable timing.'),
+    }));
+    const postReplyMock = vi.fn();
+    vi.doMock('../../src/browser/posting.js', () => ({
+      postReply: postReplyMock,
+      deleteReply: vi.fn(),
+    }));
+    const approvalMock = vi.fn().mockResolvedValue({ ok: true, topic: 'test-topic' });
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendApprovalNotification: approvalMock,
+      sendReplyPostedNotification: vi.fn(),
+    }));
+
+    const { runPipeline } = await import('../../src/scheduler/cron.js');
+    const result = await runPipeline();
+
+    const { getPostByTweetId } = await import('../../src/storage/queries.js');
+    const post = getPostByTweetId(tweet.tweet_id);
+
+    expect(result).toEqual({ ingested: 1, candidates: 1 });
+    expect(post?.status).toBe('PENDING_APPROVAL');
+    expect(post?.generated_reply).toBe('Baner traffic has impeccable timing.');
+    expect(postReplyMock).not.toHaveBeenCalled();
+    expect(approvalMock).toHaveBeenCalledTimes(1);
+    expect(approvalMock.mock.calls[0][0].id).toBe(post?.id);
   });
 });
