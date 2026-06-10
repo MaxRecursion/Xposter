@@ -264,6 +264,32 @@ export async function sendFollowerNotification(
   }, { eventId, handle });
 }
 
+// ── Unfollow notification ────────────────────────────────────────────────────
+
+/** Low-priority info ping when followers drop off. Batches to avoid spam. */
+export async function sendUnfollowNotification(handles: string[]): Promise<NtfyResult> {
+  const cfg = getNtfyConfig();
+  if (!cfg) return { ok: false, error: 'NTFY_TOPIC not configured' };
+  if (handles.length === 0) return { ok: false, error: 'no handles' };
+
+  const shown = handles.slice(0, 5).map((h) => `@${h}`).join(', ');
+  const more = handles.length > 5 ? ` and ${handles.length - 5} more` : '';
+  const message = handles.length === 1
+    ? `@${handles[0]} unfollowed you.`
+    : `${handles.length} accounts unfollowed you: ${shown}${more}.`;
+
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
+    title: 'Xposter: Unfollowed',
+    message,
+    priority: 2,
+    tags: ['wave'],
+    actions: handles.length === 1
+      ? [{ action: 'view', label: 'Open profile', url: toXAppProfileUrl(handles[0]) }]
+      : [],
+  }, { unfollows: handles.length });
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function truncate(text: string, max: number): string {

@@ -176,12 +176,16 @@ export {
 } from './scheduled_runs.js';
 export type { ScheduledRun } from './scheduled_runs.js';
 
-/** Lowercased handles of every account currently marked as following us. */
-export function listFollowerHandles(): Set<string> {
+/**
+ * Original-case handles of every account currently marked as following us.
+ * Callers lowercase for comparisons but must keep the original case for
+ * writes — the accounts PK is case-sensitive.
+ */
+export function listFollowerHandles(): string[] {
   const rows = getDb()
     .prepare('SELECT handle FROM accounts WHERE following_us = 1')
     .all() as Array<{ handle: string }>;
-  return new Set(rows.map((r) => r.handle.toLowerCase()));
+  return rows.map((r) => r.handle);
 }
 
 export function setFollowingState(handle: string, ourFollow: boolean): void {

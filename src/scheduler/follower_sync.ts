@@ -1,16 +1,18 @@
 import { fetchOurFollowerEntries, resolveOwnHandle, type FollowerListEntry } from '../browser/followers.js';
 import {
-  listFollowerHandles, setFollowerState, setFollowingState, upsertPendingFollowBackEvent,
+  enqueueFollowerEvent, listFollowerHandles, setFollowerState, setFollowingState,
+  upsertPendingFollowBackEvent,
 } from '../storage/accounts.js';
 import { autoApproveFollowBack } from '../storage/follower_events.js';
 import { logEvent } from '../storage/queries.js';
 import { getBooleanSetting, getIntSetting, getListSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { randomBetween } from '../utils/delay.js';
-import { sendFollowerNotification } from '../notifications/ntfy.js';
+import { sendFollowerNotification, sendUnfollowNotification } from '../notifications/ntfy.js';
 import { classifyAccount } from '../pipeline/classifier.js';
 
 const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;  // 6 hours
+const SCRAPE_CAP = 200;                        // max followers pulled per scrape
 let _interval: NodeJS.Timeout | null = null;
 let _bootTimer: NodeJS.Timeout | null = null;
 
@@ -56,6 +58,29 @@ export function shouldAutoFollowBack(
   if (!cfg.enabled || !classification) return false;
   if (!cfg.classifications.has(classification.toUpperCase())) return false;
   return confidence * 100 >= cfg.minConfidencePct;
+}
+
+// ── Unfollow detection ────────────────────────────────────────────────────────
+
+/**
+ * Known followers missing from the latest scrape, with two safety gates:
+ *   - a scrape that hit the cap is truncated, so absence proves nothing;
+ *   - a scrape much smaller than the known set (< 70%) is probably a partial
+ *     page load — flagging unfollows from it would mass-misfire.
+ * Returns original-case handles ready for DB writes.
+ */
+export function detectUnfollows(
+  known: Map<string, string>,
+  scraped: FollowerListEntry[],
+): string[] {
+  if (known.size === 0 || scraped.length === 0) return [];
+  if (scraped.length >= SCRAPE_CAP) return [];
+  if (scraped.length < Math.max(1, Math.floor(known.size * 0.7))) return [];
+
+  const scrapedLower = new Set(scraped.map((e) => e.handle.toLowerCase()));
+  return [...known.entries()]
+    .filter(([lower]) => !scrapedLower.has(lower))
+    .map(([, original]) => original);
 }
 
 export function startFollowerSync(): void {
@@ -111,7 +136,7 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
   logEvent('FOLLOWER_SYNC_START');
   let followers: FollowerListEntry[] = [];
   try {
-    followers = await fetchOurFollowerEntries(me, 200);
+    followers = await fetchOurFollowerEntries(me, SCRAPE_CAP);
   } catch (err) {
     const message = `Follower fetch failed: ${String(err)}`;
     logger.error('Follower fetch failed', { err: String(err) });
@@ -119,7 +144,11 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     return { ok: false, reason: 'fetch_failed', message, newFollowers: 0, queued: 0, total: 0, handle: me };
   }
 
-  const knownFollowers = listFollowerHandles();
+  // lowercase → original-case map; comparisons are case-insensitive, but DB
+  // writes must reuse the stored case (the accounts PK is case-sensitive).
+  const knownFollowers = new Map(
+    listFollowerHandles().map((h) => [h.toLowerCase(), h]),
+  );
 
   const newOnes: string[] = [];
   const notFollowedBack: string[] = [];
@@ -133,6 +162,19 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     if (entry.followedByUs === false) {
       notFollowedBack.push(handle);
     }
+  }
+
+  const unfollowed = detectUnfollows(knownFollowers, followers);
+  for (const handle of unfollowed) {
+    setFollowerState(handle, false);
+    enqueueFollowerEvent(handle, 'UNFOLLOWED', 'source=follower_scan_v2');
+    logEvent('UNFOLLOW_DETECTED', `@${handle} no longer follows you`);
+  }
+  if (unfollowed.length > 0) {
+    logger.info('Unfollows detected', { count: unfollowed.length, handles: unfollowed });
+    await sendUnfollowNotification(unfollowed).catch((err) => {
+      logger.warn('Unfollow notification failed', { err: String(err) });
+    });
   }
 
   // Cap to avoid notification/classification bursts on first run after a long absence.

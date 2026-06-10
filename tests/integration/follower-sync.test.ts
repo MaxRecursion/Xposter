@@ -74,6 +74,7 @@ describe('runFollowerSync', () => {
     }));
     vi.doMock('../../src/notifications/ntfy.js', () => ({
       sendFollowerNotification,
+      sendUnfollowNotification: vi.fn().mockResolvedValue({ ok: true }),
     }));
 
     const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
@@ -112,6 +113,7 @@ describe('runFollowerSync', () => {
     }));
     vi.doMock('../../src/notifications/ntfy.js', () => ({
       sendFollowerNotification: vi.fn(),
+      sendUnfollowNotification: vi.fn().mockResolvedValue({ ok: true }),
     }));
 
     const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
@@ -145,6 +147,7 @@ describe('runFollowerSync', () => {
     }));
     vi.doMock('../../src/notifications/ntfy.js', () => ({
       sendFollowerNotification,
+      sendUnfollowNotification: vi.fn().mockResolvedValue({ ok: true }),
     }));
 
     const { setSetting } = await import('../../src/storage/settings.js');
@@ -163,6 +166,43 @@ describe('runFollowerSync', () => {
     expect(approved[0].scheduled_at).toBeGreaterThan(Math.floor(Date.now() / 1000));
     // Auto-scheduled follows must not ping the user for approval
     expect(sendFollowerNotification).not.toHaveBeenCalled();
+  });
+
+  it('detects unfollows and notifies when a known follower disappears', async () => {
+    const sendUnfollowNotification = vi.fn().mockResolvedValue({ ok: true });
+
+    vi.doMock('../../src/browser/followers.js', () => ({
+      resolveOwnHandle: vi.fn().mockResolvedValue('my_handle'),
+      fetchOurFollowerEntries: vi.fn().mockResolvedValue([
+        { handle: 'loyal_fan', followedByUs: true },
+      ]),
+      followBack: vi.fn(),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockImplementation((handle: string) => Promise.resolve(mockAccount(handle))),
+    }));
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendFollowerNotification: vi.fn(),
+      sendUnfollowNotification,
+    }));
+
+    // Seed two known followers; the scrape only returns one of them.
+    const { setFollowerState, getAccount, listFollowerEvents } =
+      await import('../../src/storage/accounts.js');
+    setFollowerState('loyal_fan', true);
+    setFollowerState('fickle_fan', true);
+
+    const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
+    const result = await runFollowerSync();
+
+    expect(result.ok).toBe(true);
+    expect(getAccount('fickle_fan')?.following_us).toBe(0);
+    expect(getAccount('loyal_fan')?.following_us).toBe(1);
+
+    const unfollowEvents = listFollowerEvents().filter((e) => e.event_type === 'UNFOLLOWED');
+    expect(unfollowEvents).toHaveLength(1);
+    expect(unfollowEvents[0].account_handle).toBe('fickle_fan');
+    expect(sendUnfollowNotification).toHaveBeenCalledWith(['fickle_fan']);
   });
 
   it('returns a visible failure when the account handle cannot be resolved', async () => {
