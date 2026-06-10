@@ -1,4 +1,5 @@
 import { Post } from '../storage/queries.js';
+import { keywordMatches } from './keywords.js';
 
 export interface ScoreBreakdown {
   recency: number;          // 0-30: newer = higher
@@ -13,13 +14,14 @@ export interface ScoredPost {
   breakdown: ScoreBreakdown;
 }
 
-// Signals that suggest a reply is welcome
-const QUESTION_PATTERNS = [/\?/, /when/i, /where/i, /how/i, /anyone/i, /any idea/i];
+// Signals that suggest a reply is welcome. Word boundaries prevent substring
+// false positives ('how' in "show", 'fix' in "prefix", …).
+const QUESTION_PATTERNS = [/\?/, /\bwhen\b/i, /\bwhere\b/i, /\bhow\b/i, /\banyone\b/i, /\bany idea/i];
 
-const COMPLAINT_PATTERNS = [/terrible/i, /worst/i, /horrible/i, /broken/i, /fix/i,
-  /frustrated/i, /sick of/i];
+const COMPLAINT_PATTERNS = [/\bterrible\b/i, /\bworst\b/i, /\bhorrible\b/i, /\bbroken\b/i, /\bfix\b/i,
+  /\bfrustrated\b/i, /\bsick of\b/i];
 
-const HELP_REQUEST_PATTERNS = [/help/i, /suggest/i, /recommend/i, /advice/i];
+const HELP_REQUEST_PATTERNS = [/\bhelp\b/i, /\bsuggest/i, /\brecommend/i, /\badvice\b/i];
 
 // English topic keyword weights
 const WEIGHTED_KEYWORDS: Array<[string, number]> = [
@@ -40,10 +42,9 @@ export function scorePost(post: Post): ScoredPost {
   const recency = Math.max(0, 30 * (1 - ageSeconds / sixHours));
 
   // ── Topic Relevance (0–30) ─────────────────────────────────────────────────
-  const textLower = post.text.toLowerCase();
   let kwScore = 0;
   for (const [kw, weight] of WEIGHTED_KEYWORDS) {
-    if (textLower.includes(kw)) {
+    if (keywordMatches(post.text, kw)) {
       kwScore += weight;
     }
   }

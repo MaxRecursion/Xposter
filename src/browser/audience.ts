@@ -90,7 +90,7 @@ export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
         // Walk up until we find a container big enough to hold the whole chart
         let container: Element | null = header;
         for (let i = 0; i < 12; i++) {
-          const next = container?.parentElement;
+          const next: Element | null = container?.parentElement ?? null;
           if (!next) break;
           const r = next.getBoundingClientRect();
           if (r.width > 250 && r.height > 200) { container = next; break; }

@@ -1,5 +1,6 @@
 import { franc } from 'franc';
 import { Post, RawTweet } from '../storage/queries.js';
+import { keywordMatches } from './keywords.js';
 
 // ── Language Detection ────────────────────────────────────────────────────────
 
@@ -161,7 +162,6 @@ export function filterPost(
   extraKeywords: string[] = [],
 ): FilterResult {
   const language = detectLanguage(text);
-  const lower = text.toLowerCase();
 
   // Language gate: we accept marathi (Devanagari + Roman) and english only.
   if (language === 'unknown' || language === 'hindi') {
@@ -174,9 +174,9 @@ export function filterPost(
     ...extraKeywords.map((k) => k.toLowerCase()),
   ];
 
-  const matchedKeywords = keywords.filter(
-    (kw) => lower.includes(kw.toLowerCase()) || text.includes(kw),
-  );
+  // Word-boundary matching avoids substring false positives like 'rain'
+  // passing "training" or "brain" posts through the topic gate.
+  const matchedKeywords = keywords.filter((kw) => keywordMatches(text, kw));
 
   // Marathi (any script) is the PRIMARY target language: pass regardless of
   // explicit topic keywords — we want to reply to Marathi speakers broadly.

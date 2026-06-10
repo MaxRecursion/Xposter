@@ -143,6 +143,7 @@ async function tick(): Promise<void> {
 async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGINAL'): Promise<{ ok: boolean; id?: string; error?: string }> {
   _posting = true;
   logEvent('ORIGINAL_POST_START', `${trigger} type=${postType}`);
+  let draftId: string | null = null;
 
   try {
     // 1. Generate
@@ -158,6 +159,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
       postType,
       researchContext: generated.researchContext,
     });
+    draftId = post.id;
 
     logEvent('ORIGINAL_POST_GENERATED', `topic=${generated.topic} lang=${generated.language}`, post.id);
 
@@ -171,6 +173,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
 
     return { ok: true, id: post.id };
   } catch (err) {
+    if (draftId) markOriginalPostError(draftId);
     if (err instanceof EmptyReplyError) {
       logger.warn('Original post: empty reply from Groq — skipping, waiting for next slot', { trigger });
       logEvent('ORIGINAL_POST_SKIPPED_EMPTY', 'empty reply, skipped');

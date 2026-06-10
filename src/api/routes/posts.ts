@@ -85,61 +85,39 @@ postsRouter.get('/settings/all', (_req: Request, res: Response) => {
   res.json(getAllSettings());
 });
 
+// Allowlist of writable settings and how each value is normalized. Anything
+// not listed here is silently ignored.
+const intSetting = (fallback: number, min: number, max: number) =>
+  (v: unknown) => String(clampInt(v, fallback, min, max));
+const boolSetting = (v: unknown) => String(v === 'true');
+const textSetting = (maxLen: number) => (v: unknown) => String(v).slice(0, maxLen);
+
+const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
+  topic_keywords:              textSetting(500),
+  min_score:                   intSetting(40, 0, 100),
+  max_candidates_per_run:      intSetting(3, 1, 10),
+  approval_timeout_min:        intSetting(30, 5, 1440),
+  system_running:              boolSetting,
+  wit_level:                   intSetting(55, 0, 100),
+  random_runs_per_day:         intSetting(5, 1, 12),
+  active_window_start_hour:    intSetting(9, 0, 23),
+  active_window_end_hour:      intSetting(22, 1, 24),
+  max_follow_backs_per_day:    intSetting(15, 0, 100),
+  classification_ttl_days:     intSetting(7, 1, 90),
+  blocklist_classifications:   textSetting(200),
+  original_posts_per_day:      intSetting(5, 0, 12),
+  original_post_marathi_ratio: intSetting(40, 0, 100),
+  agent_enabled:               boolSetting,
+  agent_error_threshold:       intSetting(3, 1, 50),
+};
+
 postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {
-  const updates = req.body as Record<string, string>;
-  const normalized: Record<string, string> = {};
+  const updates = req.body as Record<string, unknown>;
 
-  if (updates['topic_keywords'] !== undefined) {
-    normalized['topic_keywords'] = String(updates['topic_keywords']).slice(0, 500);
-  }
-  if (updates['min_score'] !== undefined) {
-    normalized['min_score'] = String(clampInt(updates['min_score'], 40, 0, 100));
-  }
-  if (updates['max_candidates_per_run'] !== undefined) {
-    normalized['max_candidates_per_run'] = String(clampInt(updates['max_candidates_per_run'], 3, 1, 10));
-  }
-  if (updates['approval_timeout_min'] !== undefined) {
-    normalized['approval_timeout_min'] = String(clampInt(updates['approval_timeout_min'], 30, 5, 1440));
-  }
-  if (updates['system_running'] !== undefined) {
-    normalized['system_running'] = String(updates['system_running'] === 'true');
-  }
-  if (updates['wit_level'] !== undefined) {
-    normalized['wit_level'] = String(clampInt(updates['wit_level'], 55, 0, 100));
-  }
-  if (updates['random_runs_per_day'] !== undefined) {
-    normalized['random_runs_per_day'] = String(clampInt(updates['random_runs_per_day'], 5, 1, 12));
-  }
-  if (updates['active_window_start_hour'] !== undefined) {
-    normalized['active_window_start_hour'] = String(clampInt(updates['active_window_start_hour'], 9, 0, 23));
-  }
-  if (updates['active_window_end_hour'] !== undefined) {
-    normalized['active_window_end_hour'] = String(clampInt(updates['active_window_end_hour'], 22, 1, 24));
-  }
-  if (updates['max_follow_backs_per_day'] !== undefined) {
-    normalized['max_follow_backs_per_day'] = String(clampInt(updates['max_follow_backs_per_day'], 15, 0, 100));
-  }
-  if (updates['classification_ttl_days'] !== undefined) {
-    normalized['classification_ttl_days'] = String(clampInt(updates['classification_ttl_days'], 7, 1, 90));
-  }
-  if (updates['blocklist_classifications'] !== undefined) {
-    normalized['blocklist_classifications'] = String(updates['blocklist_classifications']).slice(0, 200);
-  }
-  if (updates['original_posts_per_day'] !== undefined) {
-    normalized['original_posts_per_day'] = String(clampInt(updates['original_posts_per_day'], 5, 0, 12));
-  }
-  if (updates['original_post_marathi_ratio'] !== undefined) {
-    normalized['original_post_marathi_ratio'] = String(clampInt(updates['original_post_marathi_ratio'], 40, 0, 100));
-  }
-  if (updates['agent_enabled'] !== undefined) {
-    normalized['agent_enabled'] = String(updates['agent_enabled'] === 'true');
-  }
-  if (updates['agent_error_threshold'] !== undefined) {
-    normalized['agent_error_threshold'] = String(clampInt(updates['agent_error_threshold'], 3, 1, 50));
-  }
-
-  for (const [k, v] of Object.entries(normalized)) {
-    setSetting(k, v);
+  for (const [key, normalize] of Object.entries(SETTING_NORMALIZERS)) {
+    if (updates[key] !== undefined) {
+      setSetting(key, normalize(updates[key]));
+    }
   }
   res.json({ ok: true });
 });

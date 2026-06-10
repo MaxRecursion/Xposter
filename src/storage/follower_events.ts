@@ -116,6 +116,20 @@ export function listPendingFollowBackEvents(): FollowerEvent[] {
   `).all() as FollowerEvent[];
 }
 
+/**
+ * Atomically move a PENDING event to APPROVED. Returns false when the event
+ * was already handled (double tap / concurrent request), so only one caller
+ * executes the follow action.
+ */
+export function claimFollowerEventForApproval(id: number): boolean {
+  const result = getDb().prepare(`
+    UPDATE follower_events
+    SET status = 'APPROVED', action_taken_at = unixepoch()
+    WHERE id = ? AND status = 'PENDING'
+  `).run(id);
+  return result.changes > 0;
+}
+
 export function setFollowerEventStatus(
   id: number,
   status: FollowerEventStatus,

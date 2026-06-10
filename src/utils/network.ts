@@ -13,8 +13,22 @@ export function getBindHost(): string {
   return process.env.HOST ?? '0.0.0.0';
 }
 
+// IP lookups are called on every request (CORS origin check + dashboard-origin
+// auth). The tailscale lookup in particular shells out to the CLI, which blocks
+// the event loop — cache both with a short TTL since interfaces rarely change.
+const IP_CACHE_TTL_MS = 60_000;
+let _localIp: { value: string; at: number } | null = null;
+let _tailscaleIp: { value: string | null; at: number } | null = null;
+
 /** Returns the first non-loopback IPv4 address (LAN IP). */
 export function getLocalIP(): string {
+  if (_localIp && Date.now() - _localIp.at < IP_CACHE_TTL_MS) return _localIp.value;
+  const value = lookupLocalIP();
+  _localIp = { value, at: Date.now() };
+  return value;
+}
+
+function lookupLocalIP(): string {
   const nets = networkInterfaces();
   const preferredNames = ['en0', 'en1', 'eth0', 'wlan0'];
   const names = [
@@ -42,7 +56,13 @@ export function getLocalIP(): string {
 /** Returns a Tailscale IPv4 address when the tailscale CLI is installed/logged in. */
 export function getTailscaleIP(): string | null {
   if (process.env.TAILSCALE_IP) return process.env.TAILSCALE_IP;
+  if (_tailscaleIp && Date.now() - _tailscaleIp.at < IP_CACHE_TTL_MS) return _tailscaleIp.value;
+  const value = lookupTailscaleIP();
+  _tailscaleIp = { value, at: Date.now() };
+  return value;
+}
 
+function lookupTailscaleIP(): string | null {
   try {
     const output = execFileSync('tailscale', ['ip', '-4'], {
       encoding: 'utf8',

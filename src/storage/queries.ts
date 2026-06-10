@@ -47,29 +47,25 @@ export interface RawTweet {
 
 // ── Insert ────────────────────────────────────────────────────────────────────
 
+/** Inserts a newly-ingested tweet; returns null for duplicates or invalid refs. */
 export function upsertPost(tweet: RawTweet): Post | null {
   if (!isValidTweetReference(tweet.tweet_id, tweet.tweet_url)) {
     return null;
   }
 
-  const db = getDb();
-  const existing = db
-    .prepare('SELECT id FROM posts WHERE tweet_id = ?')
-    .get(tweet.tweet_id) as { id: string } | undefined;
-
-  if (existing) return null;
-
   const id = crypto.randomUUID();
-  db.prepare(`
+  const result = getDb().prepare(`
     INSERT INTO posts (id, tweet_id, author_handle, author_name, text,
       timestamp, likes, replies, retweets, tweet_url, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INGESTED')
+    ON CONFLICT(tweet_id) DO NOTHING
   `).run(
     id, tweet.tweet_id, tweet.author_handle, tweet.author_name,
     tweet.text, tweet.timestamp, tweet.likes, tweet.replies,
     tweet.retweets, tweet.tweet_url,
   );
 
+  if (result.changes === 0) return null;
   return getPost(id)!;
 }
 
@@ -121,6 +117,19 @@ export function updatePostStatus(id: string, status: PostStatus): void {
   getDb()
     .prepare(`UPDATE posts SET status = ?, updated_at = unixepoch() WHERE id = ?`)
     .run(status, id);
+}
+
+/**
+ * Atomically claim a pending post for posting. Returns false if the post was
+ * already approved/skipped/posted by a concurrent request (e.g. a double tap
+ * on the ntfy notification), so only one caller ever proceeds to post.
+ */
+export function claimPostForPosting(id: string): boolean {
+  const result = getDb().prepare(`
+    UPDATE posts SET status = 'POSTING', updated_at = unixepoch()
+    WHERE id = ? AND status = 'PENDING_APPROVAL'
+  `).run(id);
+  return result.changes > 0;
 }
 
 export function updatePostLanguage(id: string, language: string): void {

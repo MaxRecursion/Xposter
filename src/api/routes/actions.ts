@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
 import {
   getPost, updatePostStatus, logEvent, getSetting, setSetting, markPostAsPosted,
-  getLastPostedUnix,
+  getLastPostedUnix, claimPostForPosting,
 } from '../../storage/queries.js';
+import { getIntSetting } from '../../storage/settings.js';
 import { recordInteraction } from '../../storage/interactions.js';
 import { postReply } from '../../browser/posting.js';
 import { logger } from '../../utils/logger.js';
@@ -30,10 +31,10 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
   }
 
   // Enforce minimum reply interval
-  const minInterval = parseInt(
-    process.env.MIN_REPLY_INTERVAL_SECONDS ?? getSetting('min_reply_interval_sec', '300'),
-    10,
-  );
+  const envInterval = parseInt(process.env.MIN_REPLY_INTERVAL_SECONDS ?? '', 10);
+  const minInterval = Number.isFinite(envInterval) && envInterval >= 0
+    ? envInterval
+    : getIntSetting('min_reply_interval_sec', 300, 0, 86_400);
 
   const lastPosted = getLastPostedUnix();
   const secondsSinceLast = Date.now() / 1000 - lastPosted;
@@ -43,7 +44,12 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  updatePostStatus(post.id, 'POSTING');
+  // Atomic claim: a second concurrent approve (double tap) loses the race here
+  // instead of triggering a duplicate browser posting flow.
+  if (!claimPostForPosting(post.id)) {
+    sendActionResponse(req, res, 409, 'Already handled', 'This post was just handled by another request.');
+    return;
+  }
   logEvent('APPROVE', `approved via ${callerLabel(req)}`, post.id);
 
   // Respond immediately; post asynchronously
@@ -77,6 +83,12 @@ function handleSkip(req: Request, res: Response): void {
   const post = getPost(paramString(req, 'id'));
   if (!post) {
     sendActionResponse(req, res, 404, 'Post not found', 'This candidate no longer exists.');
+    return;
+  }
+
+  // A stale Skip tap must never clobber a reply that already went out.
+  if (post.status === 'POSTED' || post.status === 'POSTING' || post.status === 'DELETED') {
+    sendActionResponse(req, res, 409, 'Already handled', `This post is in status ${post.status}.`);
     return;
   }
 
