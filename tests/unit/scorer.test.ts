@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { scorePost, rankCandidates } from '../../src/pipeline/scorer.js';
+import {
+  accountHistorySignal, rankCandidates, scorePost, topicalHeatSignal,
+} from '../../src/pipeline/scorer.js';
 import type { Post } from '../../src/storage/queries.js';
 
 function makePost(overrides: Partial<Post> = {}): Post {
@@ -67,6 +69,49 @@ describe('scorePost', () => {
     expect(breakdown).toHaveProperty('topicRelevance');
     expect(breakdown).toHaveProperty('replyOpportunity');
     expect(breakdown).toHaveProperty('engagementSweet');
+    expect(breakdown).toHaveProperty('topicalHeat');
+    expect(breakdown).toHaveProperty('accountHistory');
+  });
+
+  it('adds topical heat and successful-author history to the score', () => {
+    const baseline = scorePost(makePost());
+    const boosted = scorePost(makePost(), { topicalHeat: 8, accountHistory: 7 });
+
+    expect(boosted.score).toBeGreaterThan(baseline.score);
+    expect(boosted.breakdown.topicalHeat).toBe(8);
+    expect(boosted.breakdown.accountHistory).toBe(7);
+  });
+});
+
+describe('dynamic scoring signals', () => {
+  it('maps a close credible context hit to a strong topical boost', () => {
+    const boost = topicalHeatSignal([{
+      itemId: 'ctx-1',
+      source: 'rss:test',
+      sourceUrl: null,
+      title: 'Pune flooding',
+      body: 'Heavy rain and waterlogging across Pune.',
+      language: 'english',
+      topics: '[]',
+      publishedAt: Math.floor(Date.now() / 1000),
+      fetchedAt: Math.floor(Date.now() / 1000),
+      credibility: 0.9,
+      distance: 0.1,
+    }]);
+    expect(boost).toBeGreaterThan(7);
+  });
+
+  it('boosts authors with successful replies and demotes repeated non-engagers', () => {
+    expect(accountHistorySignal({
+      total_replies_sent: 5,
+      successful_replies: 3,
+      avg_reply_score: 20,
+    })).toBeGreaterThan(5);
+    expect(accountHistorySignal({
+      total_replies_sent: 4,
+      successful_replies: 0,
+      avg_reply_score: 0,
+    })).toBe(-6);
   });
 });
 

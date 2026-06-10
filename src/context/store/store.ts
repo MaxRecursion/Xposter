@@ -138,16 +138,24 @@ export class ContextStore {
     query: string,
     opts: { k?: number; maxAgeSeconds?: number; language?: string | null } = {},
   ): Promise<RetrievedContextItem[]> {
+    const [result] = await this.semanticSearchMany([query], opts);
+    return result ?? [];
+  }
+
+  /** Batch variant used by candidate scoring to spend one embedding request per pipeline run. */
+  async semanticSearchMany(
+    queries: string[],
+    opts: { k?: number; maxAgeSeconds?: number; language?: string | null } = {},
+  ): Promise<RetrievedContextItem[][]> {
+    if (queries.length === 0) return [];
     const k = Math.max(1, opts.k ?? 8);
     const maxAge = opts.maxAgeSeconds ?? 36 * 3600;
 
-    const [qvec] = await this.embeddings.embed([query], { kind: 'query' });
-    if (!qvec) return [];
-    const qbuf = Buffer.from(qvec.buffer, qvec.byteOffset, qvec.byteLength);
+    const qvecs = await this.embeddings.embed(queries, { kind: 'query' });
     const cutoff = Math.floor(Date.now() / 1000) - maxAge;
 
     const db = getDb();
-    const rows = db.prepare(`
+    const search = db.prepare(`
       SELECT v.item_id, v.distance, c.source, c.source_url, c.title, c.body,
              c.language, c.topics, c.published_at, c.fetched_at, c.credibility
       FROM vec_context v
@@ -155,21 +163,27 @@ export class ContextStore {
       WHERE v.embedding MATCH ? AND k = ?
         AND (c.published_at IS NULL OR c.published_at >= ?)
       ORDER BY v.distance
-    `).all(qbuf, k * 4, cutoff) as RawHit[];
+    `);
 
-    return rows.slice(0, k).map((r) => ({
-      itemId: r.item_id,
-      source: r.source,
-      sourceUrl: r.source_url,
-      title: r.title,
-      body: r.body,
-      language: r.language,
-      topics: r.topics,
-      publishedAt: r.published_at,
-      fetchedAt: r.fetched_at,
-      credibility: r.credibility,
-      distance: r.distance,
-    }));
+    return queries.map((_query, index) => {
+      const qvec = qvecs[index];
+      if (!qvec) return [];
+      const qbuf = Buffer.from(qvec.buffer, qvec.byteOffset, qvec.byteLength);
+      const rows = search.all(qbuf, k * 4, cutoff) as RawHit[];
+      return rows.slice(0, k).map((r) => ({
+        itemId: r.item_id,
+        source: r.source,
+        sourceUrl: r.source_url,
+        title: r.title,
+        body: r.body,
+        language: r.language,
+        topics: r.topics,
+        publishedAt: r.published_at,
+        fetchedAt: r.fetched_at,
+        credibility: r.credibility,
+        distance: r.distance,
+      }));
+    });
   }
 
   /** Delete items whose expires_at has passed, and their vectors. */

@@ -10,7 +10,7 @@ import { classifyAccount } from './classifier.js';
 import { EmptyReplyError } from './errors.js';
 import { DetectedLanguage, filterPost } from './filter.js';
 import { generateReply } from './generator.js';
-import { rankCandidates, scorePost, ScoredPost } from './scorer.js';
+import { rankCandidates, scorePostsWithSignals, ScoredPost } from './scorer.js';
 import { generateDistinct } from './dedup.js';
 import { publishReply } from './reply_publisher.js';
 import { runReplyRetryQueue } from '../scheduler/reply_retry.js';
@@ -56,7 +56,7 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
     logger.info(`Filter: ${filtered.length}/${ingested} posts passed`);
     logEvent('FILTER_COMPLETE', `${filtered.length} passed`);
 
-    const topCandidates = selectCandidates(filtered, filterResults, newPosts);
+    const topCandidates = await selectCandidates(filtered, filterResults, newPosts);
     logger.info(`Scored candidates selected: ${topCandidates.length}`);
     logEvent('SCORE_COMPLETE', `${topCandidates.length} candidates selected`);
 
@@ -127,16 +127,25 @@ function filterNewPosts(newPosts: Post[]): {
   return { filtered, filterResults };
 }
 
-function selectCandidates(
+async function selectCandidates(
   filtered: FilteredPost[],
   filterResults: Map<string, FilterRecord>,
   newPosts: Post[],
-): ScoredPost[] {
+): Promise<ScoredPost[]> {
   const minScore = getFloatSetting('min_score', 40, 0, 100);
+  const supportedLangs: DetectedLanguage[] = ['english', 'marathi', 'marathi-roman'];
+  const scorablePosts = newPosts.flatMap((post) => {
+    const lang = filterResults.get(post.id)?.lang ?? (post.language as DetectedLanguage);
+    return supportedLangs.includes(lang) ? [{ ...post, language: lang }] : [];
+  });
+  const scoredById = new Map(
+    (await scorePostsWithSignals(scorablePosts)).map((scored) => [scored.id, scored]),
+  );
   const scoredAboveThreshold: ScoredPost[] = [];
 
   for (const { post, lang } of filtered) {
-    const scored = scorePost({ ...post, language: lang });
+    const scored = scoredById.get(post.id);
+    if (!scored) continue;
     updatePostScore(post.id, scored.score, scored.breakdown);
     if (scored.score >= minScore) scoredAboveThreshold.push(scored);
   }
@@ -146,13 +155,14 @@ function selectCandidates(
   const topCandidates = ranked.slice(0, maxCandidates);
   if (topCandidates.length > 0 || newPosts.length === 0) return topCandidates;
 
-  const fallback = selectFallbackCandidate(newPosts, filterResults, minScore);
+  const fallback = selectFallbackCandidate(newPosts, filterResults, scoredById, minScore);
   return fallback ? [fallback] : [];
 }
 
 function selectFallbackCandidate(
   newPosts: Post[],
   filterResults: Map<string, FilterRecord>,
+  scoredById: Map<string, ScoredPost>,
   minScore: number,
 ): ScoredPost | null {
   const supportedLangs: DetectedLanguage[] = ['english', 'marathi', 'marathi-roman'];
@@ -162,7 +172,12 @@ function selectFallbackCandidate(
   });
   if (eligible.length === 0) return null;
 
-  const fallback = rankCandidates(eligible.map(({ post, lang }) => scorePost({ ...post, language: lang })))[0];
+  const fallback = rankCandidates(
+    eligible.flatMap(({ post }) => {
+      const scored = scoredById.get(post.id);
+      return scored ? [scored] : [];
+    }),
+  )[0];
   if (!fallback) return null;
 
   const record = filterResults.get(fallback.id);
