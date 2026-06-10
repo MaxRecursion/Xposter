@@ -2,7 +2,7 @@ flowchart LR
   subgraph "Local Mac"
     Dashboard["Web dashboard\npublic/"]
     API["Express API\nsrc/api"]
-    Scheduler["node-cron scheduler\n5 runs/day"]
+    Scheduler["Timer-based schedulers\nrandomized daily runs"]
     Pipeline["Pipeline\nfilter -> score -> generate"]
     Browser["Playwright persistent browser\nbrowser-profile/"]
     DB[("SQLite\nposts, settings, activity_log")]

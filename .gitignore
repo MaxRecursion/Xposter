@@ -10,6 +10,8 @@ node_modules/
 browser-profile/
 data/
 logs/
+Backups/
+.xposter_backup_result.txt
 
 # Build outputs
 dist/

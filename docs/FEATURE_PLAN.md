@@ -3,6 +3,9 @@
 Written 2026-06-10, after a full-codebase audit. Items are grouped by priority;
 each one names the existing code it builds on so the work is concrete.
 
+> **Completed 2026-06-10:** All P0, P1, P2, and housekeeping items have been
+> implemented. This document is retained as the delivery record.
+
 ## P0 — Finish half-built features (high value, low effort)
 
 ### 1. Reply engagement tracking

@@ -106,7 +106,7 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   max_follow_backs_per_day:    intSetting(15, 0, 100),
   classification_ttl_days:     intSetting(7, 1, 90),
   blocklist_classifications:   textSetting(200),
-  original_posts_per_day:      intSetting(5, 0, 12),
+  original_posts_per_day:      intSetting(7, 1, 12),
   original_post_marathi_ratio: intSetting(40, 0, 100),
   agent_enabled:               boolSetting,
   agent_error_threshold:       intSetting(3, 1, 50),

@@ -16,7 +16,7 @@ Reviewed the local Express API, ntfy callback flow, browser automation boundarie
 | iPhone dashboard auth | Protecting mutation routes could otherwise break same-origin dashboard actions from a phone. | Added dashboard-origin trust for configured LAN/Tailscale origins plus browser-local API-key fallback. |
 | Request body size | JSON body parser had the default unlimited-ish ergonomics for this app. | Added `express.json({ limit: '64kb' })`. |
 | CORS | CORS allowed every origin. | Restricted CORS to localhost and configured local callback/browser URLs. |
-| Dependency audit | `node-cron` and Vitest dependency trees had moderate advisories. | Upgraded `node-cron` to v4.2.1 and Vitest/coverage to v4.1.5. `npm audit` now reports zero vulnerabilities. |
+| Dependency audit | Stale direct and transitive dependencies had published advisories. | Removed unused `node-cron`, aligned Express v4 types, refreshed patched dependency versions, and retained Vitest/coverage v4.1.5. `npm audit` reports zero vulnerabilities. |
 | Git hygiene | Runtime artifacts and secrets must never be uploaded. | `.gitignore` excludes `.env`, `browser-profile/`, `data/`, `logs/`, `dist/`, and `node_modules/`. |
 | Secret placeholders | Example config had key-like placeholder strings that could trigger scanners. | Replaced with neutral placeholder values. |
 

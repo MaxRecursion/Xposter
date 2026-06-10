@@ -1,5 +1,7 @@
 # Rust Migration Plan — Xposter
 
+> **Archived 2026-06-10**: This document predates the current architecture and is retained for historical reference only.
+>
 > **Status**: Research / planning only. No code has been changed.
 > **Scope**: Full codebase audit — 7,888 lines of TypeScript across 35+ files.
 > **Author**: Claude Sonnet 4.6 — based on complete read of every source file.

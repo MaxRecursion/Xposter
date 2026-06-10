@@ -180,11 +180,11 @@ On query (per reply/original-post generation):
 ### Core Automation
 - **Timeline ingestion** — Playwright stealth scrolls home timeline, extracts tweet_id, author, text, and engagement counts
 - **Keyword + language filtering** — English requires topic keyword match; Marathi/Devanagari posts pass automatically
-- **Multi-factor scoring** — recency decay (6 h half-life), topic relevance, reply opportunity (question/complaint/help patterns), engagement sweet spot (1–50 replies ideal)
+- **Multi-factor scoring** — recency, topic relevance, reply opportunity, engagement sweet spot, context-store topical heat, and prior account reply performance
 - **Account classification** — 9-class Groq LLM classifier (SERIOUS, NEWS, PARODY, COMEDY, INFLUENCER, REGULAR, BOT, BRAND_PROMO, UNKNOWN) with heuristic fast-path (PCF label, bot patterns, follower counts); 7-day TTL cache
-- **Approval queue** — every reply waits in PENDING_APPROVAL; ntfy iPhone notification with one-tap Approve/Skip; auto-expires after `approval_timeout_min`
-- **Original post generation** — 7 posts/day (5 ORIGINAL + 2 ENGAGEMENT_FARM); topic picked by trend velocity + historical engagement; quality gate with up to 2 retries
-- **Impression tracking** — every 2 h scrapes likes/replies/retweets/impressions for recent originals
+- **Configurable approval queue** — replies wait in PENDING_APPROVAL by default, with one-tap Approve/Skip via ntfy; approval can be disabled for automatic posting
+- **Original post generation** — 7 posts/day by default (4 ORIGINAL + 2 ENGAGEMENT_FARM + 1 QUOTE_TWEET); supports 2–3 post threads and trend-driven quote tweets
+- **Engagement tracking** — scheduled syncs collect likes/replies/retweets for replies and full impression snapshots for original posts
 
 ### Intelligence Layers
 - **Dual persona** — Pune flavor (satirical Punekar: PMC, FC Road, Mula-Mutha, Hinjewadi) or General (sharp observer); auto-selected per tweet by content regex + topic tags
@@ -193,22 +193,28 @@ On query (per reply/original-post generation):
 - **Context RAG** (optional, `CONTEXT_ENABLED=true`) — RSS feeds, Reddit, weather via Voyage AI embeddings + sqlite-vec ANN; re-ranked by similarity × recency × credibility × topic overlap; injected as `[CURRENT CONTEXT]` block
 - **Trend detection** — topic velocity (6 h vs 24 h event ratio) biases original post topic selection toward hot topics
 - **Audience heatmap** — 7×24 follower activity matrix biases scheduler toward high-engagement time slots
+- **Performance analytics** — follower growth, reply success by account class, topic trends, and best posting hours
 
 ### Notifications (ntfy)
 - Reply approval request with signed approve/skip URLs (HMAC, TTL-bound)
 - Reply posted confirmation with tweet URL
 - New follower alert with Follow Back / Skip action buttons
+- Session-expiry and unfollow alerts
+- Weekly performance digest with replies, approval rate, follower delta, top reply, and best topic
 - Action mode: `view` (opens dashboard) or `http` (fires API silently from phone)
 
 ### Safety & Control
-- **Approval gate** — no reply posts without explicit approval
+- **Approval gate** — enabled by default and configurable with `require_approval`
 - **Classification blocklist** — BOT and BRAND_PROMO skipped from follow-back by default
+- **Duplicate guard** — regenerates or skips replies and original posts that are too similar to recent output
+- **Posting retry queue** — retries transient compose failures once with a capped delay
 - **Min reply interval** — configurable floor between posted replies
 - **Pause/resume** — `system_running` toggle in dashboard header; all schedulers respect it
+- **Session watchdog** — pauses schedulers and alerts when the X login expires
 - **Expiry sweep** — pending approvals expire after `approval_timeout_min` (default 30 min)
 
 ### Developer Features
-- **Live dashboard** — 8-tab SPA served by Express, auto-refreshing via polling
+- **Live dashboard** — multi-tab SPA served by Express, auto-refreshing via polling
 - **Live settings** — all operational parameters editable from Settings tab, no restart required
 - **Activity log** — append-only event stream, queryable, shown in Console and History tabs
 - **Diagnostic endpoint** — `/api/diagnostics` reports connectivity, config, DB health
@@ -393,6 +399,7 @@ Stored in the `settings` table; take effect immediately without restart.
 | `topic_keywords` | string | `pune,rain,…` | comma list |
 | `min_score` | int | `40` | 0–100 |
 | `max_candidates_per_run` | int | `3` | 1–10 |
+| `require_approval` | bool | `true` | — |
 | `approval_timeout_min` | int | `30` | 5–1440 |
 | `random_runs_per_day` | int | `5` | 1–12 |
 | `active_window_start_hour` | int | `9` | 0–23 |
@@ -400,7 +407,12 @@ Stored in the `settings` table; take effect immediately without restart.
 | `classification_ttl_days` | int | `7` | 1–90 |
 | `blocklist_classifications` | string | `BOT,BRAND_PROMO` | comma list |
 | `max_follow_backs_per_day` | int | `15` | 0–100 |
-| `original_posts_per_day` | int | `5` | 0–12 |
+| `auto_follow_back_enabled` | bool | `false` | — |
+| `auto_follow_back_classifications` | string | `REGULAR,SERIOUS` | comma list |
+| `auto_follow_back_min_confidence` | int | `60` | 0–100 |
+| `original_posts_per_day` | int | `7` | 1–12 |
+| `weekly_digest_enabled` | bool | `true` | — |
+| `weekly_digest_hour` | int | `9` | 0–23 |
 | `agent_enabled` | bool | `false` | — |
 | `agent_error_threshold` | int | `3` | 1–50 |
 
@@ -467,6 +479,13 @@ All mutation endpoints require `X-API-Key` header matching `API_KEY` in `.env`. 
 | `GET` | `/api/audience/heatmap` | 7×24 follower activity matrix |
 | `POST` | `/api/audience/refresh` | Scrape and refresh heatmap now |
 
+### Analytics
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/analytics/overview` | Performance summary. `?days=N` |
+| `POST` | `/api/analytics/weekly-digest/send` | Generate and send the weekly ntfy digest now |
+
 ### Context / RAG
 
 | Method | Path | Description |
@@ -504,12 +523,16 @@ All scheduler jobs are backed by the `scheduled_runs` SQLite table with jittered
 
 | Job | File | Trigger | What it does |
 |---|---|---|---|
-| **Reply pipeline** | `scheduler/random_runs.ts` | 5×/day (configurable), random offsets within active window (default 09:00–22:00), 60 s tick | Ingest timeline → filter → score → classify → generate reply → ntfy approval |
-| **Original posts** | `scheduler/original_posts.ts` | 7×/day (5 ORIGINAL + 2 ENGAGEMENT_FARM), jittered grid, 60 s tick | Draft + post original tweet to timeline |
+| **Reply pipeline** | `scheduler/random_runs.ts` | 5×/day (configurable), random offsets within active window (default 09:00–22:00), 60 s tick | Ingest timeline → filter → score → classify → generate → approval or automatic post |
+| **Reply retry queue** | `scheduler/reply_retry.ts` | Each random-run tick | Retry one eligible transient posting failure |
+| **Original posts** | `scheduler/original_posts.ts` | 7×/day (4 ORIGINAL + 2 ENGAGEMENT_FARM + 1 QUOTE_TWEET), jittered grid, 60 s tick | Draft and post a single tweet, thread, or quote tweet |
 | **Impression sync** | `scheduler/original_posts.ts` | Every 2 h (10 min initial delay), `setTimeout` chain | Playwright scrapes engagement for recent originals |
-| **Follower sync** | `scheduler/follower_sync.ts` | Periodic (configurable interval) | Detect new followers, send ntfy alerts with action buttons |
+| **Reply metrics sync** | `scheduler/reply_metrics_sync.ts` | Periodic | Scrape reply engagement and update interaction success scores |
+| **Follower sync** | `scheduler/follower_sync.ts` | Periodic (configurable interval) | Detect followers/unfollows and apply the auto-follow policy |
 | **Follow-back processor** | `scheduler/follow_back_processor.ts` | Periodic | Execute approved follow-back actions, respect daily cap + blocklist |
 | **Audience heatmap sync** | `scheduler/audience_sync.ts` | Periodic (configurable interval) | Playwright scrapes 7×24 follower activity matrix |
+| **Session watchdog** | `scheduler/session_health.ts` | Periodic | Detect expired X login, alert, and pause schedulers |
+| **Weekly digest** | `scheduler/weekly_digest.ts` | Sunday at configured hour | Send the weekly performance summary via ntfy |
 | **Context ingest** | `context/ingest/scheduler.ts` | RSS: 30 min, Reddit: 60 min, weather: 60 min (per-source configurable) | Fetch, SHA-256 dedup, near-dup filter, Voyage embed, store to vec_context |
 | **Agent watcher** | `agent/watcher.ts` | Every `AGENT_WATCH_INTERVAL_MS` (5 min default) | Poll activity_log for recurring errors; spawn investigator if threshold hit |
 | **Approval expiry sweep** | `scheduler/cron.ts` | Every 5 min | Expire PENDING_APPROVAL posts older than `approval_timeout_min` |
@@ -537,6 +560,7 @@ A single-page app served from `public/` at `http://localhost:3000`. Accessible o
 | **Followers** | Pending follower events with Follow Back / Skip actions; recent follow-back history |
 | **Accounts** | All classified accounts with filters by classification type; shows bio, follower count, classification confidence, Marathi creator flag |
 | **Originals** | Recent original posts with impression sparklines (likes/replies/retweets/impressions over time); per-topic engagement performance chart |
+| **Analytics** | Follower growth, reply success by classification, topic performance trends, and best posting hours |
 | **Activity** | Audience heatmap — 7-day × 24-hour follower activity grid showing when your followers are most active |
 | **Agent** | Investigations list (proposed error diagnoses + fix descriptions); feature task queue; agent run history with live SSE progress stream |
 | **History** | Full activity log of all pipeline events (INGESTED → FILTERED → SCORED → PENDING_APPROVAL → POSTED/SKIPPED/EXPIRED) |
@@ -553,18 +577,18 @@ A single-page app served from `public/` at `http://localhost:3000`. Accessible o
 
 ## Database Schema
 
-All data lives in `data/xposter.db` (SQLite WAL mode). Override path with `DB_PATH_OVERRIDE`. Safe to hot-backup while running: `cp data/xposter.db ~/backup/`
+All data lives in `data/xposter.db` (SQLite WAL mode). Override path with `DB_PATH_OVERRIDE`. For a consistent hot backup, run `scripts/xposter_backup_run.sh`.
 
 | Table | Purpose | Key Fields |
 |---|---|---|
-| `posts` | Every ingested tweet with full lifecycle | tweet_id (UNIQUE), author_handle, text, status (INGESTED→FILTERED→SCORED→GENERATING→PENDING_APPROVAL→APPROVED→POSTING→POSTED / SKIPPED / EXPIRED / ERROR), score, score_breakdown (JSON), generated_reply, final_reply, posted_tweet_id |
+| `posts` | Every ingested tweet with full lifecycle | tweet_id (UNIQUE), author_handle, text, status (INGESTED→FILTERED→SCORED→GENERATING→PENDING_APPROVAL→APPROVED→POSTING→POSTED / SKIPPED / EXPIRED / ERROR), score, generated_reply, final_reply, posting_attempts, retry_after, last_error |
 | `accounts` | X account metadata + classification cache | handle (PK), display_name, bio, verified, follower_count_seen, is_marathi_creator, classification (9 types), classification_confidence, classified_at |
-| `interactions` | Outbound replies with engagement tracking | post_id (FK posts), reply_text, tweet_url, engagement (JSON: likes/replies/retweets) |
+| `interactions` | Outbound replies with engagement tracking | post_id (FK posts), our_reply_text, our_tweet_url, likes, replies, retweets, author_engaged, success_score |
 | `activity_log` | Append-only pipeline event log | post_id, event type, detail, created_at |
 | `settings` | Key-value store for live-editable settings | key (PK), value (TEXT) |
-| `original_posts` | Posts we authored (not replies) | content, language, topic, post_type (ORIGINAL/ENGAGEMENT_FARM), status, tweet_id, tweet_url, research_context |
+| `original_posts` | Posts we authored (not replies) | content, topic, post_type (ORIGINAL/ENGAGEMENT_FARM/QUOTE_TWEET), thread parts/IDs, source tweet metadata, status, tweet URL |
 | `post_impressions` | Periodic engagement snapshots | original_post_id (FK), impressions, likes, replies, retweets, checked_at |
-| `follower_events` | New-follower events pending action | author_handle, event (NEW_FOLLOWER/FOLLOW_BACK_DUE), status (PENDING/FOLLOWED_BACK/SKIPPED) |
+| `follower_events` | Follower relationship events | author_handle, event (NEW_FOLLOWER/FOLLOW_BACK_DUE/UNFOLLOWED), status (PENDING/FOLLOWED_BACK/SKIPPED) |
 | `scheduled_runs` | Today's jittered run timestamps | date_key, run_at (unix sec), kind (RANDOM_RUN/ORIGINAL_POST), detail (post type), fired |
 | `context_items` | RSS/Reddit/weather items | source, source_url, title, body, topics (JSON), published_at, credibility (0–1), body_hash (SHA-256 dedup) |
 | `context_source_health` | Per-source polling health | source (PK), last_ok_at, consecutive_failures |

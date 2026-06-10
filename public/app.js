@@ -206,7 +206,7 @@ async function loadSettings() {
     if ($('s-class-ttl'))      $('s-class-ttl').value      = s.classification_ttl_days ?? '7';
     if ($('s-max-fb'))              $('s-max-fb').value              = s.max_follow_backs_per_day ?? '15';
     if ($('s-blocklist'))           $('s-blocklist').value           = s.blocklist_classifications ?? '';
-    if ($('s-orig-per-day'))        $('s-orig-per-day').value        = s.original_posts_per_day ?? '5';
+    if ($('s-orig-per-day'))        $('s-orig-per-day').value        = s.original_posts_per_day ?? '7';
     if ($('s-orig-marathi-ratio'))  $('s-orig-marathi-ratio').value  = s.original_post_marathi_ratio ?? '40';
     if ($('s-agent-enabled'))       $('s-agent-enabled').checked     = s.agent_enabled === 'true';
     if ($('s-agent-threshold'))     $('s-agent-threshold').value     = s.agent_error_threshold ?? '3';
