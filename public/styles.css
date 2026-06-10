@@ -902,7 +902,28 @@ select.select-input {
   line-height: 1.55;
   color: var(--text1);
   margin-bottom: 10px;
+  white-space: normal;
+}
+.op-thread-part {
+  display: flex;
+  gap: 8px;
+  padding: 7px 0;
+}
+.op-thread-part + .op-thread-part {
+  border-top: 1px solid var(--border);
+}
+.op-thread-index {
+  color: var(--text3);
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding-top: 2px;
+}
+.op-thread-part > span:last-child {
   white-space: pre-wrap;
+}
+.post-type-badge-thread {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
 }
 .op-footer {
   display: flex;

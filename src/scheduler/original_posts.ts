@@ -9,7 +9,7 @@ import {
 import { generateOriginalPost, generateEngagementFarmPost } from '../pipeline/original_post_generator.js';
 import { EmptyReplyError } from '../pipeline/errors.js';
 import type { OriginalPostType } from '../storage/original_posts.js';
-import { postOriginalTweet } from '../browser/compose.js';
+import { postTweetThread } from '../browser/compose.js';
 import { scrapeEngagement } from '../browser/impressions.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
@@ -175,18 +175,27 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
       topic: generated.topic,
       postType,
       researchContext: generated.researchContext,
+      threadParts: generated.parts,
     });
     draftId = post.id;
 
-    logEvent('ORIGINAL_POST_GENERATED', `topic=${generated.topic} lang=${generated.language}`, post.id);
+    logEvent(
+      'ORIGINAL_POST_GENERATED',
+      `topic=${generated.topic} lang=${generated.language} parts=${generated.parts.length}`,
+      post.id,
+    );
 
     // 3. Post to X
-    const { tweetId, tweetUrl } = await postOriginalTweet(generated.content);
+    const { tweetIds, tweetUrls } = await postTweetThread(generated.parts);
 
     // 4. Mark posted
-    markOriginalPostPosted(post.id, tweetId, tweetUrl);
-    logEvent('ORIGINAL_POST_POSTED', tweetUrl ?? '(no url)', post.id);
-    logger.info('Original post live', { postId: post.id, tweetId, tweetUrl });
+    markOriginalPostPosted(post.id, tweetIds, tweetUrls);
+    logEvent(
+      'ORIGINAL_POST_POSTED',
+      `${tweetUrls[0] ?? '(no url)'} parts=${generated.parts.length}`,
+      post.id,
+    );
+    logger.info('Original post live', { postId: post.id, tweetIds, tweetUrls });
 
     return { ok: true, id: post.id };
   } catch (err) {

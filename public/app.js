@@ -661,9 +661,17 @@ function renderOriginalPost(post) {
     ? `<span class="marathi-badge">मराठी</span>`
     : `<span class="lang-badge-en">EN</span>`;
   const isEF = post.post_type === 'ENGAGEMENT_FARM';
+  let parts = [post.content];
+  try {
+    const parsed = JSON.parse(post.thread_parts_json || '[]');
+    if (Array.isArray(parsed) && parsed.length > 0) parts = parsed;
+  } catch { /* use legacy content */ }
   const typeBadge = isEF
     ? `<span class="post-type-badge post-type-badge-engagement-farm">Engagement Farm</span>`
     : `<span class="post-type-badge post-type-badge-original">Original</span>`;
+  const threadBadge = parts.length > 1
+    ? `<span class="post-type-badge post-type-badge-thread">${parts.length}-post thread</span>`
+    : '';
   const when = post.posted_at ? timeAgo(post.posted_at) : timeAgo(post.created_at);
   const engHtml = post.status === 'POSTED' ? `
     <span title="Views">👁 ${(post.latest_impressions || 0).toLocaleString()}</span>
@@ -680,10 +688,16 @@ function renderOriginalPost(post) {
         <span class="op-topic">#${escHtml(post.topic)}</span>
         ${langBadge}
         ${typeBadge}
+        ${threadBadge}
         <span class="op-status op-status-${post.status.toLowerCase()}">${post.status}</span>
         <span class="op-time">${when}</span>
       </div>
-      <div class="op-content">${escHtml(post.content)}</div>
+      <div class="op-content">${parts.map((part, index) => `
+        <div class="op-thread-part">
+          ${parts.length > 1 ? `<span class="op-thread-index">${index + 1}/${parts.length}</span>` : ''}
+          <span>${escHtml(part)}</span>
+        </div>
+      `).join('')}</div>
       <div class="op-footer">
         <div class="op-engagement">${engHtml}</div>
         <div class="op-actions">${viewLink}</div>

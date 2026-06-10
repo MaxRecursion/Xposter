@@ -2,6 +2,7 @@ import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween, mediumDelay, longDelay, humanType } from '../utils/delay.js';
 import { findEnabled, findVisible, watchCreateTweetId } from './dom.js';
+import { postReply } from './posting.js';
 
 // Compose textarea inside the modal (appears after navigating to /compose/post)
 const COMPOSE_BOX_SELECTORS = [
@@ -20,6 +21,11 @@ const POST_BTN_SELECTORS = [
 export interface ComposeResult {
   tweetId: string | null;
   tweetUrl: string | null;
+}
+
+export interface ThreadComposeResult {
+  tweetIds: Array<string | null>;
+  tweetUrls: Array<string | null>;
 }
 
 /**
@@ -86,4 +92,35 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
   } finally {
     await page.close();
   }
+}
+
+/** Post one original tweet or a 2-3 tweet thread chained through replies. */
+export async function postTweetThread(parts: string[]): Promise<ThreadComposeResult> {
+  if (parts.length < 1 || parts.length > 3) {
+    throw new Error(`Thread must contain 1-3 parts, received ${parts.length}`);
+  }
+
+  const first = await postOriginalTweet(parts[0]);
+  const tweetIds: Array<string | null> = [first.tweetId];
+  const tweetUrls: Array<string | null> = [first.tweetUrl];
+
+  for (let i = 1; i < parts.length; i++) {
+    const previousId = tweetIds[i - 1];
+    if (!previousId) {
+      throw new Error(`Cannot chain thread part ${i + 1}: previous tweet id was not captured`);
+    }
+
+    await delay(randomBetween(2500, 4500));
+    const previousUrl = `https://x.com/i/web/status/${previousId}`;
+    const result = await postReply(previousUrl, parts[i]);
+    const tweetId = result.replyTweetId;
+    tweetIds.push(tweetId);
+    tweetUrls.push(tweetId ? `https://x.com/i/web/status/${tweetId}` : null);
+
+    if (!tweetId && i < parts.length - 1) {
+      throw new Error(`Cannot chain thread part ${i + 2}: part ${i + 1} tweet id was not captured`);
+    }
+  }
+
+  return { tweetIds, tweetUrls };
 }

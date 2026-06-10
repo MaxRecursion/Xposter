@@ -52,34 +52,30 @@ describe('generateOriginalPost', () => {
     vi.clearAllMocks();
   });
 
-  it('retries when the first original post draft is over 280 characters', async () => {
+  it('turns an over-280 draft into a sentence-boundary thread', async () => {
     expect(Array.from(slightlyLongDraft).length).toBeGreaterThan(280);
     const { __mockCreate } = await import('groq-sdk') as any;
-    __mockCreate
-      .mockResolvedValueOnce({ choices: [{ message: { content: slightlyLongDraft } }] })
-      .mockResolvedValueOnce({ choices: [{ message: { content: validDraft } }] });
+    __mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: slightlyLongDraft } }],
+    });
 
     const { generateOriginalPost } = await import('../../src/pipeline/original_post_generator.js');
     const result = await generateOriginalPost();
 
-    expect(result.content).toBe(validDraft);
-    expect(__mockCreate).toHaveBeenCalledTimes(2);
-    const retryPrompt = __mockCreate.mock.calls[1][0].messages.find((m: any) => m.role === 'user').content;
-    expect(retryPrompt).toContain('Previous draft failed quality check: too long');
-    expect(retryPrompt).toContain('280 characters or fewer');
+    expect(result.content).toBe(slightlyLongDraft);
+    expect(result.parts.length).toBeGreaterThanOrEqual(2);
+    expect(result.parts.length).toBeLessThanOrEqual(3);
+    expect(result.parts.every((part) => Array.from(part).length <= 280)).toBe(true);
+    expect(__mockCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('compacts a still-too-long repaired draft instead of failing the run', async () => {
-    const { __mockCreate } = await import('groq-sdk') as any;
-    __mockCreate
-      .mockResolvedValueOnce({ choices: [{ message: { content: slightlyLongDraft } }] })
-      .mockResolvedValueOnce({ choices: [{ message: { content: slightlyLongDraft } }] });
+  it('packs complete sentences greedily into thread parts', async () => {
+    const { splitOriginalPostThread } = await import('../../src/pipeline/original_post_generator.js');
+    const result = splitOriginalPostThread(slightlyLongDraft);
 
-    const { generateOriginalPost } = await import('../../src/pipeline/original_post_generator.js');
-    const result = await generateOriginalPost();
-
-    expect(Array.from(result.content).length).toBeLessThanOrEqual(280);
-    expect(result.content).toMatch(/[.!?]$/);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatch(/[.!?]$/);
+    expect(result[1]).toMatch(/[.!?]$/);
   });
 
   it('compacts even a no-space overlong draft without exceeding 280 characters', async () => {
@@ -97,7 +93,7 @@ describe('generateOriginalPost', () => {
     });
 
     const { generateOriginalPost } = await import('../../src/pipeline/original_post_generator.js');
-    await generateOriginalPost({
+    const result = await generateOriginalPost({
       avoidTexts: ['Pune founders keep recycling the same automation take.'],
     });
 
@@ -105,5 +101,6 @@ describe('generateOriginalPost', () => {
     const userMsg = callArgs.messages.find((m: any) => m.role === 'user').content;
     expect(userMsg).toContain('VARIETY REQUIREMENT');
     expect(userMsg).toContain('Pune founders keep recycling the same automation take.');
+    expect(result.parts).toEqual([validDraft]);
   });
 });

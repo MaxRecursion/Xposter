@@ -9,13 +9,15 @@ import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
 
 const MAX_ORIGINAL_CHARS = 280;
+const MAX_THREAD_PARTS = 3;
+const MAX_THREAD_CHARS = MAX_ORIGINAL_CHARS * MAX_THREAD_PARTS;
 const MAX_REPAIR_ATTEMPTS = 2;
-const MAX_COMPACTABLE_CHARS = 340;
 
 export type PostLanguage = 'english';
 
 export interface GeneratedOriginalPost {
   content: string;
+  parts: string[];
   language: PostLanguage;
   topic: string;
   category: TopicCategory;
@@ -76,11 +78,79 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
 function qualityCheck(content: string): string | null {
   const chars = charLength(content);
   if (chars < 20) return `too short (${chars} chars)`;
-  if (chars > MAX_ORIGINAL_CHARS) return `too long (${chars} chars)`;
+  if (chars > MAX_THREAD_CHARS) return `too long for a 3-post thread (${chars} chars)`;
   if (/[ऀ-ॿ]/.test(content)) return 'contains Devanagari script despite English-only policy';
   const sentenceEnds = (content.match(/[.!?]/g) ?? []).length;
   if (sentenceEnds < 1) return 'no sentence-ending punctuation found';
+  const parts = splitOriginalPostThread(content);
+  if (parts.length > MAX_THREAD_PARTS) {
+    return `needs ${parts.length} thread parts (maximum ${MAX_THREAD_PARTS})`;
+  }
+  if (parts.some((part) => charLength(part) > MAX_ORIGINAL_CHARS)) {
+    return 'contains a thread part over 280 characters';
+  }
   return null;
+}
+
+export function splitOriginalPostThread(content: string): string[] {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (charLength(normalized) <= MAX_ORIGINAL_CHARS) return [normalized];
+
+  const sentences = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) ?? [normalized];
+  const parts: string[] = [];
+  let current = '';
+
+  for (const sentence of sentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    if (charLength(candidate) <= MAX_ORIGINAL_CHARS) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      parts.push(current);
+      current = '';
+    }
+
+    const chunks = splitAtWordBoundaries(sentence, MAX_ORIGINAL_CHARS);
+    parts.push(...chunks.slice(0, -1));
+    current = chunks.at(-1) ?? '';
+  }
+
+  if (current) parts.push(current);
+  return parts;
+}
+
+function splitAtWordBoundaries(text: string, maxChars: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    if (charLength(word) > maxChars) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      const chars = Array.from(word);
+      while (chars.length > maxChars) {
+        chunks.push(chars.splice(0, maxChars).join(''));
+      }
+      current = chars.join('');
+      continue;
+    }
+    const candidate = current ? `${current} ${word}` : word;
+    if (charLength(candidate) <= maxChars) {
+      current = candidate;
+      continue;
+    }
+    if (current) chunks.push(current);
+    current = word;
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 export function compactOriginalPostForX(content: string): string {
@@ -121,7 +191,9 @@ function ensureTerminalPunctuation(text: string): string {
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
 const SHARED_RULES = `Hard limits:
-- Maximum 280 characters total
+- Return either one tweet (maximum 280 characters) or a 2-3 tweet thread
+- For a thread, write continuous prose with sentence breaks; do not number the tweets
+- Maximum 280 characters per tweet and 840 characters total
 - Zero or one hashtag only (prefer zero)
 - No emojis unless the topic strongly calls for it
 - Do NOT start with "Just", "Thread:", "Hot take:", or "Unpopular opinion:"
@@ -240,6 +312,7 @@ export async function generateEngagementFarmPost(
 
   return {
     content: cleaned,
+    parts: [cleaned],
     language: 'english',
     topic: strategic ? 'engagement-farm-pune-tech-economy' : 'engagement-farm',
     category: strategic ? 'pune-tech-economy' : 'observation',
@@ -286,7 +359,7 @@ export async function generateOriginalPost(
         userPrompt,
         '',
         `Previous draft failed quality check: ${lastQualityError}.`,
-        `Rewrite it in ${MAX_ORIGINAL_CHARS} characters or fewer. Keep the same angle, but make it tighter.`,
+        `Rewrite it as one tweet or a 2-3 tweet thread. Keep every part within ${MAX_ORIGINAL_CHARS} characters and preserve the angle.`,
       ].join('\n');
 
     logPromptToConsole('ORIGINAL', `topic=${topic} cat=${category} attempt=${attempt}`, systemPrompt, attemptPrompt);
@@ -322,22 +395,6 @@ export async function generateOriginalPost(
       topic, category, attempt, qualityError: qError, chars: charLength(cleaned),
     });
 
-    if (attempt === MAX_REPAIR_ATTEMPTS && qError.startsWith('too long')) {
-      const chars = charLength(cleaned);
-      if (chars <= MAX_COMPACTABLE_CHARS) {
-        const compacted = compactOriginalPostForX(cleaned);
-        const compactError = qualityCheck(compacted);
-        if (!compactError) {
-          cleaned = compacted;
-          lastQualityError = null;
-          logger.info('Original post compacted to fit X limit', {
-            topic, category, charsBefore: chars, charsAfter: charLength(cleaned),
-          });
-          break;
-        }
-        lastQualityError = compactError;
-      }
-    }
   }
 
   if (lastQualityError) {
@@ -349,7 +406,8 @@ export async function generateOriginalPost(
   });
 
   assertEnglishOnly(cleaned, 'Original post');
-  return { content: cleaned, language: 'english', topic, category, researchContext: context };
+  const parts = splitOriginalPostThread(cleaned);
+  return { content: cleaned, parts, language: 'english', topic, category, researchContext: context };
 }
 
 function appendAvoidancePrompt(prompt: string, avoidTexts: string[] = []): string {

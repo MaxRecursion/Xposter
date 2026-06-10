@@ -15,6 +15,9 @@ export interface OriginalPost {
   tweet_id: string | null;
   tweet_url: string | null;
   research_context: string | null;
+  thread_parts_json: string | null;
+  tweet_ids_json: string | null;
+  tweet_urls_json: string | null;
   posted_at: number | null;
   created_at: number;
   updated_at: number;
@@ -49,12 +52,23 @@ export function insertOriginalPost(data: {
   topic: string;
   postType?: OriginalPostType;
   researchContext?: string;
+  threadParts?: string[];
 }): OriginalPost {
   const id = crypto.randomUUID();
   getDb().prepare(`
-    INSERT INTO original_posts (id, content, language, topic, post_type, research_context)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, data.content, data.language, data.topic, data.postType ?? 'ORIGINAL', data.researchContext ?? null);
+    INSERT INTO original_posts (
+      id, content, language, topic, post_type, research_context, thread_parts_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.content,
+    data.language,
+    data.topic,
+    data.postType ?? 'ORIGINAL',
+    data.researchContext ?? null,
+    JSON.stringify(data.threadParts?.length ? data.threadParts : [data.content]),
+  );
   return getOriginalPost(id)!;
 }
 
@@ -80,15 +94,22 @@ export function insertImpression(data: {
 
 export function markOriginalPostPosted(
   id: string,
-  tweetId: string | null,
-  tweetUrl: string | null,
+  tweetIds: Array<string | null>,
+  tweetUrls: Array<string | null>,
 ): void {
   getDb().prepare(`
     UPDATE original_posts
     SET status = 'POSTED', tweet_id = ?, tweet_url = ?,
+        tweet_ids_json = ?, tweet_urls_json = ?,
         posted_at = unixepoch(), updated_at = unixepoch()
     WHERE id = ?
-  `).run(tweetId, tweetUrl, id);
+  `).run(
+    tweetIds[0] ?? null,
+    tweetUrls[0] ?? null,
+    JSON.stringify(tweetIds),
+    JSON.stringify(tweetUrls),
+    id,
+  );
 }
 
 export function markOriginalPostError(id: string): void {

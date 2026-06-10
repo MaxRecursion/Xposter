@@ -363,6 +363,9 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'posts', 'retry_after', 'INTEGER');
   addColumnIfMissing(db, 'posts', 'last_error', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'post_type', "TEXT NOT NULL DEFAULT 'ORIGINAL'");
+  addColumnIfMissing(db, 'original_posts', 'thread_parts_json', 'TEXT');
+  addColumnIfMissing(db, 'original_posts', 'tweet_ids_json', 'TEXT');
+  addColumnIfMissing(db, 'original_posts', 'tweet_urls_json', 'TEXT');
   // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');
 
