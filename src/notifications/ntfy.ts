@@ -14,17 +14,66 @@ export interface NtfyResult {
   hint?: string;
 }
 
+// ── Shared transport ─────────────────────────────────────────────────────────
+
+interface NtfyConfig {
+  topic: string;
+  server: string;
+  apiKey: string;
+}
+
+const PLACEHOLDER_TOPIC = 'xposter-your-secret-topic';
+
+function getNtfyConfig(): NtfyConfig | null {
+  const topic = process.env.NTFY_TOPIC;
+  if (!topic || topic === PLACEHOLDER_TOPIC) return null;
+  return {
+    topic,
+    server: (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, ''),
+    apiKey: process.env.API_KEY ?? '',
+  };
+}
+
+async function postToNtfy(
+  cfg: NtfyConfig,
+  payload: Record<string, unknown>,
+  logContext: Record<string, unknown> = {},
+): Promise<NtfyResult> {
+  const base = getCallbackBase();
+  try {
+    const res = await axios.post(cfg.server, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10_000,
+      validateStatus: () => true,
+    });
+
+    if (res.status >= 200 && res.status < 300) {
+      logger.info('ntfy notification sent', { ...logContext, topic: cfg.topic, status: res.status });
+      return { ok: true, status: res.status, topic: cfg.topic, callback: base };
+    }
+
+    const errMsg = `ntfy returned HTTP ${res.status}: ${JSON.stringify(res.data)}`;
+    logger.error(errMsg, { ...logContext, topic: cfg.topic });
+    return { ok: false, status: res.status, error: errMsg, topic: cfg.topic, callback: base };
+  } catch (err) {
+    const errMsg = `ntfy request failed: ${(err as AxiosError).message}`;
+    logger.error(errMsg, { ...logContext, topic: cfg.topic });
+    return { ok: false, error: errMsg, topic: cfg.topic, callback: base };
+  }
+}
+
+function notConfiguredResult(): NtfyResult {
+  const msg = 'NTFY_TOPIC not configured (still placeholder) — skipping push';
+  logger.warn(msg);
+  return { ok: false, error: msg };
+}
+
+// ── Approval request ─────────────────────────────────────────────────────────
+
 /** Sends an approval-request notification with Approve/Skip action buttons. */
 export async function sendApprovalNotification(post: Post): Promise<NtfyResult> {
-  const topic = process.env.NTFY_TOPIC;
-  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '');
-  const apiKey = process.env.API_KEY ?? '';
-
-  if (!topic || topic === 'xposter-your-secret-topic') {
-    const msg = 'NTFY_TOPIC not configured (still placeholder) — skipping push';
-    logger.warn(msg);
-    return { ok: false, error: msg };
-  }
+  const cfg = getNtfyConfig();
+  if (!cfg) return notConfiguredResult();
 
   const base = getCallbackBase();
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
@@ -56,7 +105,7 @@ export async function sendApprovalNotification(post: Post): Promise<NtfyResult> 
         label: 'Approve',
         url: approveUrl,
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: cfg.apiKey ? { 'X-API-Key': cfg.apiKey } : {},
         clear: true,
       },
       {
@@ -64,66 +113,28 @@ export async function sendApprovalNotification(post: Post): Promise<NtfyResult> 
         label: 'Skip',
         url: skipUrl,
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: cfg.apiKey ? { 'X-API-Key': cfg.apiKey } : {},
         clear: true,
       },
     ]
     : [
-      {
-        action: 'view',
-        label: 'Approve',
-        url: approveUrl,
-        clear: true,
-      },
-      {
-        action: 'view',
-        label: 'Skip',
-        url: skipUrl,
-        clear: true,
-      },
-      {
-        action: 'view',
-        label: 'Open App',
-        url: base,
-      },
+      { action: 'view', label: 'Approve', url: approveUrl, clear: true },
+      { action: 'view', label: 'Skip', url: skipUrl, clear: true },
+      { action: 'view', label: 'Open App', url: base },
     ];
 
-  const payload: Record<string, unknown> = {
-    topic,
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
     title: 'Xposter: Reply Candidate',
     message,
     priority: 4,
     tags: ['speech_balloon', 'white_check_mark'],
     actions,
     click: base,
-  };
-
-  try {
-    const res = await axios.post(server, payload, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 10_000,
-      validateStatus: () => true,
-    });
-
-    if (res.status >= 200 && res.status < 300) {
-      logger.info('ntfy notification sent', { postId: post.id, topic, status: res.status });
-      return { ok: true, status: res.status, topic, callback: base };
-    }
-
-    const errMsg = `ntfy returned HTTP ${res.status}: ${JSON.stringify(res.data)}`;
-    logger.error(errMsg, { postId: post.id, topic });
-    return { ok: false, status: res.status, error: errMsg, topic, callback: base };
-  } catch (err) {
-    const ax = err as AxiosError;
-    const errMsg = `ntfy request failed: ${ax.message}`;
-    logger.error(errMsg, { postId: post.id, topic });
-    return { ok: false, error: errMsg, topic, callback: base };
-  }
+  }, { postId: post.id });
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Reply-posted notification (auto-post flow)
-// ────────────────────────────────────────────────────────────────────────────
+// ── Reply-posted notification (auto-post flow) ───────────────────────────────
 
 /**
  * Sent after we auto-post a reply to X. The notification carries the original
@@ -136,15 +147,8 @@ export async function sendReplyPostedNotification(
   replyTweetId: string | null,
   classification: string | null,
 ): Promise<NtfyResult> {
-  const topic = process.env.NTFY_TOPIC;
-  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '');
-  const apiKey = process.env.API_KEY ?? '';
-
-  if (!topic || topic === 'xposter-your-secret-topic') {
-    const msg = 'NTFY_TOPIC not configured (still placeholder) — skipping push';
-    logger.warn(msg);
-    return { ok: false, error: msg };
-  }
+  const cfg = getNtfyConfig();
+  if (!cfg) return notConfiguredResult();
 
   const base = getCallbackBase();
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
@@ -175,7 +179,7 @@ export async function sendReplyPostedNotification(
       label: '🗑 Delete Reply',
       url: `${base}/api/replies/by-post/${post.id}`,
       method: 'DELETE',
-      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      headers: cfg.apiKey ? { 'X-API-Key': cfg.apiKey } : {},
       clear: true,
     });
   }
@@ -184,86 +188,83 @@ export async function sendReplyPostedNotification(
   }
   actions.push({ action: 'view', label: 'Open dashboard', url: base });
 
-  const payload: Record<string, unknown> = {
-    topic,
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
     title: '✅ Reply Posted',
     message,
     priority: 3,
     tags: ['white_check_mark'],
     actions,
     click: replyAppLink ?? replyLink ?? base,
-  };
-
-  try {
-    const res = await axios.post(server, payload, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 10_000,
-      validateStatus: () => true,
-    });
-
-    if (res.status >= 200 && res.status < 300) {
-      logger.info('Reply-posted notification sent', { postId: post.id, topic, status: res.status });
-      return { ok: true, status: res.status, topic, callback: base };
-    }
-
-    const errMsg = `ntfy returned HTTP ${res.status}: ${JSON.stringify(res.data)}`;
-    logger.error(errMsg, { postId: post.id, topic });
-    return { ok: false, status: res.status, error: errMsg, topic, callback: base };
-  } catch (err) {
-    const ax = err as AxiosError;
-    const errMsg = `ntfy request failed: ${ax.message}`;
-    logger.error(errMsg, { postId: post.id, topic });
-    return { ok: false, error: errMsg, topic, callback: base };
-  }
+  }, { postId: post.id });
 }
+
+// ── Test notification ────────────────────────────────────────────────────────
 
 /** Send a simple test notification — no actions, just verify connectivity. */
 export async function sendTestNotification(): Promise<NtfyResult> {
-  const topic = process.env.NTFY_TOPIC;
-  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '');
-
-  if (!topic || topic === 'xposter-your-secret-topic') {
+  const cfg = getNtfyConfig();
+  if (!cfg) {
     return { ok: false, error: 'NTFY_TOPIC is not set or still has placeholder value' };
   }
 
-  try {
-    const res = await axios.post(
-      server,
-      {
-        topic,
-        title: 'Xposter Test',
-        message: `Test notification at ${new Date().toLocaleTimeString()} — if you see this on your iPhone, ntfy is working correctly.`,
-        priority: 3,
-        tags: ['test_tube'],
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 10_000,
-        validateStatus: () => true,
-      },
-    );
+  const result = await postToNtfy(cfg, {
+    topic: cfg.topic,
+    title: 'Xposter Test',
+    message: `Test notification at ${new Date().toLocaleTimeString()} — if you see this on your iPhone, ntfy is working correctly.`,
+    priority: 3,
+    tags: ['test_tube'],
+  });
 
-    if (res.status >= 200 && res.status < 300) {
-      logger.info('ntfy test notification sent', { topic, status: res.status });
-      return {
-        ok: true,
-        status: res.status,
-        topic,
-        callback: getCallbackBase(),
-        hint: 'If this does not appear on your iPhone, check that the ntfy app is subscribed to exactly this topic and notifications are allowed.',
-      };
-    }
-    return {
-      ok: false,
-      status: res.status,
-      error: `ntfy returned HTTP ${res.status}: ${JSON.stringify(res.data)}`,
-      topic,
-    };
-  } catch (err) {
-    const ax = err as AxiosError;
-    return { ok: false, error: ax.message, topic };
+  if (result.ok) {
+    result.hint = 'If this does not appear on your iPhone, check that the ntfy app is subscribed to exactly this topic and notifications are allowed.';
   }
+  return result;
 }
+
+// ── Follower-back notification ───────────────────────────────────────────────
+
+/** Sends a notification asking the user to approve/skip following a new follower back. */
+export async function sendFollowerNotification(
+  eventId: number,
+  handle: string,
+  account: Account | null,
+): Promise<NtfyResult> {
+  const cfg = getNtfyConfig();
+  if (!cfg) return { ok: false, error: 'NTFY_TOPIC not configured' };
+
+  const base = getCallbackBase();
+  const followUrl = `${base}/api/follow/approve/${eventId}`;
+  const skipUrl = `${base}/api/follow/skip/${eventId}`;
+
+  const cls = account?.classification ?? 'UNKNOWN';
+  const followers = account?.follower_count_seen ?? 0;
+  const isMar = account?.is_marathi_creator ? ' · Marathi creator' : '';
+
+  const bioLine = account?.bio ? `Bio: ${truncate(account.bio, 200)}` : '';
+  const message = [
+    `@${handle} just followed you.`,
+    '',
+    `Class: ${cls}${isMar}`,
+    `Followers: ${followers.toLocaleString()}`,
+    bioLine,
+  ].filter(Boolean).join('\n');
+
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
+    title: 'Xposter: New Follower',
+    message,
+    priority: 3,
+    tags: ['handshake'],
+    actions: [
+      { action: 'view', label: 'Follow back', url: followUrl, clear: true },
+      { action: 'view', label: 'Skip',        url: skipUrl,   clear: true },
+      { action: 'view', label: 'Open profile', url: toXAppProfileUrl(handle) },
+    ],
+  }, { eventId, handle });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + '…';
@@ -291,66 +292,4 @@ export function toXAppStatusUrl(tweetId: string): string {
 
 export function toXAppProfileUrl(handle: string): string {
   return `twitter://user?screen_name=${encodeURIComponent(handle.replace(/^@/, ''))}`;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Follower-back notification
-// ──────────────────────────────────────────────────────────────────────────
-
-/** Sends a notification asking the user to approve/skip following a new follower back. */
-export async function sendFollowerNotification(
-  eventId: number,
-  handle: string,
-  account: Account | null,
-): Promise<NtfyResult> {
-  const topic = process.env.NTFY_TOPIC;
-  const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '');
-
-  if (!topic || topic === 'xposter-your-secret-topic') {
-    return { ok: false, error: 'NTFY_TOPIC not configured' };
-  }
-
-  const base = getCallbackBase();
-  const followUrl = `${base}/api/follow/approve/${eventId}`;
-  const skipUrl = `${base}/api/follow/skip/${eventId}`;
-
-  const cls = account?.classification ?? 'UNKNOWN';
-  const followers = account?.follower_count_seen ?? 0;
-  const isMar = account?.is_marathi_creator ? ' · Marathi creator' : '';
-
-  const bioLine = account?.bio ? `Bio: ${truncate(account.bio, 200)}` : '';
-  const message = [
-    `@${handle} just followed you.`,
-    '',
-    `Class: ${cls}${isMar}`,
-    `Followers: ${followers.toLocaleString()}`,
-    bioLine,
-  ].filter(Boolean).join('\n');
-
-  const payload = {
-    topic,
-    title: 'Xposter: New Follower',
-    message,
-    priority: 3,
-    tags: ['handshake'],
-    actions: [
-      { action: 'view', label: 'Follow back', url: followUrl, clear: true },
-      { action: 'view', label: 'Skip',        url: skipUrl,   clear: true },
-      { action: 'view', label: 'Open profile', url: toXAppProfileUrl(handle) },
-    ],
-  };
-
-  try {
-    const res = await axios.post(server, payload, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 10_000,
-      validateStatus: () => true,
-    });
-    if (res.status >= 200 && res.status < 300) {
-      return { ok: true, status: res.status, topic, callback: base };
-    }
-    return { ok: false, status: res.status, error: `HTTP ${res.status}: ${JSON.stringify(res.data)}`, topic };
-  } catch (err) {
-    return { ok: false, error: (err as AxiosError).message, topic };
-  }
 }

@@ -27,16 +27,20 @@ export function getRepoRoot(): string {
   }
 }
 
+let _remoteUrl: string | null | undefined;
+
 export function getRemoteUrl(): string | null {
+  if (_remoteUrl !== undefined) return _remoteUrl;
   try {
     const out = execFileSync('git', ['remote', 'get-url', 'origin'], {
       cwd: getRepoRoot(),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return out.toString().trim() || null;
+    _remoteUrl = out.toString().trim() || null;
   } catch {
-    return null;
+    _remoteUrl = null;
   }
+  return _remoteUrl;
 }
 
 export interface AgentReadiness {

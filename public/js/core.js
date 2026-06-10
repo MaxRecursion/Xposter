@@ -12,10 +12,12 @@ function toast(msg, type = 'info') {
 }
 
 async function apiFetch(path, opts = {}) {
-  const headers = authHeaders(opts.headers);
+  // Pull headers out of opts so the spread below cannot clobber the merged
+  // auth headers with the caller's raw (auth-less) headers object.
+  const { headers: extraHeaders, ...rest } = opts;
   let res = await fetch(API + path, {
-    headers,
-    ...opts,
+    ...rest,
+    headers: authHeaders(extraHeaders),
   });
 
   if (res.status === 401) {
@@ -24,8 +26,8 @@ async function apiFetch(path, opts = {}) {
     if (key?.trim()) {
       localStorage.setItem(API_KEY_STORAGE, key.trim());
       res = await fetch(API + path, {
-        headers: authHeaders(opts.headers),
-        ...opts,
+        ...rest,
+        headers: authHeaders(extraHeaders),
       });
     }
   }

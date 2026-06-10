@@ -1,6 +1,6 @@
 import { fetchOurFollowerEntries, resolveOwnHandle, type FollowerListEntry } from '../browser/followers.js';
 import {
-  listAccounts, setFollowerState, setFollowingState, upsertPendingFollowBackEvent,
+  listFollowerHandles, setFollowerState, setFollowingState, upsertPendingFollowBackEvent,
 } from '../storage/accounts.js';
 import { logEvent } from '../storage/queries.js';
 import { getBooleanSetting } from '../storage/settings.js';
@@ -84,11 +84,7 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     return { ok: false, reason: 'fetch_failed', message, newFollowers: 0, queued: 0, total: 0, handle: me };
   }
 
-  const knownFollowers = new Set(
-    listAccounts({ limit: 1000 })
-      .filter((a) => a.following_us === 1)
-      .map((a) => a.handle.toLowerCase()),
-  );
+  const knownFollowers = listFollowerHandles();
 
   const newOnes: string[] = [];
   const notFollowedBack: string[] = [];

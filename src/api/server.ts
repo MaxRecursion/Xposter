@@ -128,6 +128,12 @@ export function createServer(): express.Express {
     });
   });
 
+  // Unknown API routes must return JSON 404, not the SPA shell — a silent
+  // HTML 200 here masks broken client calls.
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'not found' });
+  });
+
   // SPA fallback
   app.get('*', (_req, res) => {
     res.sendFile(path.resolve(process.cwd(), 'public', 'index.html'));

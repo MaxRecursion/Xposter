@@ -42,19 +42,10 @@ export async function resolveOwnHandle(): Promise<string | null> {
 }
 
 /**
- * Reads the current authenticated user's follower handles by visiting
- * /<me>/followers.
- *
- * Returns up to `maxFollowers` of the most recent followers (X shows newest first).
- */
-export async function fetchOurFollowers(meHandle: string, maxFollowers = 200): Promise<string[]> {
-  const entries = await fetchOurFollowerEntries(meHandle, maxFollowers);
-  return entries.map((entry) => entry.handle);
-}
-
-/**
  * Reads the current authenticated user's follower rows from the main followers
  * timeline and captures whether the logged-in account already follows each row.
+ *
+ * Returns up to `maxFollowers` of the most recent followers (X shows newest first).
  */
 export async function fetchOurFollowerEntries(
   meHandle: string,
