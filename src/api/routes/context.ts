@@ -118,6 +118,9 @@ contextRouter.post('/test-reply', async (req, res) => {
     final_reply: null,
     posted_tweet_id: null,
     deleted_at: null,
+    posting_attempts: 0,
+    retry_after: null,
+    last_error: null,
     ingested_at: Math.floor(Date.now() / 1000),
     updated_at: Math.floor(Date.now() / 1000),
   };

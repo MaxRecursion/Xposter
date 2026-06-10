@@ -1,14 +1,13 @@
 import { Router, Request, Response } from 'express';
 import {
-  getPost, updatePostStatus, logEvent, getSetting, setSetting, markPostAsPosted,
+  getPost, logEvent, getSetting, setSetting, updatePostStatus,
   getLastPostedUnix, claimPostForPosting,
 } from '../../storage/queries.js';
 import { getIntSetting } from '../../storage/settings.js';
-import { recordInteraction } from '../../storage/interactions.js';
-import { postReply } from '../../browser/posting.js';
 import { logger } from '../../utils/logger.js';
 import { callerLabel, requireActionAuth, requireApiKey } from '../auth.js';
 import { paramString, sendActionResponse } from '../http.js';
+import { publishReply } from '../../pipeline/reply_publisher.js';
 
 export const actionsRouter = Router();
 
@@ -55,20 +54,8 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
   // Respond immediately; post asynchronously
   sendActionResponse(req, res, 202, 'Approved', 'Posting is in progress. You can close this tab.');
 
-  try {
-    const { replyTweetId } = await postReply(post.tweet_url, replyText);
-    markPostAsPosted(post.id, replyTweetId);
-    recordInteraction(post.id, post.author_handle, replyText, {
-      tweetId: replyTweetId ?? undefined,
-      tweetUrl: replyTweetId ? `https://x.com/i/web/status/${replyTweetId}` : post.tweet_url,
-    });
-    logEvent('POSTED', replyText, post.id);
-    logger.info('Reply posted', { postId: post.id, replyTweetId });
-  } catch (err) {
-    updatePostStatus(post.id, 'ERROR');
-    logEvent('POST_ERROR', String(err), post.id);
-    logger.error('Posting failed', { postId: post.id, err });
-  }
+  const outcome = await publishReply(post, replyText, null);
+  logger.info('Approved reply posting finished', { postId: post.id, outcome });
 }
 
 // POST /api/actions/approve/:id

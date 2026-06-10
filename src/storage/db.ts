@@ -359,6 +359,9 @@ function applyMigrations(db: Database.Database): void {
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');
+  addColumnIfMissing(db, 'posts', 'posting_attempts', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'posts', 'retry_after', 'INTEGER');
+  addColumnIfMissing(db, 'posts', 'last_error', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'post_type', "TEXT NOT NULL DEFAULT 'ORIGINAL'");
   // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');

@@ -29,6 +29,9 @@ export interface Post {
   final_reply: string | null;
   posted_tweet_id: string | null;
   deleted_at: number | null;
+  posting_attempts: number;
+  retry_after: number | null;
+  last_error: string | null;
   ingested_at: number;
   updated_at: number;
 }
@@ -200,9 +203,68 @@ export function markReplyDeleted(id: string): void {
 export function markPostAsPosted(id: string, postedTweetId: string | null): void {
   getDb().prepare(`
     UPDATE posts
-    SET status = 'POSTED', posted_tweet_id = ?, updated_at = unixepoch()
+    SET status = 'POSTED', posted_tweet_id = ?, retry_after = NULL,
+        last_error = NULL, updated_at = unixepoch()
     WHERE id = ?
   `).run(postedTweetId, id);
+}
+
+export const MAX_POSTING_ATTEMPTS = 2;
+
+export function incrementPostingAttempt(id: string): number {
+  const db = getDb();
+  db.prepare(`
+    UPDATE posts
+    SET posting_attempts = posting_attempts + 1, updated_at = unixepoch()
+    WHERE id = ?
+  `).run(id);
+  return (db.prepare('SELECT posting_attempts FROM posts WHERE id = ?').get(id) as {
+    posting_attempts: number;
+  } | undefined)?.posting_attempts ?? 0;
+}
+
+export function schedulePostRetry(id: string, error: string): void {
+  getDb().prepare(`
+    UPDATE posts
+    SET status = 'ERROR', retry_after = unixepoch(), last_error = ?, updated_at = unixepoch()
+    WHERE id = ?
+  `).run(error.slice(0, 1000), id);
+}
+
+export function markPostPostingError(id: string, error: string): void {
+  getDb().prepare(`
+    UPDATE posts
+    SET status = 'ERROR', retry_after = NULL, last_error = ?, updated_at = unixepoch()
+    WHERE id = ?
+  `).run(error.slice(0, 1000), id);
+}
+
+export function getPostsDueForRetry(limit = 3): Post[] {
+  return getDb().prepare(`
+    SELECT * FROM posts
+    WHERE status = 'ERROR'
+      AND retry_after IS NOT NULL
+      AND retry_after <= unixepoch()
+      AND posting_attempts < ?
+      AND final_reply IS NOT NULL
+    ORDER BY retry_after, updated_at
+    LIMIT ?
+  `).all(MAX_POSTING_ATTEMPTS, Math.min(Math.max(limit, 1), 10)) as Post[];
+}
+
+/** Atomically claim a retry and count its posting attempt. */
+export function claimPostRetry(id: string): boolean {
+  const result = getDb().prepare(`
+    UPDATE posts
+    SET status = 'POSTING', posting_attempts = posting_attempts + 1,
+        retry_after = NULL, updated_at = unixepoch()
+    WHERE id = ?
+      AND status = 'ERROR'
+      AND retry_after IS NOT NULL
+      AND retry_after <= unixepoch()
+      AND posting_attempts < ?
+  `).run(id, MAX_POSTING_ATTEMPTS);
+  return result.changes > 0;
 }
 
 // ── Activity Log ──────────────────────────────────────────────────────────────

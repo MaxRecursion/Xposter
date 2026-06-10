@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { mediumDelay, longDelay, humanType, delay, randomBetween } from '../utils/delay.js';
 import { extractTweetIdFromUrl } from '../utils/x.js';
 import { findEnabled, findVisible, watchCreateTweetId } from './dom.js';
+import { PostingError } from '../pipeline/errors.js';
 
 export interface PostReplyResult {
   replyTweetId: string | null;
@@ -44,7 +45,7 @@ const SUBMIT_BTN_SELECTORS = [
 export async function postReply(tweetUrl: string, replyText: string): Promise<PostReplyResult> {
   const tweetId = extractTweetIdFromUrl(tweetUrl);
   if (!tweetId) {
-    throw new Error(`Invalid tweet URL: ${tweetUrl}`);
+    throw new PostingError(`Invalid tweet URL: ${tweetUrl}`, 'INVALID_TWEET_URL', false);
   }
 
   const ctx = await getBrowserContext();
@@ -54,18 +55,30 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
 
   try {
     logger.info('Opening tweet for reply', { tweetUrl, tweetId });
-    await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    try {
+      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    } catch (err) {
+      throw new PostingError(`Tweet navigation failed: ${String(err)}`, 'NAVIGATION_FAILED', true);
+    }
     await delay(randomBetween(2500, 4000));
 
     const article = await findVisible(page, TWEET_ARTICLE_SELECTORS, 20_000);
     if (!article) {
-      throw new Error('Tweet article not found - check login/session or tweet availability');
+      const unavailable = await page.getByText(
+        /post is unavailable|tweet is unavailable|doesn.t exist|has been deleted/i,
+      ).first().isVisible().catch(() => false);
+      if (unavailable) {
+        throw new PostingError('Source tweet is unavailable or deleted', 'SOURCE_UNAVAILABLE', false);
+      }
+      throw new PostingError('Tweet article not found after page load', 'TWEET_NOT_LOADED', true);
     }
 
     let composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 2_000);
     if (!composeBox) {
       const replyBtn = await findVisible(page, REPLY_BTN_SELECTORS, 15_000);
-      if (!replyBtn) throw new Error('Reply button not found');
+      if (!replyBtn) {
+        throw new PostingError('Reply button not found', 'REPLY_CONTROL_NOT_FOUND', true);
+      }
 
       await replyBtn.scrollIntoViewIfNeeded();
       await mediumDelay();
@@ -75,7 +88,9 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
       composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 15_000);
     }
 
-    if (!composeBox) throw new Error('Compose box not found after clicking reply');
+    if (!composeBox) {
+      throw new PostingError('Compose box not found after clicking reply', 'COMPOSE_NOT_FOUND', true);
+    }
 
     await composeBox.click();
     await mediumDelay();
@@ -89,7 +104,9 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
 
     // Submit
     const submitBtn = await findEnabled(page, SUBMIT_BTN_SELECTORS, 10_000);
-    if (!submitBtn) throw new Error('Submit button not found');
+    if (!submitBtn) {
+      throw new PostingError('Submit button not found', 'SUBMIT_NOT_FOUND', true);
+    }
 
     await submitBtn.click();
 
@@ -100,7 +117,7 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
       .catch(() => null);
 
     if (errorToast?.toLowerCase().includes('error') || errorToast?.toLowerCase().includes('failed')) {
-      throw new Error(`X returned error toast: ${errorToast}`);
+      throw new PostingError(`X returned error toast: ${errorToast}`, 'X_REJECTED', false);
     }
 
     const capturedReplyTweetId = getCapturedReplyTweetId();

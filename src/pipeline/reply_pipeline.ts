@@ -1,9 +1,8 @@
 import { ingestTimeline } from '../browser/ingestion.js';
-import { postReply } from '../browser/posting.js';
-import { sendApprovalNotification, sendReplyPostedNotification } from '../notifications/ntfy.js';
-import { getPost, logEvent, markPostAsPosted, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
+import { sendApprovalNotification } from '../notifications/ntfy.js';
+import { getPost, logEvent, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
-import { listRecentReplyTexts, recordInteraction } from '../storage/interactions.js';
+import { listRecentReplyTexts } from '../storage/interactions.js';
 import { getBooleanSetting, getFloatSetting, getIntSetting, getListSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
@@ -13,6 +12,8 @@ import { DetectedLanguage, filterPost } from './filter.js';
 import { generateReply } from './generator.js';
 import { rankCandidates, scorePost, ScoredPost } from './scorer.js';
 import { generateDistinct } from './dedup.js';
+import { publishReply } from './reply_publisher.js';
+import { runReplyRetryQueue } from '../scheduler/reply_retry.js';
 
 interface FilteredPost {
   post: Post;
@@ -40,6 +41,11 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
   logEvent('PIPELINE_START');
 
   try {
+    const retries = await runReplyRetryQueue();
+    if (retries.due > 0) {
+      logEvent('POST_RETRY_QUEUE_COMPLETE', `posted=${retries.posted} failed=${retries.failed}`);
+    }
+
     const rawTweets = await ingestTimeline(60);
     logEvent('INGESTION_COMPLETE', `${rawTweets.length} raw tweets`);
 
@@ -234,26 +240,8 @@ async function processCandidate(candidate: ScoredPost, blocklist: string[]): Pro
     updatePostStatus(post.id, 'POSTING');
     logEvent('AUTO_POSTING', `score=${candidate.score}`, post.id);
 
-    const { replyTweetId } = await postReply(post.tweet_url, reply);
-    markPostAsPosted(post.id, replyTweetId);
-    recordInteraction(post.id, post.author_handle, reply, {
-      tweetId: replyTweetId ?? undefined,
-      tweetUrl: replyTweetId ? `https://x.com/i/web/status/${replyTweetId}` : undefined,
-    });
-    logEvent('POSTED', `reply_id=${replyTweetId ?? 'unknown'}`, post.id);
-
-    const notification = await sendReplyPostedNotification(
-      post,
-      reply,
-      replyTweetId,
-      account?.classification ?? null,
-    );
-    if (notification.ok) {
-      logEvent('NOTIFICATION_SENT', `topic=${notification.topic}`, post.id);
-    } else {
-      logEvent('NOTIFICATION_FAILED', notification.error ?? 'unknown error', post.id);
-    }
-    return 'posted';
+    const publishOutcome = await publishReply(post, reply, account?.classification ?? null);
+    return publishOutcome === 'posted' ? 'posted' : 'error';
   } catch (err) {
     if (err instanceof EmptyReplyError) {
       logger.warn('Empty reply from Groq - skipping candidate, waiting for next run', { id: candidate.id });
