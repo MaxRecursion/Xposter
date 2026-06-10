@@ -3,7 +3,7 @@ import { getDb } from './db.js';
 
 export type OriginalPostStatus = 'GENERATING' | 'POSTED' | 'ERROR' | 'SKIPPED';
 
-export type OriginalPostType = 'ORIGINAL' | 'ENGAGEMENT_FARM';
+export type OriginalPostType = 'ORIGINAL' | 'ENGAGEMENT_FARM' | 'QUOTE_TWEET';
 
 export interface OriginalPost {
   id: string;
@@ -18,6 +18,9 @@ export interface OriginalPost {
   thread_parts_json: string | null;
   tweet_ids_json: string | null;
   tweet_urls_json: string | null;
+  quoted_tweet_id: string | null;
+  quoted_tweet_url: string | null;
+  quoted_author_handle: string | null;
   posted_at: number | null;
   created_at: number;
   updated_at: number;
@@ -53,13 +56,19 @@ export function insertOriginalPost(data: {
   postType?: OriginalPostType;
   researchContext?: string;
   threadParts?: string[];
+  quotedTweet?: {
+    id: string;
+    url: string;
+    authorHandle: string;
+  };
 }): OriginalPost {
   const id = crypto.randomUUID();
   getDb().prepare(`
     INSERT INTO original_posts (
-      id, content, language, topic, post_type, research_context, thread_parts_json
+      id, content, language, topic, post_type, research_context, thread_parts_json,
+      quoted_tweet_id, quoted_tweet_url, quoted_author_handle
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.content,
@@ -68,6 +77,9 @@ export function insertOriginalPost(data: {
     data.postType ?? 'ORIGINAL',
     data.researchContext ?? null,
     JSON.stringify(data.threadParts?.length ? data.threadParts : [data.content]),
+    data.quotedTweet?.id ?? null,
+    data.quotedTweet?.url ?? null,
+    data.quotedTweet?.authorHandle ?? null,
   );
   return getOriginalPost(id)!;
 }

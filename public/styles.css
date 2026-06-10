@@ -883,6 +883,7 @@ select.select-input {
 }
 .post-type-badge-original        { background: #3a7bd5; color: #fff; }
 .post-type-badge-engagement-farm { background: #e07b1a; color: #fff; }
+.post-type-badge-quote           { background: #8b5cf6; color: #fff; }
 
 .op-status {
   font-size: 10px;
@@ -924,6 +925,16 @@ select.select-input {
 .post-type-badge-thread {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
+}
+.op-quote-source {
+  color: var(--accent);
+  display: inline-block;
+  font-size: 12px;
+  margin: 0 0 10px;
+  text-decoration: none;
+}
+.op-quote-source:hover {
+  text-decoration: underline;
 }
 .op-footer {
   display: flex;

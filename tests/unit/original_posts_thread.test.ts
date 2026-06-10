@@ -54,4 +54,26 @@ describe('original post thread storage', () => {
     ]);
     expect(stored.tweet_id).toBe('1111111111111111');
   });
+
+  it('stores quote-tweet source metadata', async () => {
+    const storage = await import('../../src/storage/original_posts.js');
+    const post = storage.insertOriginalPost({
+      content: 'The local consequence matters more than the headline.',
+      language: 'english',
+      topic: 'quote:ai+jobs',
+      postType: 'QUOTE_TWEET',
+      quotedTweet: {
+        id: '3333333333333333',
+        url: 'https://x.com/source/status/3333333333333333',
+        authorHandle: 'source',
+      },
+    });
+
+    expect(storage.getOriginalPost(post.id)).toMatchObject({
+      post_type: 'QUOTE_TWEET',
+      quoted_tweet_id: '3333333333333333',
+      quoted_tweet_url: 'https://x.com/source/status/3333333333333333',
+      quoted_author_handle: 'source',
+    });
+  });
 });

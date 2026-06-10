@@ -1,6 +1,7 @@
-import { getRecentPosts } from '../storage/queries.js';
+import { getRecentPosts, type Post } from '../storage/queries.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
+import { detectTopics } from '../context/topics.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
@@ -11,6 +12,7 @@ import { assertEnglishOnly, charLength, cleanModelText } from './text_constraint
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
 const MAX_THREAD_CHARS = MAX_ORIGINAL_CHARS * MAX_THREAD_PARTS;
+const MAX_QUOTE_COMMENTARY_CHARS = 250;
 const MAX_REPAIR_ATTEMPTS = 2;
 
 export type PostLanguage = 'english';
@@ -269,6 +271,56 @@ const ENGAGEMENT_FARM_STRATEGIC_USER = `Write a single short X (Twitter) post th
 
 Reply with ONLY the tweet text, nothing else.`;
 
+const QUOTE_TWEET_SYSTEM = `You are a sharp, opinionated person quote-tweeting a post on X. Add a fresh angle, useful context, or a concise counterpoint. Do not merely agree, summarize, or restate the source. Never attack the author. Write polished English only and return only your commentary.`;
+
+export async function generateQuoteTweetPost(
+  source: Post,
+  options: OriginalGenerationOptions = {},
+): Promise<GeneratedOriginalPost> {
+  const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const client = getGroqClient();
+  const basePrompt = [
+    `Source author: @${source.author_handle}`,
+    `Source engagement: ${source.likes} likes, ${source.replies} replies, ${source.retweets} reposts`,
+    '',
+    'Source post:',
+    source.text,
+    '',
+    `Write quote-tweet commentary under ${MAX_QUOTE_COMMENTARY_CHARS} characters.`,
+    'Do not include the source URL; X will attach the quoted post automatically.',
+  ].join('\n');
+  const userPrompt = appendAvoidancePrompt(basePrompt, options.avoidTexts);
+
+  logPromptToConsole('QUOTE_TWEET', source.tweet_id, QUOTE_TWEET_SYSTEM, userPrompt);
+  const completion = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: QUOTE_TWEET_SYSTEM },
+      { role: 'user', content: userPrompt },
+    ],
+    max_completion_tokens: 1000,
+    temperature: 0.85,
+    top_p: 0.95,
+  } as any);
+
+  const cleaned = cleanModelText((completion.choices[0]?.message?.content ?? '').trim());
+  const chars = charLength(cleaned);
+  if (chars === 0) throw new EmptyReplyError('Quote tweet returned empty reply');
+  if (chars < 15 || chars > MAX_QUOTE_COMMENTARY_CHARS) {
+    throw new Error(`Quote tweet commentary failed length check: ${chars} chars`);
+  }
+  assertEnglishOnly(cleaned, 'Quote tweet');
+
+  return {
+    content: cleaned,
+    parts: [cleaned],
+    language: 'english',
+    topic: `quote:${detectTopicsForQuote(source.text)}`,
+    category: 'observation',
+    researchContext: source.text,
+  };
+}
+
 export async function generateEngagementFarmPost(
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
@@ -419,4 +471,8 @@ function appendAvoidancePrompt(prompt: string, avoidTexts: string[] = []): strin
     'Choose a different angle, opening, and sentence structure. Do not paraphrase these:',
     ...avoidTexts.slice(0, 8).map((text, i) => `${i + 1}. ${text.slice(0, 180)}`),
   ].join('\n');
+}
+
+function detectTopicsForQuote(text: string): string {
+  return detectTopics(text).slice(0, 3).join('+') || 'trending';
 }

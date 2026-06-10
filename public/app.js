@@ -661,6 +661,7 @@ function renderOriginalPost(post) {
     ? `<span class="marathi-badge">मराठी</span>`
     : `<span class="lang-badge-en">EN</span>`;
   const isEF = post.post_type === 'ENGAGEMENT_FARM';
+  const isQuote = post.post_type === 'QUOTE_TWEET';
   let parts = [post.content];
   try {
     const parsed = JSON.parse(post.thread_parts_json || '[]');
@@ -668,7 +669,9 @@ function renderOriginalPost(post) {
   } catch { /* use legacy content */ }
   const typeBadge = isEF
     ? `<span class="post-type-badge post-type-badge-engagement-farm">Engagement Farm</span>`
-    : `<span class="post-type-badge post-type-badge-original">Original</span>`;
+    : isQuote
+      ? `<span class="post-type-badge post-type-badge-quote">Quote Tweet</span>`
+      : `<span class="post-type-badge post-type-badge-original">Original</span>`;
   const threadBadge = parts.length > 1
     ? `<span class="post-type-badge post-type-badge-thread">${parts.length}-post thread</span>`
     : '';
@@ -680,6 +683,9 @@ function renderOriginalPost(post) {
     <span title="Retweets">🔁 ${post.latest_retweets || 0}</span>` : '';
   const viewLink = post.tweet_url
     ? `<a class="btn btn-ghost" href="${escAttr(post.tweet_url)}" target="_blank" rel="noopener">🔗 View</a>`
+    : '';
+  const quoteSource = isQuote && post.quoted_tweet_url
+    ? `<a class="op-quote-source" href="${escAttr(post.quoted_tweet_url)}" target="_blank" rel="noopener">Quoted @${escHtml(post.quoted_author_handle || 'source')}</a>`
     : '';
 
   return `
@@ -698,6 +704,7 @@ function renderOriginalPost(post) {
           <span>${escHtml(part)}</span>
         </div>
       `).join('')}</div>
+      ${quoteSource}
       <div class="op-footer">
         <div class="op-engagement">${engHtml}</div>
         <div class="op-actions">${viewLink}</div>
@@ -877,7 +884,13 @@ function renderAudienceScheduledTimes(pipeline, originals) {
     .map((r) => {
       const d = new Date(r.run_at * 1000);
       const icon = r.kind === 'reply' ? '💬' : '✍️';
-      const label = r.kind === 'reply' ? 'Reply pipeline' : (r.detail === 'ENGAGEMENT_FARM' ? 'Engagement farm' : 'Original post');
+      const label = r.kind === 'reply'
+        ? 'Reply pipeline'
+        : r.detail === 'ENGAGEMENT_FARM'
+          ? 'Engagement farm'
+          : r.detail === 'QUOTE_TWEET'
+            ? 'Quote tweet'
+            : 'Original post';
       return `
         <div class="audience-time-pill audience-time-${r.kind}">
           <span class="audience-time-icon">${icon}</span>

@@ -6,10 +6,12 @@ import {
   insertOriginalPost, markOriginalPostPosted, markOriginalPostError,
   getPostsNeedingImpressionSync, insertImpression, listRecentOriginalPostContents,
 } from '../storage/original_posts.js';
-import { generateOriginalPost, generateEngagementFarmPost } from '../pipeline/original_post_generator.js';
+import {
+  generateEngagementFarmPost, generateOriginalPost, generateQuoteTweetPost,
+} from '../pipeline/original_post_generator.js';
 import { EmptyReplyError } from '../pipeline/errors.js';
 import type { OriginalPostType } from '../storage/original_posts.js';
-import { postTweetThread } from '../browser/compose.js';
+import { postQuoteTweet, postTweetThread } from '../browser/compose.js';
 import { scrapeEngagement } from '../browser/impressions.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
@@ -17,6 +19,7 @@ import { delay, randomBetween } from '../utils/delay.js';
 import { formatLocalTime, generateWeightedSlots, todayDateKey } from './daily_plan.js';
 import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
 import { generateDistinct } from '../pipeline/dedup.js';
+import { selectQuoteTweetCandidate, type QuoteTweetCandidate } from '../context/trends.js';
 
 const KIND = 'ORIGINAL_POST';
 const TICK_INTERVAL_MS = 60_000;
@@ -42,7 +45,7 @@ export function startOriginalPostScheduler(): void {
     _syncHandle = setInterval(() => { void runImpressionSync(); }, IMPRESSION_SYNC_MS);
   }, 10 * 60_000);
 
-  logger.info('Original post scheduler started (7x/day: 5 original + 2 engagement farm, 2h impression sync)');
+  logger.info('Original post scheduler started (originals + engagement farms + quote tweets, 2h impression sync)');
 }
 
 export function stopOriginalPostScheduler(): void {
@@ -135,7 +138,11 @@ async function tick(): Promise<void> {
   if (due.length === 0) return;
 
   const next = due[0];
-  const postType: OriginalPostType = next.detail === 'ENGAGEMENT_FARM' ? 'ENGAGEMENT_FARM' : 'ORIGINAL';
+  const postType: OriginalPostType = next.detail === 'ENGAGEMENT_FARM'
+    ? 'ENGAGEMENT_FARM'
+    : next.detail === 'QUOTE_TWEET'
+      ? 'QUOTE_TWEET'
+      : 'ORIGINAL';
   markRunFired(next.id, 'fired by original post scheduler');
   logEvent('ORIGINAL_RUN_FIRED', `id=${next.id} time=${formatLocalTime(next.run_at)} type=${postType}`);
   logger.info('Firing scheduled original post', { id: next.id, runAt: formatLocalTime(next.run_at), postType });
@@ -150,12 +157,26 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
 
   try {
     // 1. Generate
+    let quoteCandidate: QuoteTweetCandidate | null = null;
+    if (postType === 'QUOTE_TWEET') {
+      quoteCandidate = selectQuoteTweetCandidate();
+      if (!quoteCandidate) {
+        logEvent('QUOTE_TWEET_SKIPPED', 'no eligible recent source tweet');
+        return { ok: false, error: 'no eligible quote-tweet source' };
+      }
+    }
+
     const recentContents = listRecentOriginalPostContents(25);
     const distinct = await generateDistinct({
       existingTexts: recentContents,
-      generate: (attempt) => postType === 'ENGAGEMENT_FARM'
-        ? generateEngagementFarmPost(attempt > 1 ? { avoidTexts: recentContents } : {})
-        : generateOriginalPost(attempt > 1 ? { avoidTexts: recentContents } : {}),
+      generate: (attempt) => {
+        const options = attempt > 1 ? { avoidTexts: recentContents } : {};
+        if (postType === 'ENGAGEMENT_FARM') return generateEngagementFarmPost(options);
+        if (postType === 'QUOTE_TWEET') {
+          return generateQuoteTweetPost(quoteCandidate!.post, options);
+        }
+        return generateOriginalPost(options);
+      },
       getText: (value) => value.content,
       onDuplicate: (_value, attempt) => {
         logEvent('DUPLICATE_ORIGINAL_REJECTED', `type=${postType} attempt=${attempt}`);
@@ -176,6 +197,11 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
       postType,
       researchContext: generated.researchContext,
       threadParts: generated.parts,
+      quotedTweet: quoteCandidate ? {
+        id: quoteCandidate.post.tweet_id,
+        url: quoteCandidate.post.tweet_url,
+        authorHandle: quoteCandidate.post.author_handle,
+      } : undefined,
     });
     draftId = post.id;
 
@@ -186,7 +212,11 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
     );
 
     // 3. Post to X
-    const { tweetIds, tweetUrls } = await postTweetThread(generated.parts);
+    const posted = quoteCandidate
+      ? await postQuoteTweet(generated.content, quoteCandidate.post.tweet_url)
+      : await postTweetThread(generated.parts);
+    const tweetIds = 'tweetIds' in posted ? posted.tweetIds : [posted.tweetId];
+    const tweetUrls = 'tweetUrls' in posted ? posted.tweetUrls : [posted.tweetUrl];
 
     // 4. Mark posted
     markOriginalPostPosted(post.id, tweetIds, tweetUrls);
@@ -217,12 +247,14 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
 
 function generateRandomSlots(dateKey: string): Array<{ ts: number; postType: OriginalPostType }> {
   const n = getIntSetting('original_posts_per_day', 7, 1, 12);
-  const engagementFarmCount = Math.min(2, n);
+  const quoteTweetCount = n >= 3 ? 1 : 0;
+  const engagementFarmCount = Math.min(2, Math.max(0, n - quoteTweetCount - 1));
 
-  // Build shuffled post type array: 2 ENGAGEMENT_FARM, rest ORIGINAL
+  // Default at 7/day: 2 engagement farms, 1 quote tweet, 4 originals.
   const types: OriginalPostType[] = [
     ...Array(engagementFarmCount).fill('ENGAGEMENT_FARM'),
-    ...Array(n - engagementFarmCount).fill('ORIGINAL'),
+    ...Array(quoteTweetCount).fill('QUOTE_TWEET'),
+    ...Array(n - engagementFarmCount - quoteTweetCount).fill('ORIGINAL'),
   ];
   for (let i = types.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));

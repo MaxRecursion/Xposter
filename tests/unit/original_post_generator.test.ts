@@ -103,4 +103,46 @@ describe('generateOriginalPost', () => {
     expect(userMsg).toContain('Pune founders keep recycling the same automation take.');
     expect(result.parts).toEqual([validDraft]);
   });
+
+  it('generates concise quote-tweet commentary from a source post', async () => {
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate.mockResolvedValue({
+      choices: [{ message: { content: 'The real shift is not fewer jobs, but a much higher premium on judgment.' } }],
+    });
+
+    const { generateQuoteTweetPost } = await import('../../src/pipeline/original_post_generator.js');
+    const now = Math.floor(Date.now() / 1000);
+    const result = await generateQuoteTweetPost({
+      id: 'source-post',
+      tweet_id: '1723456789012347001',
+      author_handle: 'source_author',
+      author_name: 'Source Author',
+      text: 'AI automation is changing hiring across Pune startups.',
+      language: 'english',
+      timestamp: now - 300,
+      likes: 50,
+      replies: 8,
+      retweets: 5,
+      tweet_url: 'https://x.com/source_author/status/1723456789012347001',
+      status: 'INGESTED',
+      score: null,
+      score_breakdown: null,
+      generated_reply: null,
+      final_reply: null,
+      posted_tweet_id: null,
+      deleted_at: null,
+      posting_attempts: 0,
+      retry_after: null,
+      last_error: null,
+      ingested_at: now - 300,
+      updated_at: now - 300,
+    });
+
+    expect(result.parts).toEqual([result.content]);
+    expect(result.content.length).toBeLessThanOrEqual(250);
+    expect(result.topic).toContain('quote:');
+    const prompt = __mockCreate.mock.calls[0][0].messages.find((m: any) => m.role === 'user').content;
+    expect(prompt).toContain('AI automation is changing hiring across Pune startups.');
+    expect(prompt).toContain('Do not include the source URL');
+  });
 });

@@ -124,3 +124,14 @@ export async function postTweetThread(parts: string[]): Promise<ThreadComposeRes
 
   return { tweetIds, tweetUrls };
 }
+
+/**
+ * X turns a trailing status URL into a native quote card. Keep commentary
+ * separate in storage, but submit both together through the normal composer.
+ */
+export async function postQuoteTweet(
+  commentary: string,
+  quotedTweetUrl: string,
+): Promise<ComposeResult> {
+  return postOriginalTweet(`${commentary.trim()}\n${quotedTweetUrl.trim()}`);
+}
