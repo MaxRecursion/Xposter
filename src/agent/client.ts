@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
 import { getSetting } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import type { AgentRunMode } from './types.js';
@@ -17,6 +19,7 @@ import type { AgentRunMode } from './types.js';
 
 let _claudeChecked = false;
 let _claudeFound = false;
+let _claudePath: string | null = null;
 let _ghChecked = false;
 let _ghFound = false;
 
@@ -74,17 +77,48 @@ export function getDisallowedPaths(): string[] {
   return [...new Set([...DEFAULT_DISALLOWED_PATHS, ...extra])];
 }
 
+/** Ordered list of absolute paths to check when `which claude` fails (e.g. nohup PATH). */
+const CLAUDE_FALLBACK_PATHS = [
+  '/usr/local/bin/claude',
+  '/opt/homebrew/bin/claude',
+  `${os.homedir()}/.local/bin/claude`,
+  '/Users/akshaykulkarni/.local/bin/claude',
+  '/Users/akshaykulkarni/.npm-global/bin/claude',
+];
+
+function resolveClaude(): string | null {
+  // 1. Explicit env override
+  if (process.env.CLAUDE_CLI_PATH) return process.env.CLAUDE_CLI_PATH;
+  // 2. which (works when PATH is full, e.g. interactive shell)
+  try {
+    const p = execFileSync('which', ['claude'], { stdio: 'pipe' }).toString().trim();
+    if (p) return p;
+  } catch { /* fall through */ }
+  // 3. Known absolute paths
+  for (const p of CLAUDE_FALLBACK_PATHS) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 export function isClaudeCliFound(): boolean {
   if (!_claudeChecked) {
     _claudeChecked = true;
-    try {
-      execFileSync('which', ['claude'], { stdio: 'pipe' });
-      _claudeFound = true;
-    } catch {
-      _claudeFound = false;
+    _claudePath = resolveClaude();
+    _claudeFound = _claudePath !== null;
+    if (_claudeFound) {
+      logger.info('Claude CLI found', { path: _claudePath });
+    } else {
+      logger.warn('Claude CLI not found on PATH or common install locations');
     }
   }
   return _claudeFound;
+}
+
+/** Returns the resolved absolute path to the claude binary, or null if not found. */
+export function getClaudePath(): string | null {
+  if (!_claudeChecked) isClaudeCliFound();
+  return _claudePath;
 }
 
 export function isGhCliFound(): boolean {
@@ -103,6 +137,7 @@ export function isGhCliFound(): boolean {
 /** Reset the cached CLI lookups — used by tests / a re-check endpoint. */
 export function resetCliCache(): void {
   _claudeChecked = false;
+  _claudePath = null;
   _ghChecked = false;
 }
 
