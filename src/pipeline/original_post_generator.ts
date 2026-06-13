@@ -1,4 +1,4 @@
-import { getRecentPosts, type Post } from '../storage/queries.js';
+import { getRecentPosts, type Post, logEvent } from '../storage/queries.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { getGroqClient } from './groq_client.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
+import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
@@ -277,7 +278,7 @@ export async function generateQuoteTweetPost(
   source: Post,
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
-  const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
   const client = getGroqClient();
   const basePrompt = [
     `Source author: @${source.author_handle}`,
@@ -292,18 +293,56 @@ export async function generateQuoteTweetPost(
   const userPrompt = appendAvoidancePrompt(basePrompt, options.avoidTexts);
 
   logPromptToConsole('QUOTE_TWEET', source.tweet_id, QUOTE_TWEET_SYSTEM, userPrompt);
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: QUOTE_TWEET_SYSTEM },
-      { role: 'user', content: userPrompt },
-    ],
-    max_completion_tokens: 1000,
-    temperature: 0.85,
-    top_p: 0.95,
-  } as any);
 
-  const cleaned = cleanModelText((completion.choices[0]?.message?.content ?? '').trim());
+  let raw = '';
+
+  // ── Claude (primary) ─────────────────────────────────────────────────────────
+  if (isClaudeAvailable()) {
+    const claudeModel = claudeGeneratorModel();
+    logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateQuoteTweetPost tweetId=${source.tweet_id}`);
+    logger.info('Trying Claude for quote tweet generation', { model: claudeModel, tweetId: source.tweet_id });
+    try {
+      const result = await generateWithClaude(QUOTE_TWEET_SYSTEM, userPrompt);
+      const text = result.text.trim();
+      if (text.length >= 10) {
+        logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`);
+        logger.info('Claude quote tweet generated', { inputTokens: result.inputTokens, outputTokens: result.outputTokens });
+        raw = text;
+      } else {
+        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback fn=generateQuoteTweetPost`);
+        logger.warn('Claude returned short/empty for quote tweet, falling back to Groq', { textLen: text.length });
+      }
+    } catch (err) {
+      logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=generateQuoteTweetPost`);
+      logger.warn('Claude threw for quote tweet, falling back to Groq', { err: String(err) });
+    }
+  }
+
+  // ── Groq (fallback) ──────────────────────────────────────────────────────────
+  if (!raw) {
+    logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=generateQuoteTweetPost tweetId=${source.tweet_id}`);
+    logger.info('Calling Groq for quote tweet generation', { model: groqModel, tweetId: source.tweet_id });
+    try {
+      const completion = await client.chat.completions.create({
+        model: groqModel,
+        messages: [
+          { role: 'system', content: QUOTE_TWEET_SYSTEM },
+          { role: 'user', content: userPrompt },
+        ],
+        max_completion_tokens: 1000,
+        temperature: 0.85,
+        top_p: 0.95,
+      } as any);
+      raw = (completion.choices[0]?.message?.content ?? '').trim();
+      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${raw.length}`);
+      logger.info('Groq quote tweet generated', { chars: raw.length });
+    } catch (err) {
+      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)} fn=generateQuoteTweetPost`);
+      throw err;
+    }
+  }
+
+  const cleaned = cleanModelText(raw);
   const chars = charLength(cleaned);
   if (chars === 0) throw new EmptyReplyError('Quote tweet returned empty reply');
   if (chars < 15 || chars > MAX_QUOTE_COMMENTARY_CHARS) {
@@ -324,27 +363,63 @@ export async function generateQuoteTweetPost(
 export async function generateEngagementFarmPost(
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
-  const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
   const client = getGroqClient();
   const strategic = Math.random() < 0.40;
   const baseUserPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
   const userPrompt = appendAvoidancePrompt(baseUserPrompt, options.avoidTexts);
 
-  logger.info('Generating engagement farm post', { model, strategic });
-
+  logger.info('Generating engagement farm post', { strategic });
   logPromptToConsole('ENGAGEMENT_FARM', strategic ? 'strategic-hot-take' : 'hot-take', ENGAGEMENT_FARM_SYSTEM, userPrompt);
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
-      { role: 'user', content: userPrompt },
-    ],
-    max_completion_tokens: 6000,
-    temperature: 0.95,
-    top_p: 0.95,
-  } as any);
 
-  const raw = (completion.choices[0]?.message?.content ?? '').trim();
+  let raw = '';
+
+  // ── Claude (primary) ─────────────────────────────────────────────────────────
+  if (isClaudeAvailable()) {
+    const claudeModel = claudeGeneratorModel();
+    logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateEngagementFarmPost strategic=${strategic}`);
+    logger.info('Trying Claude for engagement farm post', { model: claudeModel, strategic });
+    try {
+      const result = await generateWithClaude(ENGAGEMENT_FARM_SYSTEM, userPrompt);
+      const text = result.text.trim();
+      if (text.length >= 10) {
+        logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`);
+        logger.info('Claude engagement farm post generated', { inputTokens: result.inputTokens, outputTokens: result.outputTokens, strategic });
+        raw = text;
+      } else {
+        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback fn=generateEngagementFarmPost`);
+        logger.warn('Claude returned short/empty for engagement farm, falling back to Groq', { textLen: text.length });
+      }
+    } catch (err) {
+      logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=generateEngagementFarmPost`);
+      logger.warn('Claude threw for engagement farm, falling back to Groq', { err: String(err) });
+    }
+  }
+
+  // ── Groq (fallback) ──────────────────────────────────────────────────────────
+  if (!raw) {
+    logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=generateEngagementFarmPost strategic=${strategic}`);
+    logger.info('Calling Groq for engagement farm post', { model: groqModel, strategic });
+    try {
+      const completion = await client.chat.completions.create({
+        model: groqModel,
+        messages: [
+          { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
+          { role: 'user', content: userPrompt },
+        ],
+        max_completion_tokens: 6000,
+        temperature: 0.95,
+        top_p: 0.95,
+      } as any);
+      raw = (completion.choices[0]?.message?.content ?? '').trim();
+      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${raw.length}`);
+      logger.info('Groq engagement farm post generated', { chars: raw.length });
+    } catch (err) {
+      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)} fn=generateEngagementFarmPost`);
+      throw err;
+    }
+  }
+
   const cleaned = cleanModelText(raw);
   const chars = charLength(cleaned);
 
@@ -358,9 +433,7 @@ export async function generateEngagementFarmPost(
     throw new Error(`Engagement farm post failed length check: ${chars} chars`);
   }
 
-  logger.info('Engagement farm post generated', {
-    chars, preview: cleaned.slice(0, 60),
-  });
+  logger.info('Engagement farm post generated', { chars, preview: cleaned.slice(0, 60) });
 
   return {
     content: cleaned,
@@ -396,10 +469,55 @@ export async function generateOriginalPost(
     'Write the tweet now:',
   ].filter((l) => l !== undefined).join('\n'), options.avoidTexts);
 
-  const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
   const client = getGroqClient();
 
-  logger.info('Generating original post', { topic, category, model });
+  logger.info('Generating original post', { topic, category });
+
+  // ── Model call helper: Claude first, Groq fallback ────────────────────────
+  const callModel = async (sysPr: string, userPr: string): Promise<string> => {
+    if (isClaudeAvailable()) {
+      const claudeModel = claudeGeneratorModel();
+      logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateOriginalPost topic=${topic}`);
+      logger.info('Trying Claude for original post generation', { model: claudeModel, topic, category });
+      try {
+        const result = await generateWithClaude(sysPr, userPr);
+        const text = result.text.trim();
+        if (text.length >= 10) {
+          logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} topic=${topic}`);
+          logger.info('Claude original post generated', { inputTokens: result.inputTokens, outputTokens: result.outputTokens, topic });
+          return text;
+        }
+        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback fn=generateOriginalPost`);
+        logger.warn('Claude returned short/empty for original post, falling back to Groq', { topic, textLen: text.length });
+      } catch (err) {
+        logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=generateOriginalPost`);
+        logger.warn('Claude threw for original post, falling back to Groq', { topic, err: String(err) });
+      }
+    }
+
+    logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=generateOriginalPost topic=${topic}`);
+    logger.info('Calling Groq for original post generation', { model: groqModel, topic, category });
+    try {
+      const completion = await client.chat.completions.create({
+        model: groqModel,
+        messages: [
+          { role: 'system', content: sysPr },
+          { role: 'user', content: userPr },
+        ],
+        max_completion_tokens: 6000,
+        temperature: 0.85,
+        top_p: 0.95,
+      } as any);
+      const raw = (completion.choices[0]?.message?.content ?? '').trim();
+      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${raw.length} topic=${topic}`);
+      logger.info('Groq original post generated', { chars: raw.length, topic });
+      return raw;
+    } catch (err) {
+      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)} fn=generateOriginalPost topic=${topic}`);
+      throw err;
+    }
+  };
 
   let cleaned = '';
   let lastQualityError: string | null = null;
@@ -415,18 +533,7 @@ export async function generateOriginalPost(
       ].join('\n');
 
     logPromptToConsole('ORIGINAL', `topic=${topic} cat=${category} attempt=${attempt}`, systemPrompt, attemptPrompt);
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: attemptPrompt },
-      ],
-      max_completion_tokens: 6000,
-      temperature: 0.85,
-      top_p: 0.95,
-    } as any);
-
-    const raw = (completion.choices[0]?.message?.content ?? '').trim();
+    const raw = await callModel(systemPrompt, attemptPrompt);
     cleaned = cleanModelText(raw);
 
     if (cleaned.length === 0) {

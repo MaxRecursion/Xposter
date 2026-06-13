@@ -1,4 +1,4 @@
-import { Post, getSetting } from '../storage/queries.js';
+import { Post, getSetting, logEvent } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { getGroqClient } from './groq_client.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
+import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 
 const MAX_REPLY_CHARS = 280;
 
@@ -242,9 +243,6 @@ export async function generateReply(
   authorAccount: Account | null = null,
   options: { avoidTexts?: string[] } = {},
 ): Promise<string> {
-  const client = getGroqClient();
-  const model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
-
   const { level, tier } = readWitLevel();
   const classification = (authorAccount?.classification as Classification | null) ?? null;
   const flavor = pickFlavor(post.text);
@@ -260,39 +258,76 @@ export async function generateReply(
     options.avoidTexts,
   );
 
-  logger.info('Calling Groq for reply generation', {
-    postId: post.id,
-    model,
-    witLevel: level,
-    witTier: tier,
-    flavor,
-    classification: classification ?? 'unknown',
-    contextChars: contextBlock.length,
-    memoryChars: memoryBlock.length,
-  });
-
   // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
   const temp = tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
 
   const sysPrompt = systemPrompt(tier, classification, flavor);
   logPromptToConsole('REPLY', `${post.id} flavor=${flavor}`, sysPrompt, userPrompt);
 
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: sysPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    max_tokens: 400,
-    temperature: temp,
-    top_p: 0.95,
-  });
+  let rawReply = '';
 
-  const reply = completion.choices[0]?.message?.content?.trim() ?? '';
-  if (!reply) throw new EmptyReplyError();
+  // ── Claude (primary) ─────────────────────────────────────────────────────────
+  if (isClaudeAvailable()) {
+    const claudeModel = claudeGeneratorModel();
+    logger.info('Trying Claude for reply generation', {
+      postId: post.id, model: claudeModel, witLevel: level, witTier: tier, flavor,
+      classification: classification ?? 'unknown',
+      contextChars: contextBlock.length, memoryChars: memoryBlock.length,
+    });
+    logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} witTier=${tier} flavor=${flavor} postId=${post.id}`, post.id);
+    try {
+      const result = await generateWithClaude(sysPrompt, userPrompt);
+      const text = result.text.trim();
+      if (text.length >= 10) {
+        logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`, post.id);
+        logger.info('Claude reply generation succeeded', {
+          postId: post.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, chars: text.length,
+        });
+        rawReply = text;
+      } else {
+        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback`, post.id);
+        logger.warn('Claude returned short/empty reply, falling back to Groq', { postId: post.id, textLen: text.length });
+      }
+    } catch (err) {
+      logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback`, post.id);
+      logger.warn('Claude threw error for reply generation, falling back to Groq', { postId: post.id, err: String(err) });
+    }
+  }
+
+  // ── Groq (fallback) ──────────────────────────────────────────────────────────
+  if (!rawReply) {
+    const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+    const client = getGroqClient();
+    logger.info('Calling Groq for reply generation', {
+      postId: post.id, model: groqModel, witLevel: level, witTier: tier, flavor,
+      classification: classification ?? 'unknown',
+      contextChars: contextBlock.length, memoryChars: memoryBlock.length,
+    });
+    logEvent('GROQ_FALLBACK_START', `model=${groqModel} witTier=${tier} flavor=${flavor}`, post.id);
+    try {
+      const completion = await client.chat.completions.create({
+        model: groqModel,
+        messages: [
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 400,
+        temperature: temp,
+        top_p: 0.95,
+      });
+      rawReply = completion.choices[0]?.message?.content?.trim() ?? '';
+      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${rawReply.length}`, post.id);
+      logger.info('Groq reply generation succeeded', { postId: post.id, chars: rawReply.length });
+    } catch (err) {
+      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)}`, post.id);
+      throw err;
+    }
+  }
+
+  if (!rawReply) throw new EmptyReplyError();
 
   // Sanitize: strip any surrounding quotes the model might add
-  let cleaned = cleanModelText(reply);
+  let cleaned = cleanModelText(rawReply);
   cleaned = enforceCharacterLimit(cleaned, MAX_REPLY_CHARS);
   assertEnglishOnly(cleaned, 'Reply generation');
 
