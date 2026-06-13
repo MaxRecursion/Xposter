@@ -3,7 +3,7 @@ import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { mediumDelay, longDelay, humanType, delay, randomBetween } from '../utils/delay.js';
 import { extractTweetIdFromUrl } from '../utils/x.js';
-import { findEnabled, findVisible, watchCreateTweetId } from './dom.js';
+import { findEnabled, findVisible, watchCreateTweetId, dismissPromotePopup, clickWithPopupRetry } from './dom.js';
 import { PostingError } from '../pipeline/errors.js';
 
 export interface PostReplyResult {
@@ -92,7 +92,8 @@ export async function postReply(tweetUrl: string, replyText: string): Promise<Po
       throw new PostingError('Compose box not found after clicking reply', 'COMPOSE_NOT_FOUND', true);
     }
 
-    await composeBox.click();
+    await dismissPromotePopup(page);
+    await clickWithPopupRetry(page, composeBox);
     await mediumDelay();
 
     // Type reply with human-like character delays

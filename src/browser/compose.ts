@@ -1,7 +1,7 @@
 import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween, mediumDelay, longDelay, humanType } from '../utils/delay.js';
-import { findEnabled, findVisible, watchCreateTweetId } from './dom.js';
+import { findEnabled, findVisible, watchCreateTweetId, dismissPromotePopup, clickWithPopupRetry } from './dom.js';
 import { postReply } from './posting.js';
 
 // Compose textarea inside the modal (appears after navigating to /compose/post)
@@ -56,7 +56,8 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
     const composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 15_000);
     if (!composeBox) throw new Error('Compose textarea not found inside compose modal');
 
-    await composeBox.click();
+    await dismissPromotePopup(page);
+    await clickWithPopupRetry(page, composeBox);
     await mediumDelay();
 
     // 3. Type content character-by-character (human-like)
