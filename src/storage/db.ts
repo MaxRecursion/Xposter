@@ -90,7 +90,7 @@ function applyMigrations(db: Database.Database): void {
 
     INSERT OR IGNORE INTO settings(key, value) VALUES
       ('system_running',          'true'),
-      ('topic_keywords',          'pune,rain,traffic,flooding,waterlogging,pothole,event'),
+      ('topic_keywords',          'Pune,AI,Technology,Consumer Electronics,Rage bait,Geopolitics,Monsoon,Rain,Open source,AI assisted coding,Grok,SpaceX,Elon Musk,Electric Vehicles'),
       ('min_score',               '40'),
       ('max_candidates_per_run',  '3'),
       ('require_approval',        'false'),
