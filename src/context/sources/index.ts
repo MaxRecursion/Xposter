@@ -60,6 +60,31 @@ const SOURCES: SourceDef[] = [
   { kind: 'rss',     name: 'rss:inc42-ai-shift',       envVar: 'CONTEXT_RSS_INC42_AI_SHIFT', defaultUrl: 'https://inc42.com/tag/the-ai-shift/feed/', language: 'english', credibility: 0.80, intervalMinutes: 120 },
   { kind: 'rss',     name: 'rss:inc42-startups',       envVar: 'CONTEXT_RSS_INC42_STARTUPS', defaultUrl: 'https://inc42.com/startups/feed/', language: 'english', credibility: 0.78, intervalMinutes: 120 },
   { kind: 'rss',     name: 'rss:yourstory',            envVar: 'CONTEXT_RSS_YOURSTORY',    defaultUrl: 'https://yourstory.com/feed', language: 'english', credibility: 0.74, intervalMinutes: 120 },
+  // ── Global AI / Tech ────────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:techcrunch',           envVar: 'CONTEXT_RSS_TECHCRUNCH',     defaultUrl: 'https://techcrunch.com/feed/',                          language: 'english', credibility: 0.82, intervalMinutes: 30 },
+  { kind: 'rss',     name: 'rss:techcrunch-ai',        envVar: 'CONTEXT_RSS_TECHCRUNCH_AI',  defaultUrl: 'https://techcrunch.com/category/artificial-intelligence/feed/', language: 'english', credibility: 0.82, intervalMinutes: 30 },
+  { kind: 'rss',     name: 'rss:venturebeat-ai',       envVar: 'CONTEXT_RSS_VENTUREBEAT_AI', defaultUrl: 'https://venturebeat.com/category/ai/feed/',              language: 'english', credibility: 0.80, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:wired',                envVar: 'CONTEXT_RSS_WIRED',          defaultUrl: 'https://www.wired.com/feed/rss',                        language: 'english', credibility: 0.82, intervalMinutes: 60 },
+  { kind: 'rss',     name: 'rss:arstechnica',          envVar: 'CONTEXT_RSS_ARSTECHNICA',    defaultUrl: 'https://feeds.arstechnica.com/arstechnica/index',       language: 'english', credibility: 0.83, intervalMinutes: 60 },
+  { kind: 'rss',     name: 'rss:theverge',             envVar: 'CONTEXT_RSS_THEVERGE',       defaultUrl: 'https://www.theverge.com/rss/index.xml',               language: 'english', credibility: 0.80, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:hackernews',           envVar: 'CONTEXT_RSS_HACKERNEWS',     defaultUrl: 'https://hnrss.org/frontpage',                          language: 'english', credibility: 0.78, intervalMinutes: 30 },
+  // ── Open-source / AI Coding ─────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:github-blog',          envVar: 'CONTEXT_RSS_GITHUB_BLOG',    defaultUrl: 'https://github.blog/feed/',                            language: 'english', credibility: 0.85, intervalMinutes: 120 },
+  // ── SpaceX / EV / Elon Musk ─────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:electrek',             envVar: 'CONTEXT_RSS_ELECTREK',       defaultUrl: 'https://electrek.co/feed/',                            language: 'english', credibility: 0.80, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:teslarati',            envVar: 'CONTEXT_RSS_TESLARATI',      defaultUrl: 'https://www.teslarati.com/feed/',                      language: 'english', credibility: 0.75, intervalMinutes: 60 },
+  { kind: 'rss',     name: 'rss:spacenews',            envVar: 'CONTEXT_RSS_SPACENEWS',      defaultUrl: 'https://spacenews.com/feed/',                          language: 'english', credibility: 0.85, intervalMinutes: 60 },
+  // ── Consumer Electronics ─────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:gsmarena',             envVar: 'CONTEXT_RSS_GSMARENA',       defaultUrl: 'https://www.gsmarena.com/rss-news-reviews.php3',        language: 'english', credibility: 0.78, intervalMinutes: 60 },
+  { kind: 'rss',     name: 'rss:9to5mac',              envVar: 'CONTEXT_RSS_9TO5MAC',        defaultUrl: 'https://9to5mac.com/feed/',                            language: 'english', credibility: 0.78, intervalMinutes: 60 },
+  // ── Geopolitics ─────────────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:bbc-world',            envVar: 'CONTEXT_RSS_BBC_WORLD',      defaultUrl: 'https://feeds.bbci.co.uk/news/world/rss.xml',          language: 'english', credibility: 0.90, intervalMinutes: 30 },
+  { kind: 'rss',     name: 'rss:nyt-world',            envVar: 'CONTEXT_RSS_NYT_WORLD',      defaultUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml', language: 'english', credibility: 0.92, intervalMinutes: 30 },
+  { kind: 'rss',     name: 'rss:reuters-world',        envVar: 'CONTEXT_RSS_REUTERS_WORLD',  defaultUrl: 'https://feeds.reuters.com/reuters/worldNews',          language: 'english', credibility: 0.92, intervalMinutes: 30 },
+  // ── Pune / India ─────────────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:toi-pune',             envVar: 'CONTEXT_RSS_TOI_PUNE',       defaultUrl: 'https://www.timesofindia.com/rssfeeds/-2128936835.cms', language: 'english', credibility: 0.82, intervalMinutes: 30 },
+  // ── Monsoon / India news ─────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:ndtv-india',           envVar: 'CONTEXT_RSS_NDTV_INDIA',     defaultUrl: 'https://feeds.feedburner.com/ndtv/India',             language: 'english', credibility: 0.80, intervalMinutes: 45 },
   { kind: 'reddit',  name: 'reddit:pune',             envVar: 'CONTEXT_REDDIT_PUNE',       defaultSubreddit: 'pune',                                          credibility: 0.65, intervalMinutes: 45 },
   { kind: 'reddit',  name: 'reddit:india',            envVar: 'CONTEXT_REDDIT_INDIA',      defaultSubreddit: 'india',                                         credibility: 0.55, intervalMinutes: 60 },
   { kind: 'weather', name: 'weather:pune',            envVar: 'CONTEXT_WEATHER_PUNE',      defaultLocation: 'Pune',                                           credibility: 0.95, intervalMinutes: 90 },
