@@ -1994,6 +1994,9 @@ async function activateMemoryQuery(query) {
     const grid = document.getElementById('rag-source-grid');
     if (!grid) return;
 
+    const loadingEl = grid.querySelector('.rag-source-loading');
+    if (loadingEl) loadingEl.remove();
+
     const sorted = [...sources].sort((a, b) => {
       const sa = statusClass(a), sb = statusClass(b);
       const order = { fail:0, warn:1, ok:2, idle:3 };
@@ -2086,10 +2089,11 @@ async function activateMemoryQuery(query) {
     const el = document.getElementById('rag-topics');
     if (!el || !trends) return;
     if (!trends.length) { el.innerHTML = '<span style="color:var(--text2);font-size:13px">No topics yet</span>'; return; }
-    const maxScore = trends[0]?.score || 1;
+    const maxVelocity = trends[0]?.velocity ?? trends[0]?.score ?? 1;
     el.innerHTML = trends.slice(0, 18).map(t => {
-      const pct = Math.round((t.score / maxScore) * 100);
-      return `<div class="rag-topic-pill" title="velocity ${t.score.toFixed(1)}">
+      const vel = t.velocity ?? t.score ?? 0;
+      const pct = Math.round((vel / maxVelocity) * 100);
+      return `<div class="rag-topic-pill" title="velocity ${vel.toFixed(1)}">
         ${t.topic}
         <div class="rag-topic-heat-bar" style="width:${pct}%"></div>
       </div>`;
