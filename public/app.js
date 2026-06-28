@@ -1926,3 +1926,259 @@ async function activateMemoryQuery(query) {
     console.error('Memory query failed', e);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RAG Pulse Tab
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  let ragInitialized = false;
+  let ragRefreshTimer = null;
+  let prevSourceTimestamps = {};
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  function sourceType(name) {
+    if (name.startsWith('rss:'))     return 'rss';
+    if (name.startsWith('twitter:')) return 'twitter';
+    if (name.startsWith('reddit:'))  return 'reddit';
+    if (name.startsWith('weather:')) return 'weather';
+    if (name.startsWith('jina:'))    return 'jina';
+    return 'other';
+  }
+
+  function sourceLabel(name) {
+    const parts = name.split(':');
+    return parts.slice(1).join(':') || name;
+  }
+
+  function typeIcon(t) {
+    return { rss:'📡', twitter:'🐦', reddit:'👽', weather:'🌤️', jina:'🔗', other:'⚙️' }[t] || '⚙️';
+  }
+
+  function statusClass(s) {
+    if (!s.lastRunAt) return 'idle';
+    if (s.consecutiveFailures === 0) return 'ok';
+    if (s.consecutiveFailures <= 2)  return 'warn';
+    return 'fail';
+  }
+
+  function relTime(ts) {
+    if (!ts) return 'never';
+    const ago = Math.floor(Date.now() / 1000) - ts;
+    if (ago < 60)    return `${ago}s ago`;
+    if (ago < 3600)  return `${Math.floor(ago/60)}m ago`;
+    if (ago < 86400) return `${Math.floor(ago/3600)}h ago`;
+    return `${Math.floor(ago/86400)}d ago`;
+  }
+
+  function animateCounter(el, target) {
+    if (!el) return;
+    const current = parseInt(el.textContent.replace(/[^0-9]/g, '')) || 0;
+    if (current === target) return;
+    const diff = target - current;
+    const steps = 20;
+    const stepVal = diff / steps;
+    let i = 0;
+    const tick = () => {
+      i++;
+      const v = Math.round(current + stepVal * Math.min(i, steps));
+      el.textContent = v.toLocaleString();
+      if (i < steps) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // ── Source grid ──────────────────────────────────────────────────────────
+
+  function renderSourceGrid(sources) {
+    const grid = document.getElementById('rag-source-grid');
+    if (!grid) return;
+
+    const sorted = [...sources].sort((a, b) => {
+      const sa = statusClass(a), sb = statusClass(b);
+      const order = { fail:0, warn:1, ok:2, idle:3 };
+      return (order[sa]??4) - (order[sb]??4) || a.source.localeCompare(b.source);
+    });
+
+    sorted.forEach(s => {
+      const st   = statusClass(s);
+      const type = sourceType(s.source);
+      const id   = 'rag-src-' + s.source.replace(/[^a-z0-9]/gi, '-');
+      let card = document.getElementById(id);
+
+      const prevTs = prevSourceTimestamps[s.source];
+      const justUpdated = prevTs !== undefined && s.lastRunAt && s.lastRunAt !== prevTs;
+      prevSourceTimestamps[s.source] = s.lastRunAt;
+
+      if (!card) {
+        card = document.createElement('div');
+        card.id = id;
+        card.className = `rag-source-card status-${st}`;
+        grid.appendChild(card);
+      } else {
+        card.className = `rag-source-card status-${st}`;
+        if (justUpdated) {
+          card.classList.add('just-updated');
+          setTimeout(() => card.classList.remove('just-updated'), 1600);
+        }
+      }
+
+      const errHtml = s.lastError
+        ? `<div class="rag-source-error" title="${s.lastError}">${s.lastError.slice(0,60)}</div>` : '';
+      const failBadge = s.consecutiveFailures > 0
+        ? ` · <span style="color:var(--red)">${s.consecutiveFailures}✗</span>` : '';
+
+      card.innerHTML = `
+        <div class="rag-source-top">
+          <span class="rag-source-dot ${st}"></span>
+          <span class="rag-source-type-badge type-${type}">${typeIcon(type)} ${type}</span>
+        </div>
+        <div class="rag-source-name" title="${s.source}">${sourceLabel(s.source)}</div>
+        <div class="rag-source-meta">
+          ${s.lastOkAt ? `✓ ${relTime(s.lastOkAt)}` : 'never ok'}${failBadge}
+        </div>
+        ${errHtml}
+      `;
+    });
+
+    const ids = new Set(sorted.map(s => 'rag-src-' + s.source.replace(/[^a-z0-9]/gi, '-')));
+    grid.querySelectorAll('.rag-source-card').forEach(el => {
+      if (!ids.has(el.id)) el.remove();
+    });
+  }
+
+  // ── Bar chart ─────────────────────────────────────────────────────────────
+
+  function renderBarChart(bySrc) {
+    const svg = document.getElementById('rag-bar-chart');
+    if (!svg || !bySrc || !bySrc.length) return;
+    const W = svg.getBoundingClientRect().width || 400;
+    const rowH = 24, padTop = 10, padLeft = 110, padRight = 50, padBottom = 10;
+    const top20 = [...bySrc].sort((a,b)=>b.count-a.count).slice(0,20);
+    const H = padTop + top20.length * rowH + padBottom;
+    const maxCount = top20[0]?.count || 1;
+    const barW = W - padLeft - padRight;
+    svg.setAttribute('height', H);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    const colors = { rss:'#4f6ef7', twitter:'#1da1f2', reddit:'#ff6314', weather:'#34c759', jina:'#fbbf24', other:'#8b90a7' };
+
+    let html = '';
+    top20.forEach((row, i) => {
+      const y = padTop + i * rowH;
+      const fill = colors[sourceType(row.source)] || colors.other;
+      const w = Math.max(2, (row.count / maxCount) * barW);
+      const label = sourceLabel(row.source);
+      html += `
+        <g class="rag-bar-group">
+          <text x="${padLeft - 6}" y="${y + rowH*0.65}" text-anchor="end" class="rag-bar-label" fill="var(--text2)" font-size="11">${label}</text>
+          <rect x="${padLeft}" y="${y+3}" height="${rowH-6}" width="${w}" rx="3" fill="${fill}" opacity="0.85" class="rag-bar-rect"/>
+          <text x="${padLeft + w + 5}" y="${y + rowH*0.65}" class="rag-bar-val" fill="var(--text2)" font-size="10">${row.count.toLocaleString()}</text>
+        </g>
+      `;
+    });
+    svg.innerHTML = html;
+  }
+
+  // ── Topic pills ──────────────────────────────────────────────────────────
+
+  function renderTopics(trends) {
+    const el = document.getElementById('rag-topics');
+    if (!el || !trends) return;
+    if (!trends.length) { el.innerHTML = '<span style="color:var(--text2);font-size:13px">No topics yet</span>'; return; }
+    const maxScore = trends[0]?.score || 1;
+    el.innerHTML = trends.slice(0, 18).map(t => {
+      const pct = Math.round((t.score / maxScore) * 100);
+      return `<div class="rag-topic-pill" title="velocity ${t.score.toFixed(1)}">
+        ${t.topic}
+        <div class="rag-topic-heat-bar" style="width:${pct}%"></div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Feed ─────────────────────────────────────────────────────────────────
+
+  const SOURCE_COLORS = { rss:'#4f6ef7', twitter:'#1da1f2', reddit:'#ff6314', weather:'#34c759', jina:'#fbbf24' };
+
+  function renderFeed(items) {
+    const feed = document.getElementById('rag-feed');
+    const countEl = document.getElementById('rag-feed-count');
+    if (!feed) return;
+    if (countEl) countEl.textContent = `${items.length} items`;
+    if (!items.length) { feed.innerHTML = '<div class="rag-feed-empty">No recent items</div>'; return; }
+
+    feed.innerHTML = items.map((item, i) => {
+      const type = sourceType(item.source);
+      const color = SOURCE_COLORS[type] || '#8b90a7';
+      const label = sourceLabel(item.source);
+      const ts = item.published_at || item.fetched_at;
+      const topics = (() => { try { return JSON.parse(item.topics || '[]'); } catch (e) { return []; } })();
+      const topicHtml = topics.slice(0,3).map(t => `<span class="rag-feed-topic-tag">${t}</span>`).join('');
+      const titleLink = item.source_url
+        ? `<a href="${item.source_url}" target="_blank" rel="noopener">${(item.title||'Untitled').slice(0,80)}</a>`
+        : (item.title||'Untitled').slice(0,80);
+      return `<div class="rag-feed-item" style="animation-delay:${i*0.025}s">
+        <div class="rag-feed-badge" style="background:${color}22;color:${color}">${typeIcon(type)} ${label.slice(0,12)}</div>
+        <div class="rag-feed-body">
+          <div class="rag-feed-title">${titleLink}</div>
+          <div class="rag-feed-meta">${relTime(ts)} · ${(item.body_len||0).toLocaleString()} chars</div>
+          ${topicHtml ? `<div class="rag-feed-topics">${topicHtml}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Main refresh ──────────────────────────────────────────────────────────
+
+  async function ragRefresh() {
+    try {
+      const [health, recent] = await Promise.all([
+        fetch('/api/context/health').then(r => r.json()),
+        fetch('/api/context/recent?limit=40').then(r => r.json()),
+      ]);
+
+      const sources = health.sources || [];
+      const stats   = health.stats   || {};
+      const trends  = health.trends  || [];
+      const bySrc   = stats.by_source || [];
+
+      animateCounter(document.getElementById('rag-total-items'),    stats.total_items   || 0);
+      animateCounter(document.getElementById('rag-vectors'),         stats.total_vectors || 0);
+
+      const activeSrcs  = sources.filter(s => s.consecutiveFailures === 0 && s.lastOkAt).length;
+      const failingSrcs = sources.filter(s => s.consecutiveFailures >= 3).length;
+      animateCounter(document.getElementById('rag-active-sources'),  activeSrcs);
+      animateCounter(document.getElementById('rag-failing-sources'), failingSrcs);
+      animateCounter(document.getElementById('rag-24h-items'),       Array.isArray(recent) ? recent.length : 0);
+
+      if (sources.length) renderSourceGrid(sources);
+      if (bySrc.length)   renderBarChart(bySrc);
+      renderTopics(trends);
+      if (Array.isArray(recent)) renderFeed(recent);
+
+    } catch (e) {
+      console.error('RAG refresh error', e);
+    }
+  }
+
+  // ── Tab init ──────────────────────────────────────────────────────────────
+
+  function initRagTab() {
+    if (ragInitialized) return;
+    ragInitialized = true;
+    ragRefresh();
+    ragRefreshTimer = setInterval(ragRefresh, 30_000);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const ragBtn = document.querySelector('[data-tab="rag"]');
+    if (ragBtn) ragBtn.addEventListener('click', () => setTimeout(initRagTab, 50));
+
+    const btnRefresh = document.getElementById('btn-rag-refresh');
+    if (btnRefresh) btnRefresh.addEventListener('click', ragRefresh);
+  });
+
+  document.addEventListener('tab:change', e => {
+    if (e?.detail?.tab === 'rag') setTimeout(initRagTab, 50);
+  });
+})();

@@ -66,6 +66,7 @@
         <button class="tab-btn" data-tab="history">History</button>
         <button class="tab-btn" data-tab="console">⏵ Console</button>
         <button class="tab-btn" data-tab="memory">🧠 Mind</button>
+        <button class="tab-btn" data-tab="rag">📡 RAG</button>
         <button class="tab-btn" data-tab="settings">Settings</button>
       </div>
 
@@ -348,6 +349,88 @@
             <div class="mem-card" id="mem-detail-card" style="display:none">
               <div class="mem-card-title" id="mem-detail-title">Selected Concept</div>
               <div id="mem-detail-body"></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- RAG Pulse Tab -->
+      <div class="tab-content" id="tab-rag">
+
+        <!-- Header stats bar -->
+        <div class="rag-stats-bar">
+          <div class="rag-stat-card">
+            <div class="rag-stat-icon">🗄️</div>
+            <div class="rag-stat-val" id="rag-total-items">–</div>
+            <div class="rag-stat-label">Total Items</div>
+          </div>
+          <div class="rag-stat-card">
+            <div class="rag-stat-icon">📡</div>
+            <div class="rag-stat-val" id="rag-active-sources">–</div>
+            <div class="rag-stat-label">Active Sources</div>
+          </div>
+          <div class="rag-stat-card">
+            <div class="rag-stat-icon">⚡</div>
+            <div class="rag-stat-val" id="rag-24h-items">–</div>
+            <div class="rag-stat-label">Added (24h)</div>
+          </div>
+          <div class="rag-stat-card">
+            <div class="rag-stat-icon">🔴</div>
+            <div class="rag-stat-val" id="rag-failing-sources">–</div>
+            <div class="rag-stat-label">Failing</div>
+          </div>
+          <div class="rag-stat-card">
+            <div class="rag-stat-icon">🔢</div>
+            <div class="rag-stat-val" id="rag-vectors">–</div>
+            <div class="rag-stat-label">Vectors</div>
+          </div>
+          <button class="btn btn-ghost" id="btn-rag-refresh" style="margin-left:auto;align-self:center;">↻ Refresh</button>
+        </div>
+
+        <!-- Main two-column layout -->
+        <div class="rag-layout">
+
+          <!-- Left column: source grid + chart -->
+          <div class="rag-left">
+
+            <!-- Source health grid -->
+            <div class="rag-card">
+              <div class="rag-card-title">
+                <span>Source Health</span>
+                <span class="rag-live-badge">● LIVE</span>
+              </div>
+              <div class="rag-source-grid" id="rag-source-grid">
+                <div class="rag-source-loading">Loading sources…</div>
+              </div>
+            </div>
+
+            <!-- Items per source bar chart -->
+            <div class="rag-card">
+              <div class="rag-card-title">Items per Source</div>
+              <svg id="rag-bar-chart" class="rag-chart"></svg>
+            </div>
+
+          </div>
+
+          <!-- Right column: live feed + topics -->
+          <div class="rag-right">
+
+            <!-- Topic velocity -->
+            <div class="rag-card">
+              <div class="rag-card-title">Topic Velocity</div>
+              <div class="rag-topics" id="rag-topics"></div>
+            </div>
+
+            <!-- Live item feed -->
+            <div class="rag-card rag-card-feed">
+              <div class="rag-card-title">
+                <span>Recent Ingestion</span>
+                <span class="rag-item-count" id="rag-feed-count"></span>
+              </div>
+              <div class="rag-feed" id="rag-feed">
+                <div class="rag-feed-empty">No recent items</div>
+              </div>
             </div>
 
           </div>
