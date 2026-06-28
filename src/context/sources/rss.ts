@@ -16,7 +16,7 @@ export interface RssSourceConfig {
 const DEFAULT_TTL = 7 * 24 * 3600;
 
 const parser = new Parser({
-  timeout: 15_000,
+  timeout: 30_000,
   headers: {
     'User-Agent': 'Xposter-context/1.0 (+local; not for redistribution)',
     Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9',
@@ -24,7 +24,7 @@ const parser = new Parser({
 });
 
 const tolerantParser = new Parser({
-  timeout: 15_000,
+  timeout: 30_000,
   customFields: {},
 });
 
@@ -79,7 +79,7 @@ async function parseWithFallback(url: string, sourceName: string): Promise<Parse
     logger.debug('RSS strict parse failed; trying tolerant fallback', { source: sourceName, err: String(firstErr) });
 
     const resp = await axios.get<string>(url, {
-      timeout: 15_000,
+      timeout: 30_000,
       responseType: 'text',
       headers: {
         'User-Agent': 'Xposter-context/1.0 (+local; not for redistribution)',

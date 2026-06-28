@@ -45,7 +45,7 @@ export function redditSource(cfg: RedditSourceConfig): ContextSource {
       const resp = await axios.get<{ data: { children: RedditChild[] } }>(
         ENDPOINT(cfg.subreddit, listing, limit),
         {
-          timeout: 15_000,
+          timeout: 30_000,
           headers: {
             'User-Agent': 'Xposter-context/1.0 (single-user, non-commercial)',
             Accept: 'application/json',
