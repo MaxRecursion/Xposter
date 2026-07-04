@@ -157,6 +157,9 @@ HARD LIMITS:
 - No emojis unless the original tweet uses them — and even then, sparingly.
 - No promotional language, no sales pitch, no link-dropping.
 
+USING CONTEXT DATA:
+If you are given a [CURRENT CONTEXT] block in the user message, it contains recent news and reporting relevant to the tweet. Use specific facts, numbers, or events from it to make your reply more grounded and timely — the kind of detail that makes a reply look like it came from someone actually paying attention. Do NOT name the publication, do NOT paste URLs, do NOT attribute quotes. Weave the facts in naturally.
+
 LANGUAGE: Reply in sharp, polished English only. Do NOT reply in Marathi, Hindi, or any other language. Do NOT use Devanagari script or Roman-script Marathi — even if the original tweet is in another language, your reply is English.
 
 OUTPUT: Return ONLY the reply text. No quotes around it, no "Here's a reply:", no explanation, no "Mode A" / "Mode B" label. Just the reply, exactly as it would appear on X.`;
@@ -203,6 +206,9 @@ HARD LIMITS:
 - No emojis unless the original tweet uses them — and even then, sparingly.
 - No promotional language, no sales pitch, no link-dropping.
 
+USING CONTEXT DATA:
+If you are given a [CURRENT CONTEXT] block in the user message, it contains recent news and reporting relevant to the tweet. Use specific facts, numbers, or events from it to make your reply more grounded and timely — the kind of detail that makes a reply look like it came from someone actually paying attention. Do NOT name the publication, do NOT paste URLs, do NOT attribute quotes. Weave the facts in naturally.
+
 LANGUAGE: Reply in sharp, polished English only. Do NOT reply in Marathi, Hindi, or any other language. Do NOT use Devanagari script or Roman-script Marathi — even if the original tweet is in another language, your reply is English.
 
 OUTPUT: Return ONLY the reply text. No quotes around it, no "Here's a reply:", no explanation, no "Mode A" / "Mode B" label. Just the reply, exactly as it would appear on X.`;
@@ -248,7 +254,7 @@ export async function generateReply(
   const flavor = pickFlavor(post.text);
 
   const contextBlock = isContextEnabled()
-    ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 4, maxTokens: 500 })
+    ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 6, maxTokens: 800 })
     : '';
   const memoryBlock = recallNeuralMemory(post.text, { maxItems: 3, maxChars: 900 });
   const userPrompt = buildUserPrompt(

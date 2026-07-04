@@ -65,7 +65,7 @@ export async function enrichPrompt(input: EnrichInput): Promise<string> {
 
     const maxChars = (input.maxTokens ?? 500) * 4;
     const header =
-      '[CURRENT CONTEXT — recent local reporting; treat as background only. Do not quote URLs, do not attribute names, do not invent details that are not in the source text.]';
+      '[CURRENT CONTEXT — recent news and reporting on this topic. Use relevant facts, data, or events from these items to make your reply more informed and grounded. Do NOT quote URLs, do NOT attribute by publication name, do NOT invent details absent from the source text.]';
     const lines: string[] = [header];
     let used = header.length;
 
