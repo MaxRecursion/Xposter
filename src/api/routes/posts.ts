@@ -110,6 +110,7 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   original_post_marathi_ratio: intSetting(40, 0, 100),
   agent_enabled:               boolSetting,
   agent_error_threshold:       intSetting(3, 1, 50),
+  agentic_generation:          boolSetting,
   auto_follow_back_enabled:    boolSetting,
   auto_follow_back_classifications: textSetting(200),
   auto_follow_back_min_confidence:  intSetting(60, 0, 100),

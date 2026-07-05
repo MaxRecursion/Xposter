@@ -210,6 +210,7 @@ async function loadSettings() {
     if ($('s-orig-marathi-ratio'))  $('s-orig-marathi-ratio').value  = s.original_post_marathi_ratio ?? '40';
     if ($('s-agent-enabled'))       $('s-agent-enabled').checked     = s.agent_enabled === 'true';
     if ($('s-agent-threshold'))     $('s-agent-threshold').value     = s.agent_error_threshold ?? '3';
+    if ($('s-agentic-generation'))  $('s-agentic-generation').checked = s.agentic_generation === 'true';
     if ($('s-weekly-digest'))       $('s-weekly-digest').checked     = s.weekly_digest_enabled !== 'false';
     if ($('s-weekly-digest-hour'))  $('s-weekly-digest-hour').value  = s.weekly_digest_hour ?? '9';
   } catch { /* ignore */ }
@@ -1381,6 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
           original_post_marathi_ratio:  $('s-orig-marathi-ratio')?.value,
           agent_enabled:                $('s-agent-enabled')?.checked ? 'true' : 'false',
           agent_error_threshold:        $('s-agent-threshold')?.value,
+          agentic_generation:           $('s-agentic-generation')?.checked ? 'true' : 'false',
           weekly_digest_enabled:        $('s-weekly-digest')?.checked ? 'true' : 'false',
           weekly_digest_hour:           $('s-weekly-digest-hour')?.value,
         }),

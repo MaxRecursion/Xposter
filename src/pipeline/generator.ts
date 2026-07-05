@@ -9,6 +9,7 @@ import { getGroqClient } from './groq_client.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
+import { isAgenticGenerationEnabled, generateReplyAgentic } from './agentic_generator.js';
 
 const MAX_REPLY_CHARS = 280;
 
@@ -272,8 +273,22 @@ export async function generateReply(
 
   let rawReply = '';
 
-  // ── Claude (primary) ─────────────────────────────────────────────────────────
-  if (isClaudeAvailable()) {
+  // ── Agentic loop (Claude Agent SDK) — opt-in, research + revise-until-valid ──
+  if (isAgenticGenerationEnabled()) {
+    try {
+      rawReply = await generateReplyAgentic({
+        postId: post.id,
+        systemPrompt: sysPrompt,
+        userPrompt,
+        avoidTexts: options.avoidTexts ?? [],
+      });
+    } catch (err) {
+      logger.warn('Agentic reply generation failed; falling back to single-shot', { postId: post.id, err: String(err) });
+    }
+  }
+
+  // ── Claude (primary single-shot) ─────────────────────────────────────────────
+  if (!rawReply && isClaudeAvailable()) {
     const claudeModel = claudeGeneratorModel();
     logger.info('Trying Claude for reply generation', {
       postId: post.id, model: claudeModel, witLevel: level, witTier: tier, flavor,

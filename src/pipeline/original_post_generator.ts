@@ -9,6 +9,7 @@ import { getGroqClient } from './groq_client.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
+import { isAgenticGenerationEnabled, runGenerationAgent, type ValidationResult } from './agentic_generator.js';
 
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
@@ -474,8 +475,26 @@ export async function generateOriginalPost(
 
   logger.info('Generating original post', { topic, category });
 
-  // ── Model call helper: Claude first, Groq fallback ────────────────────────
+  // ── Model call helper: agentic loop first (opt-in), then Claude, then Groq ─
   const callModel = async (sysPr: string, userPr: string): Promise<string> => {
+    if (isAgenticGenerationEnabled()) {
+      try {
+        return await runGenerationAgent({
+          kind: 'post',
+          systemPrompt: sysPr,
+          userPrompt: userPr,
+          validate: (raw: string): ValidationResult => {
+            const text = cleanModelText(raw);
+            if (charLength(text) === 0) return { ok: false, reason: 'empty text' };
+            const qError = qualityCheck(text);
+            return qError ? { ok: false, reason: qError } : { ok: true, text };
+          },
+        });
+      } catch (err) {
+        logger.warn('Agentic original post generation failed; falling back to single-shot', { topic, err: String(err) });
+      }
+    }
+
     if (isClaudeAvailable()) {
       const claudeModel = claudeGeneratorModel();
       logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateOriginalPost topic=${topic}`);

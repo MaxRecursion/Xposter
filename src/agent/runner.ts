@@ -90,7 +90,7 @@ export async function runAgent(opts: {
         allowedTools,
         disallowedTools,
         canUseTool,
-        customSystemPrompt: systemPrompt,
+        systemPrompt,
         // Avoid emitting partial-message deltas (we don't render them);
         // keeps SDK output volume sane.
         includePartialMessages: false,

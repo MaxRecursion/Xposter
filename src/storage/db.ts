@@ -363,6 +363,12 @@ function applyMigrations(db: Database.Database): void {
       ('auto_follow_back_min_confidence',  '60')
   `).run();
 
+  // Agentic content generation (Claude Agent SDK loop) — off by default
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('agentic_generation', 'false')
+  `).run();
+
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');

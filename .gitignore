@@ -25,3 +25,4 @@ coverage/
 *.log
 *.tmp
 browser-profile*
+restart_and_run.sh

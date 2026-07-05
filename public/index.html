@@ -561,6 +561,16 @@
             <label>Error threshold (occurrences before investigating)</label>
             <input type="number" id="s-agent-threshold" min="1" max="50" />
           </div>
+          <div class="settings-field settings-field-toggle">
+            <label for="s-agentic-generation">
+              <span>Agentic post/reply generation</span>
+              <span class="settings-field-help">Off by default. Generates replies and posts with a Claude Agent SDK loop that can research (news index, live X search, page reads) and self-checks against the rules before submitting. Falls back to single-shot Claude/Groq. Needs the same auth as the Claude Agent.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-agentic-generation" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
         </div>
         <div id="agent-settings-note" class="audience-sub" style="margin-top:6px;"></div>
 

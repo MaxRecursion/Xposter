@@ -15,6 +15,9 @@ vi.mock('groq-sdk', () => {
 vi.mock('../../src/storage/queries.js', () => ({
   getRecentPosts: () => [],
   logEvent: vi.fn(),
+  // agentic_generator (imported by the generator) reads the agentic_generation
+  // setting; returning the fallback keeps the agentic path disabled in tests.
+  getSetting: (_key: string, fallback: string) => fallback,
 }));
 
 vi.mock('../../src/context/enrich.js', () => ({
