@@ -267,6 +267,63 @@ export function claimPostRetry(id: string): boolean {
   return result.changes > 0;
 }
 
+/**
+ * Returns the set of author_handles that have already had a reply POSTED today
+ * (midnight-to-now in local Unix time). Used to enforce the one-reply-per-account
+ * per-day rule regardless of which post triggered the reply.
+ */
+export function getHandlesRepliedToToday(): Set<string> {
+  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const rows = getDb()
+    .prepare(`
+      SELECT DISTINCT author_handle
+      FROM posts
+      WHERE status = 'POSTED'
+        AND updated_at >= ?
+    `)
+    .all(startOfDay) as Array<{ author_handle: string }>;
+  return new Set(rows.map((r) => r.author_handle));
+}
+
+/**
+ * Returns a map of topic → count of how many times that topic has been
+ * replied-to or posted-about today (midnight-to-now). Used to enforce the
+ * per-topic daily cap so the bot doesn't fixate on one subject.
+ *
+ * Topics are detected from posted reply texts + original post topic strings.
+ */
+export function getTopicCountsToday(): Map<string, number> {
+  const { detectTopics } = require('../context/topics.js') as typeof import('../context/topics.js');
+  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const db = getDb();
+  const counts = new Map<string, number>();
+
+  const inc = (key: string) => counts.set(key, (counts.get(key) ?? 0) + 1);
+
+  // Replies posted today
+  const replies = db.prepare(
+    `SELECT text FROM posts WHERE status = 'POSTED' AND updated_at >= ?`,
+  ).all(startOfDay) as Array<{ text: string }>;
+  for (const { text } of replies) {
+    for (const t of detectTopics(text)) inc(t);
+  }
+
+  // Original posts created today (use topic phrase + its detected tags)
+  try {
+    const originals = db.prepare(
+      `SELECT topic FROM original_posts WHERE status = 'POSTED' AND created_at >= ?`,
+    ).all(startOfDay) as Array<{ topic: string }>;
+    for (const { topic } of originals) {
+      inc(topic.toLowerCase());
+      for (const t of detectTopics(topic)) inc(t);
+    }
+  } catch {
+    // original_posts table may not exist on very old DBs
+  }
+
+  return counts;
+}
+
 // ── Activity Log ──────────────────────────────────────────────────────────────
 
 export function logEvent(

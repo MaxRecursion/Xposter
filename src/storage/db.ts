@@ -92,17 +92,24 @@ function applyMigrations(db: Database.Database): void {
       ('system_running',          'true'),
       ('topic_keywords',          'Pune,AI,Technology,Consumer Electronics,Rage bait,Geopolitics,Monsoon,Rain,Open source,AI assisted coding,Grok,SpaceX,Elon Musk,Electric Vehicles'),
       ('min_score',               '40'),
-      ('max_candidates_per_run',  '3'),
+      ('max_candidates_per_run',  '5'),
       ('require_approval',        'false'),
       ('approval_timeout_min',    '30'),
       ('wit_level',               '55'),
-      ('random_runs_per_day',     '5'),
+      ('random_runs_per_day',     '20'),
       ('active_window_start_hour','9'),
       ('active_window_end_hour',  '22'),
       ('max_follow_backs_per_day','15'),
       ('classification_ttl_days', '7'),
       ('marathi_priority_boost',  '15'),
-      ('blocklist_classifications','BOT,SPAM,BRAND_PROMO');
+      ('blocklist_classifications','BOT,SPAM,BRAND_PROMO'),
+      ('likes_enabled',           'true'),
+      ('likes_per_day',           '100'),
+      ('topic_daily_cap',         '10'),
+      ('image_posts_enabled',     'true'),
+      ('image_posts_per_day',     '1'),
+      ('image_evening_start_hour','18'),
+      ('image_evening_end_hour',  '22');
 
     -- ──────────────────────────────────────────────────────────────────────
     -- accounts: every X account we've encountered + its classification
@@ -348,7 +355,7 @@ function applyMigrations(db: Database.Database): void {
   // Insert default settings for original posts feature
   db.prepare(`
     INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('original_posts_per_day',    '7'),
+      ('original_posts_per_day',    '10'),
       ('original_post_marathi_ratio','40'),
       ('impression_sync_interval_h', '2'),
       ('follow_back_window_hours',   '24'),
@@ -386,6 +393,8 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');
 
   applyContextMigrations(db);
+  applyLikesMigrations(db);
+  applyImagePostsMigrations(db);
 }
 
 function applyContextMigrations(db: Database.Database): void {
@@ -432,6 +441,40 @@ function applyContextMigrations(db: Database.Database): void {
     logger.warn('vec_context virtual table not created — semantic search unavailable', { err: String(err) });
   }
 }
+function applyLikesMigrations(db: Database.Database): void {
+  db.exec(`
+    -- Tracks every tweet we've liked so we never double-like and can count daily totals.
+    CREATE TABLE IF NOT EXISTS liked_tweets (
+      tweet_id  TEXT PRIMARY KEY,
+      liked_at  INTEGER NOT NULL   -- unix seconds
+    );
+    CREATE INDEX IF NOT EXISTS idx_liked_tweets_at ON liked_tweets(liked_at DESC);
+  `);
+}
+
+function applyImagePostsMigrations(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS image_posts (
+      id              TEXT PRIMARY KEY,
+      scene_id        TEXT NOT NULL,
+      prompt          TEXT NOT NULL,
+      revised_prompt  TEXT,
+      caption         TEXT NOT NULL,
+      file_path       TEXT NOT NULL,
+      model           TEXT NOT NULL DEFAULT 'dall-e-3',
+      status          TEXT NOT NULL DEFAULT 'PENDING'
+                      CHECK(status IN ('PENDING','POSTING','POSTED','ERROR')),
+      tweet_id        TEXT,
+      tweet_url       TEXT,
+      last_error      TEXT,
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+      posted_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_image_posts_created ON image_posts(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_image_posts_status  ON image_posts(status);
+  `);
+}
+
 // Note: the DELETED status is allowed on existing DBs via PRAGMA ignore_check_constraints
 // inside markReplyDeleted() in queries.ts (new DBs have it in the CHECK from the start).
 

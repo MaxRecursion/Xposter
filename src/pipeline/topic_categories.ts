@@ -45,7 +45,7 @@ const CATEGORY_TOPICS: Record<TopicCategory, string[]> = {
     'Pune founders building with AI', 'Maharashtra MSMEs adopting AI',
   ],
   'local-pune': [
-    'pune monsoon', 'pune traffic', 'pmc', 'pune metro', 'mumbai-pune expressway',
+    'pune monsoon', 'pune traffic', 'pmc', 'pune metro',
     'fc road', 'kothrud', 'aundh', 'baner', 'hinjewadi commute',
     'pune potholes', 'pune water supply', 'pune housing', 'pune cafe scene',
     'pune street food',
@@ -54,7 +54,8 @@ const CATEGORY_TOPICS: Record<TopicCategory, string[]> = {
     'AI hype cycle', 'large language models', 'india startup ecosystem',
     'tech layoffs', 'open source', 'developer tools', 'apple vs android',
     'crypto skepticism', 'gpu shortage', 'remote work tools',
-    'product launches',
+    'product launches', 'AI regulation', 'AI agents', 'AI in healthcare',
+    'quantum computing', 'cloud cost optimization', 'cybersecurity threats',
   ],
   'politics': [
     'maharashtra politics', 'indian politics', 'union budget',
@@ -81,19 +82,19 @@ const CATEGORY_TOPICS: Record<TopicCategory, string[]> = {
 };
 
 const DEFAULT_CATEGORY_WEIGHTS: Record<TopicCategory, number> = {
-  'pune-tech-economy': 0.40,
-  'local-pune': 0.20,
-  'tech': 0.15,
-  'politics': 0.07,
-  'sports': 0.08,
-  'culture': 0.07,
-  'observation': 0.03,
+  'pune-tech-economy': 0.25,
+  'local-pune': 0.10,
+  'tech': 0.28,
+  'politics': 0.12,
+  'sports': 0.10,
+  'culture': 0.10,
+  'observation': 0.05,
 };
 
-const RECENT_HISTORY_WINDOW = 5;
-const RECENT_PENALTY = 0.30;
-const VELOCITY_FLOOR = 0.6;
-const VELOCITY_CEIL = 2.5;
+const RECENT_HISTORY_WINDOW = 8;
+const RECENT_PENALTY = 0.20;
+const VELOCITY_FLOOR = 0.5;
+const VELOCITY_CEIL = 4.0;
 
 /**
  * Read user-configurable category weights from settings, falling back to
@@ -184,12 +185,13 @@ export function pickTopicAndCategory(): TopicSpec {
   const weighted = topics.map<[string, number]>((t) => {
     const baseline = 1.0;
     const perf = perfMap.get(t) ?? 0;
-    const perfBoost = 1.0 + perf * 0.10;
+    const perfBoost = 1.0 + perf * 0.15;
     const velKey = matchVelocityKey(t, velMap);
     const rawVel = velKey ? velMap.get(velKey) ?? 1.0 : 1.0;
+    // Velocity is the dominant RAG signal — topics trending in news get boosted strongly
     const velocity = Math.min(VELOCITY_CEIL, Math.max(VELOCITY_FLOOR, rawVel));
     const penalty = recent.has(t) ? RECENT_PENALTY : 1.0;
-    return [t, baseline * perfBoost * velocity * penalty];
+    return [t, baseline * perfBoost * velocity * velocity * penalty];
   });
 
   const topic = weightedRandom(weighted);

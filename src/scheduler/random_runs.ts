@@ -78,7 +78,7 @@ export function getNextRuns(limit = 5): ScheduledRun[] {
  * date (local), enforcing a minimum spacing.
  */
 function generateRandomTimes(dateKey: string): number[] {
-  const n = getIntSetting('random_runs_per_day', 5, 1, 12);
+  const n = getIntSetting('random_runs_per_day', 20, 1, 30);
   return generateWeightedSlots(n, dateKey);
 }
 

@@ -95,18 +95,18 @@ const textSetting = (maxLen: number) => (v: unknown) => String(v).slice(0, maxLe
 const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   topic_keywords:              textSetting(500),
   min_score:                   intSetting(40, 0, 100),
-  max_candidates_per_run:      intSetting(3, 1, 10),
+  max_candidates_per_run:      intSetting(5, 1, 20),
   require_approval:            boolSetting,
   approval_timeout_min:        intSetting(30, 5, 1440),
   system_running:              boolSetting,
   wit_level:                   intSetting(55, 0, 100),
-  random_runs_per_day:         intSetting(5, 1, 12),
+  random_runs_per_day:         intSetting(20, 1, 30),
   active_window_start_hour:    intSetting(9, 0, 23),
   active_window_end_hour:      intSetting(22, 1, 24),
   max_follow_backs_per_day:    intSetting(15, 0, 100),
   classification_ttl_days:     intSetting(7, 1, 90),
   blocklist_classifications:   textSetting(200),
-  original_posts_per_day:      intSetting(7, 1, 12),
+  original_posts_per_day:      intSetting(10, 1, 15),
   original_post_marathi_ratio: intSetting(40, 0, 100),
   agent_enabled:               boolSetting,
   agent_error_threshold:       intSetting(3, 1, 50),
@@ -116,6 +116,13 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   auto_follow_back_min_confidence:  intSetting(60, 0, 100),
   weekly_digest_enabled:            boolSetting,
   weekly_digest_hour:               intSetting(9, 0, 23),
+  likes_enabled:                    boolSetting,
+  likes_per_day:                    intSetting(100, 0, 500),
+  topic_daily_cap:                  intSetting(10, 1, 100), // percentage of planned daily volume
+  image_posts_enabled:              boolSetting,
+  image_posts_per_day:              intSetting(1, 0, 3),
+  image_evening_start_hour:         intSetting(18, 0, 23),
+  image_evening_end_hour:           intSetting(22, 1, 24),
 };
 
 postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {

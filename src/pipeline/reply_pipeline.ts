@@ -1,6 +1,7 @@
 import { ingestTimeline } from '../browser/ingestion.js';
 import { sendApprovalNotification } from '../notifications/ntfy.js';
-import { getPost, logEvent, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
+import { getHandlesRepliedToToday, getTopicCountsToday, getPost, logEvent, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
+import { detectTopics } from '../context/topics.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
 import { listRecentReplyTexts } from '../storage/interactions.js';
 import { getBooleanSetting, getFloatSetting, getIntSetting, getListSetting } from '../storage/settings.js';
@@ -133,6 +134,16 @@ async function selectCandidates(
   newPosts: Post[],
 ): Promise<ScoredPost[]> {
   const minScore = getFloatSetting('min_score', 40, 0, 100);
+  // topic_daily_cap is a PERCENTAGE (default 10 = 10%) of planned daily volume
+  const topicCapPct = getIntSetting('topic_daily_cap', 10, 1, 100);
+  const plannedReplies = getIntSetting('random_runs_per_day', 20, 1, 30) * getIntSetting('max_candidates_per_run', 5, 1, 20);
+  const plannedOriginals = getIntSetting('original_posts_per_day', 10, 1, 15);
+  const topicDailyCap = Math.max(3, Math.ceil((plannedReplies + plannedOriginals) * topicCapPct / 100));
+  // One reply per account per day
+  const alreadyRepliedToday = getHandlesRepliedToToday();
+  // Topic diversity cap — load once per run
+  const topicCountsToday = getTopicCountsToday();
+
   const supportedLangs: DetectedLanguage[] = ['english', 'marathi', 'marathi-roman'];
   const scorablePosts = newPosts.flatMap((post) => {
     const lang = filterResults.get(post.id)?.lang ?? (post.language as DetectedLanguage);
@@ -144,18 +155,32 @@ async function selectCandidates(
   const scoredAboveThreshold: ScoredPost[] = [];
 
   for (const { post, lang } of filtered) {
+    // Skip if we already replied to this account today
+    if (alreadyRepliedToday.has(post.author_handle)) {
+      updatePostStatus(post.id, 'SKIPPED');
+      logEvent('SKIPPED_ALREADY_REPLIED_TODAY', `@${post.author_handle} already received a reply today`, post.id);
+      continue;
+    }
+    // Skip if any detected topic for this post has hit the daily cap
+    const postTopics = detectTopics(post.text);
+    const cappedTopic = postTopics.find((t) => (topicCountsToday.get(t) ?? 0) >= topicDailyCap);
+    if (cappedTopic) {
+      updatePostStatus(post.id, 'SKIPPED');
+      logEvent('SKIPPED_TOPIC_CAP', `topic="${cappedTopic}" at ${topicCountsToday.get(cappedTopic)}/${topicDailyCap} today`, post.id);
+      continue;
+    }
     const scored = scoredById.get(post.id);
     if (!scored) continue;
     updatePostScore(post.id, scored.score, scored.breakdown);
     if (scored.score >= minScore) scoredAboveThreshold.push(scored);
   }
 
-  const maxCandidates = getIntSetting('max_candidates_per_run', 3, 1, 10);
+  const maxCandidates = getIntSetting('max_candidates_per_run', 5, 1, 20);
   const ranked = rankCandidates(scoredAboveThreshold);
   const topCandidates = ranked.slice(0, maxCandidates);
   if (topCandidates.length > 0 || newPosts.length === 0) return topCandidates;
 
-  const fallback = selectFallbackCandidate(newPosts, filterResults, scoredById, minScore);
+  const fallback = selectFallbackCandidate(newPosts, filterResults, scoredById, minScore, alreadyRepliedToday, topicCountsToday, topicDailyCap); // cap already computed above
   return fallback ? [fallback] : [];
 }
 
@@ -164,9 +189,16 @@ function selectFallbackCandidate(
   filterResults: Map<string, FilterRecord>,
   scoredById: Map<string, ScoredPost>,
   minScore: number,
+  alreadyRepliedToday: Set<string> = new Set(),
+  topicCountsToday: Map<string, number> = new Map(),
+  topicDailyCap: number = 10,
 ): ScoredPost | null {
   const supportedLangs: DetectedLanguage[] = ['english', 'marathi', 'marathi-roman'];
   const eligible = newPosts.flatMap((post) => {
+    if (alreadyRepliedToday.has(post.author_handle)) return [];
+    const postTopics = detectTopics(post.text);
+    const cappedTopic = postTopics.find((t) => (topicCountsToday.get(t) ?? 0) >= topicDailyCap);
+    if (cappedTopic) return [];
     const lang = filterResults.get(post.id)?.lang ?? (post.language as DetectedLanguage);
     return supportedLangs.includes(lang) ? [{ post, lang }] : [];
   });

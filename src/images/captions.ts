@@ -1,0 +1,59 @@
+/**
+ * Generates short, relatable first-person lifestyle captions for image posts.
+ * Uses the existing Groq integration — same fallback pattern as reply generator.
+ */
+import Groq from 'groq-sdk';
+import { logger } from '../utils/logger.js';
+import type { Scene } from './generator.js';
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+const SYSTEM_PROMPT = `You write captions for lifestyle photos posted on X (Twitter) by a young Indian woman in her 20s living in an urban city (Pune/Mumbai).
+
+Style rules:
+- 1-2 sentences maximum, no more
+- First person, casual and relatable
+- Feels authentic, like a real person's thoughts — not an ad
+- Optionally end with 1 emoji (natural, not forced)
+- ZERO hashtags
+- References the specific scene/vibe naturally
+- Occasionally witty or self-aware, never cringe
+- Do NOT mention "AI" or "generated" or anything meta
+
+Output ONLY the caption text, nothing else.`;
+
+export async function generateCaption(scene: Scene, recentCaptions: string[] = []): Promise<string> {
+  const avoidHint = recentCaptions.length > 0
+    ? `\n\nAvoid these recent captions:\n${recentCaptions.slice(0, 5).map((c) => `- ${c}`).join('\n')}`
+    : '';
+
+  const userPrompt = `Write a caption for a photo of: ${scene.description}.${avoidHint}`;
+
+  try {
+    const resp = await groq.chat.completions.create({
+      model: process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 80,
+      temperature: 0.9,
+    });
+
+    const text = resp.choices[0]?.message?.content?.trim() ?? '';
+    if (!text) throw new Error('Empty caption from Groq');
+    logger.info('Caption generated', { scene: scene.id, caption: text });
+    return text;
+  } catch (err) {
+    logger.warn('Caption generation failed, using fallback', { err: String(err) });
+    return FALLBACK_CAPTIONS[Math.floor(Math.random() * FALLBACK_CAPTIONS.length)];
+  }
+}
+
+const FALLBACK_CAPTIONS = [
+  'some days just hit different ✨',
+  'this is my reset button',
+  'finding my kind of peace in the chaos',
+  'slow morning, fast city',
+  'the city never stops but I needed to',
+];

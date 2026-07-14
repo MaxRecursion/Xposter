@@ -36,11 +36,12 @@ const HELP_REQUEST_PATTERNS = [/\bhelp\b/i, /\bsuggest/i, /\brecommend/i, /\badv
 
 // English topic keyword weights
 const WEIGHTED_KEYWORDS: Array<[string, number]> = [
-  ['pune', 3],
+  ['pune', 1],
   ['rain', 2], ['flood', 2],
   ['traffic', 2],
   ['waterlog', 2], ['pothole', 2], ['pmc', 1],
   ['event', 1], ['local', 1], ['metro', 1],
+  ['ai', 2], ['startup', 2], ['tech', 1],
 ];
 
 export function scorePost(post: Post, signals: ScoringSignals = {}): ScoredPost {

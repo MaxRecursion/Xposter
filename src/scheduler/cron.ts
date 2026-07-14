@@ -11,6 +11,8 @@ import { startReplyMetricsSync, stopReplyMetricsSync } from './reply_metrics_syn
 import { startSessionHealthWatchdog, stopSessionHealthWatchdog } from './session_health.js';
 import { startWeeklyDigestScheduler, stopWeeklyDigestScheduler } from './weekly_digest.js';
 import { startAgentWatcher, stopAgentWatcher } from '../agent/watcher.js';
+import { startLikesScheduler, stopLikesScheduler } from './likes.js';
+import { startImagePostScheduler, stopImagePostScheduler } from './image_posts.js';
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
 import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
@@ -30,6 +32,8 @@ export function startScheduler(): void {
   startSessionHealthWatchdog();
   startWeeklyDigestScheduler();
   startAgentWatcher();
+  startLikesScheduler();
+  startImagePostScheduler();
 
   if (isContextEnabled()) {
     const store = getContextStore();
@@ -65,6 +69,8 @@ export function stopScheduler(): void {
   stopSessionHealthWatchdog();
   stopWeeklyDigestScheduler();
   stopAgentWatcher();
+  stopLikesScheduler();
+  stopImagePostScheduler();
   stopContextIngest();
   if (_expiryHandle) {
     clearInterval(_expiryHandle);

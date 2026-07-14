@@ -136,3 +136,75 @@ export async function postQuoteTweet(
 ): Promise<ComposeResult> {
   return postOriginalTweet(`${commentary.trim()}\n${quotedTweetUrl.trim()}`);
 }
+
+/**
+ * Post a tweet with an attached image.
+ * Opens the compose modal, attaches the image via file input, types the
+ * caption, and submits. Returns the tweet ID and URL.
+ */
+export async function postImageTweet(
+  imagePath: string,
+  caption: string,
+): Promise<ComposeResult> {
+  const ctx = await getBrowserContext();
+  const page = await ctx.newPage();
+  const getCapturedTweetId = watchCreateTweetId(page);
+
+  try {
+    logger.info('Composing image tweet', { imagePath, captionLen: caption.length });
+
+    await page.goto('https://x.com/compose/post', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await delay(randomBetween(2500, 4000));
+
+    // Dismiss any popups first
+    await dismissPromotePopup(page);
+
+    // Attach image via the file input (hidden behind the media button)
+    const fileInput = page.locator('input[type="file"][accept*="image"]').first();
+    await fileInput.setInputFiles(imagePath);
+    logger.info('Image file attached, waiting for upload...');
+
+    // Wait for the image preview thumbnail to appear (upload complete)
+    await page.waitForSelector('[data-testid="attachments"] img, [data-testid="tweetPhoto"] img', {
+      timeout: 30_000,
+    }).catch(() => {
+      logger.warn('Image preview not detected — proceeding anyway');
+    });
+    await delay(randomBetween(1500, 2500));
+
+    // Click the compose box and type the caption
+    const composeBox = await findVisible(page, COMPOSE_BOX_SELECTORS, 15_000);
+    if (!composeBox) throw new Error('Compose textarea not found for image tweet');
+
+    await clickWithPopupRetry(page, composeBox);
+    await mediumDelay();
+    await humanType(async (char) => page.keyboard.type(char), caption);
+    await longDelay();
+
+    // Post
+    const postBtn = await findEnabled(page, POST_BTN_SELECTORS, 12_000);
+    if (!postBtn) throw new Error('Post button not found or disabled after image attach');
+
+    await postBtn.scrollIntoViewIfNeeded();
+    await mediumDelay();
+    await postBtn.click();
+    await delay(randomBetween(4000, 6000));
+
+    const toast = await page.locator('[data-testid="toast"]').first()
+      .textContent({ timeout: 2000 }).catch(() => null);
+    if (toast && /error|fail|limit/i.test(toast)) {
+      throw new Error(`X returned error toast: ${toast.trim()}`);
+    }
+
+    const handle = process.env.X_HANDLE;
+    const capturedTweetId = getCapturedTweetId();
+    const tweetUrl = capturedTweetId && handle
+      ? `https://x.com/${handle}/status/${capturedTweetId}`
+      : null;
+
+    logger.info('Image tweet posted', { tweetId: capturedTweetId, tweetUrl });
+    return { tweetId: capturedTweetId, tweetUrl };
+  } finally {
+    await page.close();
+  }
+}
