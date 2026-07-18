@@ -2,11 +2,9 @@
  * Generates short, relatable first-person lifestyle captions for image posts.
  * Uses the existing Groq integration — same fallback pattern as reply generator.
  */
-import Groq from 'groq-sdk';
 import { logger } from '../utils/logger.js';
+import { getOptionalGroqClient } from '../pipeline/groq_client.js';
 import type { Scene } from './generator.js';
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_PROMPT = `You write captions for lifestyle photos posted on X (Twitter) by a young Indian woman in her 20s living in an urban city (Pune/Mumbai).
 
@@ -30,6 +28,9 @@ export async function generateCaption(scene: Scene, recentCaptions: string[] = [
   const userPrompt = `Write a caption for a photo of: ${scene.description}.${avoidHint}`;
 
   try {
+    const groq = getOptionalGroqClient();
+    if (!groq) throw new Error('GROQ_API_KEY is not set');
+
     const resp = await groq.chat.completions.create({
       model: process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile',
       messages: [

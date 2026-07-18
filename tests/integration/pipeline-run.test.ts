@@ -146,6 +146,8 @@ describe('runPipeline', () => {
     }));
 
     const { runPipeline } = await import('../../src/scheduler/cron.js');
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('require_approval', 'true');
     const result = await runPipeline();
 
     const { getPostByTweetId } = await import('../../src/storage/queries.js');
@@ -204,6 +206,8 @@ describe('runPipeline', () => {
     const { recordInteraction } = await import('../../src/storage/interactions.js');
     recordInteraction(seedPost!.id, 'seed_user', 'Pune traffic has impeccable timing.');
 
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('require_approval', 'true');
     const { runPipeline } = await import('../../src/scheduler/cron.js');
     await runPipeline();
 

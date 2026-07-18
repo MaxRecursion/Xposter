@@ -18,6 +18,17 @@ vi.mock('../../src/context/neural_memory.js', () => ({
   recallNeuralMemory: () => '',
 }));
 
+vi.mock('../../src/pipeline/agentic_generator.js', () => ({
+  isAgenticGenerationEnabled: () => false,
+  generateReplyAgentic: vi.fn(),
+}));
+
+vi.mock('../../src/pipeline/claude_generator.js', () => ({
+  isClaudeAvailable: () => false,
+  claudeGeneratorModel: () => 'claude-opus-4-8',
+  generateWithClaude: vi.fn(),
+}));
+
 function makePost(overrides: Partial<Post> = {}): Post {
   const now = Math.floor(Date.now() / 1000);
   return {

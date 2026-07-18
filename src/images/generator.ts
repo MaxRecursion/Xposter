@@ -65,12 +65,27 @@ export function pickScene(): Scene {
 
 const DEFAULT_CHARACTER =
   'A young Indian woman in her mid-20s, dark wavy hair, warm brown skin, ' +
-  'expressive eyes, candid lifestyle photography style, natural light, ' +
-  'film grain, urban Pune aesthetic, authentic slice-of-life moment';
+  'candid lifestyle photography style, natural light, film grain, urban Pune aesthetic, ' +
+  'authentic slice-of-life moment';
+
+// Pick a random mystery pose so face is never clearly visible
+const MYSTERY_POSES = [
+  'face turned away looking into the distance',
+  'hair falling across face obscuring features',
+  'wearing a dupatta or scarf partially covering face',
+  'shot from behind, looking over shoulder',
+  'face tilted down, partially hidden by hair',
+  'wearing sunglasses, face partially in shadow',
+  'looking away from camera at something off-frame',
+  'silhouette against bright window, face in shadow',
+  'hair blowing across face in the wind',
+  'face buried in a book or cup, only profile visible',
+];
 
 export function buildPrompt(scene: Scene, characterOverride?: string): string {
   const character = characterOverride ?? process.env.IMAGE_CHARACTER_PROMPT ?? DEFAULT_CHARACTER;
-  return `${character}, ${scene.description}. High quality, photorealistic, no text, no watermark.`;
+  const pose = MYSTERY_POSES[Math.floor(Math.random() * MYSTERY_POSES.length)];
+  return `${character}, ${pose}, ${scene.description}. High quality, photorealistic, no text, no watermark, face not clearly visible, mysterious and atmospheric.`;
 }
 
 // ── Image generation ──────────────────────────────────────────────────────────
@@ -85,8 +100,10 @@ export interface GeneratedImage {
 
 /**
  * Generate an image using the best available provider:
- *   1. Pollinations.ai  — free, no API key, Flux model (default)
- *   2. DALL-E 3         — if OPENAI_API_KEY is set (higher quality, ~$0.04/img)
+ *   1. Pollinations.ai (flux)  — free, no API key (default)
+ *   2. Pollinations.ai (turbo) — free fallback if flux is overloaded
+ *   3. Hugging Face FLUX.1-schnell — free fallback if HF_API_KEY is set
+ *   4. DALL-E 3                — if IMAGE_PROVIDER=openai (higher quality, ~$0.04/img)
  *
  * Set IMAGE_PROVIDER=openai in .env to force DALL-E 3.
  */
@@ -100,30 +117,84 @@ export async function generateImage(sceneOverride?: Scene): Promise<GeneratedIma
   if (provider === 'openai') {
     return generateWithOpenAI(scene, prompt);
   }
-  return generateWithPollinations(scene, prompt);
+
+  try {
+    return await generateWithPollinations(scene, prompt, 'flux');
+  } catch (fluxErr) {
+    logger.warn('Pollinations flux exhausted, falling back to turbo', { scene: scene.id, err: String(fluxErr) });
+    try {
+      return await generateWithPollinations(scene, prompt, 'turbo');
+    } catch (turboErr) {
+      logger.warn('Pollinations turbo exhausted', { scene: scene.id, err: String(turboErr) });
+      if (process.env.HF_API_KEY) {
+        return generateWithHuggingFace(scene, prompt);
+      }
+      throw turboErr;
+    }
+  }
 }
 
-/** Free: Pollinations.ai — no API key required, uses Flux model. */
-async function generateWithPollinations(scene: Scene, prompt: string): Promise<GeneratedImage> {
+/** Free: Pollinations.ai — no API key required. Retries 3x before giving up. */
+async function generateWithPollinations(
+  scene: Scene,
+  prompt: string,
+  model: 'flux' | 'turbo',
+): Promise<GeneratedImage> {
   const seed = Math.floor(Math.random() * 1_000_000);
   const encodedPrompt = encodeURIComponent(prompt);
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&seed=${seed}&nologo=true&enhance=true`;
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=${model}&seed=${seed}&nologo=true&nofeed=true`;
 
-  logger.info('Calling Pollinations.ai', { scene: scene.id, seed });
+  logger.info('Calling Pollinations.ai', { scene: scene.id, seed, model });
 
-  const imgResponse = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 90_000, // Pollinations can be slow on first request
-    headers: { 'User-Agent': 'Xposter/1.0' },
-  });
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const imgResponse = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 90_000,
+        headers: { 'User-Agent': 'Xposter/1.0' },
+      });
+
+      ensureDir();
+      const fileName = `image_${scene.id}_${Date.now()}.jpg`;
+      const filePath = path.join(IMAGES_DIR, fileName);
+      fs.writeFileSync(filePath, imgResponse.data);
+
+      logger.info('Image saved (Pollinations)', { filePath, scene: scene.id, model, attempt });
+      return { filePath, scene, prompt, model: `${model}-pollinations` };
+    } catch (err) {
+      lastErr = err;
+      logger.warn(`Pollinations ${model} attempt ${attempt}/3 failed`, { err: String(err) });
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 5_000));
+    }
+  }
+  throw lastErr;
+}
+
+/** Free (last resort): Hugging Face Inference API, FLUX.1-schnell. Requires HF_API_KEY. */
+async function generateWithHuggingFace(scene: Scene, prompt: string): Promise<GeneratedImage> {
+  const apiKey = process.env.HF_API_KEY;
+  if (!apiKey) throw new Error('HF_API_KEY not set');
+
+  logger.info('Calling Hugging Face Inference API', { scene: scene.id });
+
+  const response = await axios.post(
+    'https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell',
+    { inputs: prompt },
+    {
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      responseType: 'arraybuffer',
+      timeout: 90_000,
+    },
+  );
 
   ensureDir();
   const fileName = `image_${scene.id}_${Date.now()}.jpg`;
   const filePath = path.join(IMAGES_DIR, fileName);
-  fs.writeFileSync(filePath, imgResponse.data);
+  fs.writeFileSync(filePath, response.data);
 
-  logger.info('Image saved (Pollinations)', { filePath, scene: scene.id });
-  return { filePath, scene, prompt, model: 'flux-pollinations' };
+  logger.info('Image saved (Hugging Face)', { filePath, scene: scene.id });
+  return { filePath, scene, prompt, model: 'flux-schnell-hf' };
 }
 
 /** Paid: DALL-E 3 via OpenAI API (~$0.04–0.08/image). */

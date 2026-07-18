@@ -17,10 +17,14 @@ import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
 import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
 import { isReplyPipelineRunning, runReplyPipeline } from '../pipeline/reply_pipeline.js';
+import { primeClaudeCliCheck } from '../pipeline/claude_generator.js';
 
 let _expiryHandle: NodeJS.Timeout | null = null;
 
 export function startScheduler(): void {
+  // Prime Claude CLI availability check so isClaudeAvailable() is accurate immediately
+  void primeClaudeCliCheck();
+
   // The pipeline cron is now driven by random_runs.ts.
   configureRandomRuns(async () => { await runPipeline(); });
   startRandomScheduler();

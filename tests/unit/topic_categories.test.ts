@@ -46,10 +46,10 @@ describe('getCategoryWeights', () => {
 
   it('returns defaults when setting is missing', () => {
     const w = getCategoryWeights();
-    expect(w['pune-tech-economy']).toBeCloseTo(0.40);
-    expect(w['local-pune']).toBeCloseTo(0.20);
-    expect(w['tech']).toBeCloseTo(0.15);
-    expect(w['observation']).toBeCloseTo(0.03);
+    expect(w['pune-tech-economy']).toBeCloseTo(0.25);
+    expect(w['local-pune']).toBeCloseTo(0.10);
+    expect(w['tech']).toBeCloseTo(0.28);
+    expect(w['observation']).toBeCloseTo(0.05);
   });
 
   it('respects user-provided JSON', () => {
@@ -74,7 +74,7 @@ describe('getCategoryWeights', () => {
       'local-pune': 0.30, 'tech': 0.20, 'politics': 0.10, 'sports': 0.15, 'culture': 0.15, 'observation': 0.10,
     }));
     const w = getCategoryWeights();
-    expect(w['pune-tech-economy']).toBeCloseTo(0.40);
+    expect(w['pune-tech-economy']).toBeCloseTo(0.25);
     const total = TOPIC_CATEGORIES.reduce((sum, cat) => sum + w[cat], 0);
     expect(total).toBeCloseTo(1);
   });
@@ -82,8 +82,8 @@ describe('getCategoryWeights', () => {
   it('falls back to defaults on malformed JSON', () => {
     mockSettings.set('topic_category_weights', '{not json');
     const w = getCategoryWeights();
-    expect(w['pune-tech-economy']).toBeCloseTo(0.40);
-    expect(w['local-pune']).toBeCloseTo(0.20);
+    expect(w['pune-tech-economy']).toBeCloseTo(0.25);
+    expect(w['local-pune']).toBeCloseTo(0.10);
   });
 
   it('falls back to defaults on all-zero weights', () => {
@@ -120,7 +120,7 @@ describe('pickTopicAndCategory', () => {
   });
 
   it('does not pivot the bot toward only Pune topics by default', () => {
-    // The default mix still includes non-local categories alongside the 40%
+    // The default mix still includes non-local categories alongside the
     // Pune tech/economy lane.
     const samples = Array.from({ length: 60 }, () => pickTopicAndCategory());
     const punecount = samples.filter((s) => s.category === 'local-pune').length;

@@ -2,6 +2,7 @@ import { getDb } from './db.js';
 import crypto from 'crypto';
 import { isValidTweetReference } from '../utils/x.js';
 import { getIntSetting } from './settings.js';
+import { detectTopics } from '../context/topics.js';
 
 export { getAllSettings, getSetting, setSetting } from './settings.js';
 
@@ -293,7 +294,6 @@ export function getHandlesRepliedToToday(): Set<string> {
  * Topics are detected from posted reply texts + original post topic strings.
  */
 export function getTopicCountsToday(): Map<string, number> {
-  const { detectTopics } = require('../context/topics.js') as typeof import('../context/topics.js');
   const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
   const db = getDb();
   const counts = new Map<string, number>();
