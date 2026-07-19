@@ -55,6 +55,9 @@ export function getAgenticModel(): string {
   return process.env.AGENTIC_GENERATOR_MODEL ?? claudeGeneratorModel();
 }
 
+/** Full model-name fallback chain for agentic generation (fable → opus). */
+const AGENTIC_MODEL_CHAIN = ['claude-fable-5', 'claude-opus-4-8'];
+
 export function getAgenticMaxTurns(): number {
   const n = parseInt(process.env.AGENTIC_GEN_MAX_TURNS ?? '12', 10);
   return Number.isFinite(n) && n > 0 ? n : 12;
@@ -259,9 +262,9 @@ function agentInstructions(kind: 'reply' | 'post', submitTool: string, researchT
   ].join('\n');
 }
 
-export async function runGenerationAgent(task: AgenticGenerationTask): Promise<string> {
+export async function runGenerationAgent(task: AgenticGenerationTask, modelOverride?: string): Promise<string> {
   const sdk = await getSdk();
-  const model = getAgenticModel();
+  const model = modelOverride ?? getAgenticModel();
   const maxTurns = getAgenticMaxTurns();
   const submitToolName = task.kind === 'reply' ? 'submit_reply' : 'submit_post';
 
@@ -306,10 +309,17 @@ export async function runGenerationAgent(task: AgenticGenerationTask): Promise<s
   let turnCount = 0;
   let costUsd = 0;
 
+  // ANTHROPIC_API_KEY would take precedence over the claude.ai login inside the
+  // SDK's CLI subprocess and bill the API account instead of the subscription.
+  // Only strip it when a local CLI (and thus a possible login) exists.
+  const env: Record<string, string | undefined> = { ...process.env };
+  if (isClaudeCliFound()) delete env.ANTHROPIC_API_KEY;
+
   const stream = sdk.query({
     prompt: task.userPrompt,
     options: {
       cwd: process.cwd(),
+      env,
       model,
       maxTurns,
       permissionMode: 'default',
@@ -356,11 +366,25 @@ export async function generateReplyAgentic(opts: {
   userPrompt: string;
   avoidTexts?: string[];
 }): Promise<string> {
-  return runGenerationAgent({
-    kind: 'reply',
+  const task = {
+    kind: 'reply' as const,
     postId: opts.postId,
     systemPrompt: opts.systemPrompt,
     userPrompt: opts.userPrompt,
     validate: makeReplyValidator(opts.avoidTexts ?? []),
-  });
+  };
+  // Try fable first, fall back to opus if rate-limited or unavailable.
+  const chain = process.env.AGENTIC_GENERATOR_MODEL
+    ? [process.env.AGENTIC_GENERATOR_MODEL]
+    : AGENTIC_MODEL_CHAIN;
+  let lastErr: unknown;
+  for (const model of chain) {
+    try {
+      return await runGenerationAgent(task, model);
+    } catch (err) {
+      logger.warn(`Agentic generation failed with model=${model}, trying next`, { err: String(err).slice(0, 200) });
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }

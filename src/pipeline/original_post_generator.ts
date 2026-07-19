@@ -478,21 +478,29 @@ export async function generateOriginalPost(
   // ── Model call helper: agentic loop first (opt-in), then Claude, then Groq ─
   const callModel = async (sysPr: string, userPr: string): Promise<string> => {
     if (isAgenticGenerationEnabled()) {
-      try {
-        return await runGenerationAgent({
-          kind: 'post',
-          systemPrompt: sysPr,
-          userPrompt: userPr,
-          validate: (raw: string): ValidationResult => {
-            const text = cleanModelText(raw);
-            if (charLength(text) === 0) return { ok: false, reason: 'empty text' };
-            const qError = qualityCheck(text);
-            return qError ? { ok: false, reason: qError } : { ok: true, text };
-          },
-        });
-      } catch (err) {
-        logger.warn('Agentic original post generation failed; falling back to single-shot', { topic, err: String(err) });
+      const agenticTask = {
+        kind: 'post' as const,
+        systemPrompt: sysPr,
+        userPrompt: userPr,
+        validate: (raw: string): ValidationResult => {
+          const text = cleanModelText(raw);
+          if (charLength(text) === 0) return { ok: false, reason: 'empty text' };
+          const qError = qualityCheck(text);
+          return qError ? { ok: false, reason: qError } : { ok: true, text };
+        },
+      };
+      // Try fable first, fall back to opus, then fall through to single-shot.
+      const agenticChain = process.env.AGENTIC_GENERATOR_MODEL
+        ? [process.env.AGENTIC_GENERATOR_MODEL]
+        : ['claude-fable-5', 'claude-opus-4-8'];
+      for (const agModel of agenticChain) {
+        try {
+          return await runGenerationAgent(agenticTask, agModel);
+        } catch (err) {
+          logger.warn(`Agentic original post failed with model=${agModel}, trying next`, { topic, err: String(err).slice(0, 200) });
+        }
       }
+      logger.warn('All agentic models exhausted; falling back to single-shot', { topic });
     }
 
     if (isClaudeAvailable()) {

@@ -3,7 +3,8 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger.js';
 
-const DEFAULT_MODEL = 'claude-opus-4-8';
+const DEFAULT_MODEL = 'claude-fable-5';
+const CLI_MODEL_FALLBACK_CHAIN = ['fable', 'opus'];
 const execFileAsync = promisify(execFile);
 
 let _client: Anthropic | null = null;
@@ -46,19 +47,44 @@ async function generateWithClaudeCli(
   // in non-interactive mode, so we inject the system instructions at the top.
   const combinedPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
-  const { stdout } = await execFileAsync(
-    'claude',
-    ['-p', combinedPrompt],
-    {
-      timeout: 45_000,
-      maxBuffer: 512 * 1024,
-      env: { ...process.env },
-    },
-  );
+  // ANTHROPIC_API_KEY takes precedence over the claude.ai login inside the CLI,
+  // which would bill the API account instead of the Pro/Max subscription.
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
 
-  const text = stdout.trim();
-  if (text.length < 5) throw new Error('Claude CLI returned empty response');
-  return text;
+  // Try each model in the fallback chain (fable → opus) until one succeeds.
+  // This lets us use the newest model and automatically step down when rate-limited.
+  let lastErr: unknown;
+  for (const model of CLI_MODEL_FALLBACK_CHAIN) {
+    try {
+      const pending = execFileAsync(
+        'claude',
+        ['-p', combinedPrompt, '--model', model],
+        {
+          timeout: 45_000,
+          maxBuffer: 512 * 1024,
+          env,
+        },
+      );
+      // The CLI waits 3s for piped stdin unless it is closed up front.
+      pending.child.stdin?.end();
+      const { stdout } = await pending;
+
+      const text = stdout.trim();
+      if (text.length < 5) throw new Error(`Claude CLI (${model}) returned empty response`);
+      logger.info('Claude CLI generation succeeded', { model, chars: text.length });
+      return text;
+    } catch (err) {
+      const e = err as { code?: number | string; signal?: string; stdout?: string; stderr?: string };
+      logger.warn(`Claude CLI model=${model} failed, trying next in chain`, {
+        code: e.code, signal: e.signal,
+        stdout: (e.stdout ?? '').trim().slice(0, 200),
+        stderr: (e.stderr ?? '').trim().slice(-200),
+      });
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -88,12 +114,11 @@ export async function generateWithClaude(
   const cliAvailable = await checkCliAvailable();
   if (cliAvailable) {
     try {
-      logger.debug('Trying Claude CLI for generation');
+      logger.debug('Trying Claude CLI for generation (fable → opus chain)');
       const text = await generateWithClaudeCli(systemPrompt, userPrompt);
-      logger.info('Claude CLI generation succeeded', { chars: text.length });
       return { text, inputTokens: 0, outputTokens: 0 };
     } catch (err) {
-      logger.warn('Claude CLI generation failed, trying API', { err: String(err) });
+      logger.warn('Claude CLI chain exhausted (fable + opus both failed), trying API', { err: String(err) });
     }
   }
 
