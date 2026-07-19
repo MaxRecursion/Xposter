@@ -8,6 +8,7 @@ import path from 'path';
 import { logger } from '../utils/logger.js';
 import { getVelocityMap } from '../context/trends.js';
 import { isContextEnabled } from '../context/enrich.js';
+import { generateWithClaude } from '../pipeline/claude_generator.js';
 
 const IMAGES_DIR = path.resolve(process.cwd(), 'data', 'images');
 
@@ -88,6 +89,57 @@ export function buildPrompt(scene: Scene, characterOverride?: string): string {
   return `${character}, ${pose}, ${scene.description}. High quality, photorealistic, no text, no watermark, face not clearly visible, mysterious and atmospheric.`;
 }
 
+/**
+ * Ask Claude to write a creative, context-aware image prompt for the given scene.
+ * Falls back to the static template if Claude is unavailable or fails.
+ */
+export async function buildPromptWithClaude(scene: Scene): Promise<string> {
+  // Gather top trending tags to give Claude topical context
+  let trendingContext = '';
+  if (isContextEnabled()) {
+    try {
+      const velMap = getVelocityMap();
+      const top = [...velMap.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([tag]) => tag);
+      if (top.length) trendingContext = `Trending topics in Pune today: ${top.join(', ')}.`;
+    } catch { /* ignore */ }
+  }
+
+  const systemPrompt =
+    'You write concise image generation prompts for photorealistic AI art. ' +
+    'Every prompt must keep the subject\'s face hidden or obscured — this is non-negotiable. ' +
+    'Output only the prompt text, nothing else.';
+
+  const userPrompt = [
+    'Write a single image generation prompt (under 280 characters) for a candid lifestyle photo.',
+    '',
+    `Subject: A young Indian woman in her mid-20s, dark wavy hair, warm brown skin, urban Pune aesthetic, film grain, natural light.`,
+    `Scene: ${scene.description}`,
+    trendingContext,
+    '',
+    'Hard rules:',
+    '- Face must NOT be visible: looking away, hair across face, sunglasses, shot from behind, silhouette, scarf, or face in shadow.',
+    '- Photorealistic, candid, no text, no watermark.',
+    '- Do NOT include any character name or model reference.',
+    '- Output the prompt only — no explanation, no quotes.',
+  ].filter(Boolean).join('\n');
+
+  try {
+    const result = await generateWithClaude(systemPrompt, userPrompt);
+    const text = result.text.trim();
+    if (text.length > 20) {
+      logger.info('Claude image prompt generated', { scene: scene.id, chars: text.length });
+      return text;
+    }
+  } catch (err) {
+    logger.warn('Claude image prompt generation failed, using template', { scene: scene.id, err: String(err).slice(0, 200) });
+  }
+  // Fallback to static template
+  return buildPrompt(scene);
+}
+
 // ── Image generation ──────────────────────────────────────────────────────────
 
 export interface GeneratedImage {
@@ -109,7 +161,8 @@ export interface GeneratedImage {
  */
 export async function generateImage(sceneOverride?: Scene): Promise<GeneratedImage> {
   const scene = sceneOverride ?? pickScene();
-  const prompt = buildPrompt(scene);
+  // Use Claude to write a creative prompt; falls back to static template if unavailable.
+  const prompt = await buildPromptWithClaude(scene);
 
   const provider = process.env.IMAGE_PROVIDER ?? (process.env.OPENAI_API_KEY ? 'openai' : 'pollinations');
   logger.info('Generating image', { scene: scene.id, provider });

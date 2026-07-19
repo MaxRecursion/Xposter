@@ -779,7 +779,7 @@ function renderFollowerGrowth(rows) {
   svg.append('path')
     .datum(rows)
     .attr('fill', 'none')
-    .attr('stroke', '#1d8bf0')
+    .attr('stroke', '#ff9e21')
     .attr('stroke-width', 3)
     .attr('d', d3.line()
       .x((d) => x(new Date(`${d.day}T12:00:00`)))
@@ -871,7 +871,7 @@ function renderPostingHours(rows) {
     .attr('width', x.bandwidth())
     .attr('height', (d) => y(0) - y(d.avg_engagement_score))
     .attr('rx', 2)
-    .attr('fill', (d) => d.posts > 0 ? '#8b5cf6' : 'var(--border)');
+    .attr('fill', (d) => d.posts > 0 ? '#ff9e21' : 'var(--border)');
   svg.append('g')
     .attr('transform', `translate(0, ${height - margin.bottom})`)
     .call(d3.axisBottom(x).tickValues([0, 3, 6, 9, 12, 15, 18, 21]).tickFormat((d) => `${String(d).padStart(2, '0')}:00`))
@@ -898,7 +898,7 @@ function addAnalyticsAxes(svg, x, y, height, margin, formatX) {
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY_NAMES_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 // Five-bucket blue palette matching X's analytics chart (light → dark).
-const AUDIENCE_PALETTE = ['#e6f0fa', '#c8def7', '#9ec4f2', '#62a3eb', '#1d8bf0'];
+const AUDIENCE_PALETTE = ['#2a1c05', '#5c3a08', '#95610e', '#cf8817', '#ff9e21'];
 
 async function loadAudience() {
   try {

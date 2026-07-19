@@ -2,7 +2,7 @@
    Xposter — themed UI + Hacker Console
    ───────────────────────────────────────────────────────────────────────── */
 
-@import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -10,40 +10,40 @@
 /* Dark (default) */
 :root,
 [data-theme='dark'] {
-  --bg:        #0f1117;
-  --surface:   #1a1d27;
-  --surface2:  #242736;
-  --border:    #2e3248;
-  --text:      #e8eaf6;
-  --text2:     #8b90a7;
-  --accent:    #4f6ef7;
-  --accent-dim:#3a52c4;
-  --green:     #34c759;
-  --red:       #ff3b30;
-  --orange:    #ff9500;
-  --yellow:    #ffd60a;
-  --header-bg: #1a1d27;
-  --shadow:    0 2px 12px rgba(0,0,0,0.4);
-  --code-bg:   #0d0f15;
+  --bg:        #000000;
+  --surface:   #0d0d0d;
+  --surface2:  #161616;
+  --border:    #2e2e2e;
+  --text:      #e8e6e3;
+  --text2:     #8a8a8a;
+  --accent:    #ff9e21;   /* Bloomberg amber */
+  --accent-dim:#c67612;
+  --green:     #00d060;
+  --red:       #ff433d;
+  --orange:    #ff9e21;
+  --yellow:    #ffd75e;
+  --header-bg: #000000;
+  --shadow:    none;
+  --code-bg:   #050505;
 }
 
-/* Light */
+/* Light — "day terminal" variant, same amber accents */
 [data-theme='light'] {
-  --bg:        #f5f5f7;
-  --surface:   #ffffff;
-  --surface2:  #f0f0f3;
-  --border:    #d2d2d7;
-  --text:      #1d1d1f;
-  --text2:     #6e6e73;
-  --accent:    #007aff;
-  --accent-dim:#0051d5;
-  --green:     #34c759;
-  --red:       #ff3b30;
-  --orange:    #ff9500;
-  --yellow:    #ffcc00;
-  --header-bg: #ffffff;
-  --shadow:    0 1px 4px rgba(0,0,0,0.08);
-  --code-bg:   #f7f7f9;
+  --bg:        #ececec;
+  --surface:   #f7f7f5;
+  --surface2:  #e2e2df;
+  --border:    #b8b8b3;
+  --text:      #1a1a1a;
+  --text2:     #5c5c5c;
+  --accent:    #b35d00;
+  --accent-dim:#8a4700;
+  --green:     #0a8f45;
+  --red:       #cc2e28;
+  --orange:    #b35d00;
+  --yellow:    #9a7b00;
+  --header-bg: #f7f7f5;
+  --shadow:    none;
+  --code-bg:   #f0f0ee;
 }
 
 html { color-scheme: dark; }
@@ -51,7 +51,7 @@ html { color-scheme: dark; }
 
 /* ── Base ───────────────────────────────────────────────────────────────── */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'IBM Plex Mono', 'Share Tech Mono', 'SF Mono', Menlo, Consolas, monospace;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -1018,7 +1018,7 @@ select.select-input {
   overflow: hidden;
 }
 .analytics-bar-fill {
-  background: linear-gradient(90deg, #1d8bf0, #8b5cf6);
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
   border-radius: inherit;
   height: 100%;
 }
@@ -1923,3 +1923,141 @@ select.select-input {
   color: var(--accent);
 }
 .rag-item-count { font-size: 11px; color: var(--text2); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   BLOOMBERG TERMINAL OVERLAY
+   Flattens radii, squares controls, amber-on-black data aesthetic.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Hard edges everywhere terminals have them */
+.btn, .tab-btn, .stat-card, .settings-card, .analytics-card, .agent-card,
+.audience-card, .mem-card, .rag-card, .rag-stat-card, .diag-table,
+.schedule-strip, .select-input, input, textarea, select,
+.status-badge, .wit-tier-badge, .hacker-console, .toast,
+.queue-card, .history-card, .account-card, .follower-card, .original-card {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Header → command bar */
+header {
+  border-bottom: 2px solid var(--accent);
+  padding: 8px 18px;
+}
+header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+header h1 span { color: var(--text); }
+header h1::after {
+  content: '<GO>';
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--yellow);
+  letter-spacing: 1px;
+  animation: blink-cursor 1.2s steps(1) infinite;
+}
+@keyframes blink-cursor { 50% { opacity: 0; } }
+
+/* Tabs → function keys: F1 QUEUE  F2 FOLLOWERS … */
+.tabs { gap: 2px; counter-reset: fkey; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.tab-btn {
+  counter-increment: fkey;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 5px 10px;
+}
+.tab-btn::before {
+  content: 'F' counter(fkey) ' ';
+  color: var(--yellow);
+  font-weight: 700;
+}
+.tab-btn:hover { background: var(--surface2); color: var(--text); }
+.tab-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+.tab-btn.active::before { color: #000; }
+
+/* Buttons → terminal keys */
+.btn {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border: 1px solid var(--border);
+}
+.btn-primary { background: var(--accent); color: #000; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
+.btn-success { background: var(--green); color: #000; border-color: var(--green); }
+.btn-danger { background: var(--red); color: #000; border-color: var(--red); }
+
+/* Stat cards → data tiles */
+.stat-card {
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-top: 2px solid var(--accent);
+}
+.stat-card .value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.stat-card .label { letter-spacing: 1px; margin-top: 4px; }
+
+/* Section headings → amber banners */
+.section-h, .settings-card-title, .analytics-card-title, .agent-section-title,
+.audience-title, .agent-title, .mem-card-title, .rag-card-title, .memory-graph-title {
+  color: var(--accent) !important;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+/* Inputs */
+input[type='text'], input[type='number'], textarea, select, .select-input, .memory-search {
+  background: var(--code-bg) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  font-family: inherit !important;
+}
+input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent) !important; }
+
+/* Diagnostics / key-value tables → dense grid rows */
+.diag-table { border: 1px solid var(--border); }
+.diag-row { border-bottom: 1px solid var(--border); }
+.diag-row .key { color: var(--text2); text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+.diag-row .value { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* Schedule strip → ticker */
+.schedule-strip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  font-size: 12px;
+}
+.schedule-label { color: var(--yellow); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
+
+/* Toggles → squared */
+.ios-slider, .ios-slider::before { border-radius: 0 !important; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--surface2); border: 1px solid var(--border); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
+/* Wide content guard */
+.main { max-width: 1240px; }
