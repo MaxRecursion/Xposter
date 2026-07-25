@@ -9,7 +9,7 @@ import { getGroqClient } from './groq_client.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
-import { isAgenticGenerationEnabled, runGenerationAgent, type ValidationResult } from './agentic_generator.js';
+import { AGENTIC_MAX_ATTEMPTS, getAgenticModel, isAgenticGenerationEnabled, runGenerationAgent, type ValidationResult } from './agentic_generator.js';
 
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
@@ -489,18 +489,16 @@ export async function generateOriginalPost(
           return qError ? { ok: false, reason: qError } : { ok: true, text };
         },
       };
-      // Try fable first, fall back to opus, then fall through to single-shot.
-      const agenticChain = process.env.AGENTIC_GENERATOR_MODEL
-        ? [process.env.AGENTIC_GENERATOR_MODEL]
-        : ['claude-fable-5', 'claude-opus-4-8'];
-      for (const agModel of agenticChain) {
+      // Retry on the same model, then fall through to single-shot.
+      const agModel = getAgenticModel();
+      for (let attempt = 1; attempt <= AGENTIC_MAX_ATTEMPTS; attempt++) {
         try {
           return await runGenerationAgent(agenticTask, agModel);
         } catch (err) {
-          logger.warn(`Agentic original post failed with model=${agModel}, trying next`, { topic, err: String(err).slice(0, 200) });
+          logger.warn(`Agentic original post attempt ${attempt}/${AGENTIC_MAX_ATTEMPTS} failed (model=${agModel})`, { topic, err: String(err).slice(0, 200) });
         }
       }
-      logger.warn('All agentic models exhausted; falling back to single-shot', { topic });
+      logger.warn('Agentic generation exhausted; falling back to single-shot', { topic });
     }
 
     if (isClaudeAvailable()) {

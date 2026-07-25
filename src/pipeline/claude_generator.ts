@@ -3,8 +3,11 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger.js';
 
-const DEFAULT_MODEL = 'claude-fable-5';
-const CLI_MODEL_FALLBACK_CHAIN = ['fable', 'opus'];
+const DEFAULT_MODEL = 'claude-opus-5';
+/** CLI `--model` alias for Opus 5. */
+const CLI_MODEL = 'opus';
+/** Attempts per CLI generation. See the retry note in generateWithClaudeCli. */
+const CLI_MAX_ATTEMPTS = 2;
 const execFileAsync = promisify(execFile);
 
 let _client: Anthropic | null = null;
@@ -52,14 +55,14 @@ async function generateWithClaudeCli(
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
 
-  // Try each model in the fallback chain (fable → opus) until one succeeds.
-  // This lets us use the newest model and automatically step down when rate-limited.
+  // Everything runs on Opus 5, so there is no second model to step down to;
+  // the retry is what absorbs a transient failure (rate limit, cold start).
   let lastErr: unknown;
-  for (const model of CLI_MODEL_FALLBACK_CHAIN) {
+  for (let attempt = 1; attempt <= CLI_MAX_ATTEMPTS; attempt++) {
     try {
       const pending = execFileAsync(
         'claude',
-        ['-p', combinedPrompt, '--model', model],
+        ['-p', combinedPrompt, '--model', CLI_MODEL],
         {
           timeout: 45_000,
           maxBuffer: 512 * 1024,
@@ -71,12 +74,12 @@ async function generateWithClaudeCli(
       const { stdout } = await pending;
 
       const text = stdout.trim();
-      if (text.length < 5) throw new Error(`Claude CLI (${model}) returned empty response`);
-      logger.info('Claude CLI generation succeeded', { model, chars: text.length });
+      if (text.length < 5) throw new Error(`Claude CLI (${CLI_MODEL}) returned empty response`);
+      logger.info('Claude CLI generation succeeded', { model: CLI_MODEL, attempt, chars: text.length });
       return text;
     } catch (err) {
       const e = err as { code?: number | string; signal?: string; stdout?: string; stderr?: string };
-      logger.warn(`Claude CLI model=${model} failed, trying next in chain`, {
+      logger.warn(`Claude CLI attempt ${attempt}/${CLI_MAX_ATTEMPTS} failed (model=${CLI_MODEL})`, {
         code: e.code, signal: e.signal,
         stdout: (e.stdout ?? '').trim().slice(0, 200),
         stderr: (e.stderr ?? '').trim().slice(-200),
@@ -114,11 +117,11 @@ export async function generateWithClaude(
   const cliAvailable = await checkCliAvailable();
   if (cliAvailable) {
     try {
-      logger.debug('Trying Claude CLI for generation (fable → opus chain)');
+      logger.debug('Trying Claude CLI for generation (Opus 5 on the subscription)');
       const text = await generateWithClaudeCli(systemPrompt, userPrompt);
       return { text, inputTokens: 0, outputTokens: 0 };
     } catch (err) {
-      logger.warn('Claude CLI chain exhausted (fable + opus both failed), trying API', { err: String(err) });
+      logger.warn(`Claude CLI failed after ${CLI_MAX_ATTEMPTS} attempts, trying API`, { err: String(err) });
     }
   }
 

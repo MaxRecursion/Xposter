@@ -20,7 +20,8 @@ const execFileAsync = promisify(execFile);
 // Longer than the 45s used for text generation: the model has to Read and
 // decode a ~600KB image before it can answer.
 const TIMEOUT_MS = 120_000;
-const MODEL_CHAIN = ['fable', 'opus'];
+/** CLI `--model` alias for Opus 5. */
+const DEFAULT_QA_MODEL = 'opus';
 
 export interface ImageVerdict {
   faceVisible: boolean;
@@ -76,8 +77,11 @@ export async function judgeImage(absPath: string): Promise<ImageVerdict | null> 
   delete env.ANTHROPIC_API_KEY;
 
   const prompt = buildPrompt(absPath);
+  // IMAGE_QA_MODEL overrides the first attempt; the second always uses the
+  // default, so a bad override can't disable the gate outright and — with no
+  // override — a transient CLI failure still gets one retry.
   const preferred = process.env.IMAGE_QA_MODEL?.trim();
-  const chain = preferred ? [preferred, ...MODEL_CHAIN.filter((m) => m !== preferred)] : MODEL_CHAIN;
+  const chain = [preferred || DEFAULT_QA_MODEL, DEFAULT_QA_MODEL];
 
   for (const model of chain) {
     try {

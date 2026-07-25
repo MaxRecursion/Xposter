@@ -55,8 +55,12 @@ export function getAgenticModel(): string {
   return process.env.AGENTIC_GENERATOR_MODEL ?? claudeGeneratorModel();
 }
 
-/** Full model-name fallback chain for agentic generation (fable → opus). */
-const AGENTIC_MODEL_CHAIN = ['claude-fable-5', 'claude-opus-4-8'];
+/**
+ * Attempts per agentic generation. Everything runs on Opus 5, so there is no
+ * second model to step down to — the retry is what absorbs a transient failure
+ * (rate limit, API blip).
+ */
+export const AGENTIC_MAX_ATTEMPTS = 2;
 
 export function getAgenticMaxTurns(): number {
   const n = parseInt(process.env.AGENTIC_GEN_MAX_TURNS ?? '12', 10);
@@ -362,16 +366,14 @@ export async function generateReplyAgentic(opts: {
     userPrompt: opts.userPrompt,
     validate: makeReplyValidator(opts.avoidTexts ?? [], { stance: opts.stance ?? null }),
   };
-  // Try fable first, fall back to opus if rate-limited or unavailable.
-  const chain = process.env.AGENTIC_GENERATOR_MODEL
-    ? [process.env.AGENTIC_GENERATOR_MODEL]
-    : AGENTIC_MODEL_CHAIN;
+  // Retry on the same model; AGENTIC_GENERATOR_MODEL still overrides it.
+  const model = getAgenticModel();
   let lastErr: unknown;
-  for (const model of chain) {
+  for (let attempt = 1; attempt <= AGENTIC_MAX_ATTEMPTS; attempt++) {
     try {
       return await runGenerationAgent(task, model);
     } catch (err) {
-      logger.warn(`Agentic generation failed with model=${model}, trying next`, { err: String(err).slice(0, 200) });
+      logger.warn(`Agentic generation attempt ${attempt}/${AGENTIC_MAX_ATTEMPTS} failed (model=${model})`, { err: String(err).slice(0, 200) });
       lastErr = err;
     }
   }

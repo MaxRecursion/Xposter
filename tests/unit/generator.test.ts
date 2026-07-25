@@ -25,7 +25,7 @@ vi.mock('../../src/pipeline/agentic_generator.js', () => ({
 
 vi.mock('../../src/pipeline/claude_generator.js', () => ({
   isClaudeAvailable: () => false,
-  claudeGeneratorModel: () => 'claude-opus-4-8',
+  claudeGeneratorModel: () => 'claude-opus-5',
   generateWithClaude: vi.fn(),
 }));
 
