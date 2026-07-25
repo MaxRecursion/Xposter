@@ -120,9 +120,23 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   likes_per_day:                    intSetting(100, 0, 500),
   topic_daily_cap:                  intSetting(10, 1, 100), // percentage of planned daily volume
   image_posts_enabled:              boolSetting,
-  image_posts_per_day:              intSetting(1, 0, 3),
+  image_posts_per_day:              intSetting(1, 0, 4),
   image_evening_start_hour:         intSetting(18, 0, 23),
   image_evening_end_hour:           intSetting(22, 1, 24),
+  image_qa_enabled:                 boolSetting,
+  image_qa_max_attempts:            intSetting(3, 1, 5),
+  image_identity_json:              textSetting(1500),
+  image_aspect:                     textSetting(8),
+  // Trend-driven replies
+  trend_replies_enabled:            boolSetting,
+  trend_reply_ratio:                intSetting(70, 0, 100),  // % of daily runs sourced from trends
+  trend_global_ratio:               intSetting(50, 0, 100),  // % of trend runs using worldwide trends
+  contrarian_reply_pct:             intSetting(33, 0, 100),
+  trend_refresh_minutes:            intSetting(30, 10, 240),
+  trend_max_replies_per_day:        intSetting(2, 1, 10),
+  trend_cooldown_hours:             intSetting(12, 1, 72),
+  trend_min_reply_interval_sec:     intSetting(90, 0, 600),
+  trend_blocklist:                  textSetting(500),
 };
 
 postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {

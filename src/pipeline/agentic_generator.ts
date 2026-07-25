@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { getSetting, logEvent } from '../storage/queries.js';
+import { getSetting, logEvent, type Stance } from '../storage/queries.js';
 import { isClaudeCliFound } from '../agent/client.js';
 import { claudeGeneratorModel } from './claude_generator.js';
 import { charLength, cleanModelText } from './text_constraints.js';
@@ -67,7 +67,21 @@ function normalizeForComparison(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-export function makeReplyValidator(avoidTexts: string[] = []): (raw: string) => ValidationResult {
+/**
+ * Openers that signal agreement. Only checked when the reply is supposed to be
+ * contrarian — catching it here lets the agent self-correct inside its own
+ * loop instead of shipping an agreeable reply that was meant to push back.
+ */
+const AGREEMENT_OPENERS = /^(exactly|agreed|so true|this,?$|this!|100%|facts|couldn'?t agree|absolutely|yes,? this)/i;
+
+export interface ReplyValidatorOptions {
+  stance?: Stance | null;
+}
+
+export function makeReplyValidator(
+  avoidTexts: string[] = [],
+  opts: ReplyValidatorOptions = {},
+): (raw: string) => ValidationResult {
   const avoid = new Set(avoidTexts.map(normalizeForComparison));
   return (raw: string): ValidationResult => {
     const text = cleanModelText(raw);
@@ -88,6 +102,9 @@ export function makeReplyValidator(avoidTexts: string[] = []): (raw: string) => 
     if (banned) return { ok: false, reason: `contains the banned AI-slop phrase "${banned}" — rewrite without it` };
     if (avoid.size > 0 && avoid.has(normalizeForComparison(text))) {
       return { ok: false, reason: 'nearly identical to a recent reply — take a genuinely different angle' };
+    }
+    if (opts.stance === 'CONTRARIAN' && AGREEMENT_OPENERS.test(text.trim())) {
+      return { ok: false, reason: 'opens by agreeing, but this reply is meant to push back — lead with the counterpoint' };
     }
     return { ok: true, text };
   };
@@ -365,13 +382,14 @@ export async function generateReplyAgentic(opts: {
   systemPrompt: string;
   userPrompt: string;
   avoidTexts?: string[];
+  stance?: Stance | null;
 }): Promise<string> {
   const task = {
     kind: 'reply' as const,
     postId: opts.postId,
     systemPrompt: opts.systemPrompt,
     userPrompt: opts.userPrompt,
-    validate: makeReplyValidator(opts.avoidTexts ?? []),
+    validate: makeReplyValidator(opts.avoidTexts ?? [], { stance: opts.stance ?? null }),
   };
   // Try fable first, fall back to opus if rate-limited or unavailable.
   const chain = process.env.AGENTIC_GENERATOR_MODEL

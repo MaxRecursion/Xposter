@@ -213,6 +213,12 @@ async function loadSettings() {
     if ($('s-agentic-generation'))  $('s-agentic-generation').checked = s.agentic_generation === 'true';
     if ($('s-weekly-digest'))       $('s-weekly-digest').checked     = s.weekly_digest_enabled !== 'false';
     if ($('s-weekly-digest-hour'))  $('s-weekly-digest-hour').value  = s.weekly_digest_hour ?? '9';
+    if ($('s-trend-enabled'))       $('s-trend-enabled').checked     = s.trend_replies_enabled !== 'false';
+    if ($('s-trend-ratio'))         $('s-trend-ratio').value         = s.trend_reply_ratio ?? '70';
+    if ($('s-contrarian-pct'))      $('s-contrarian-pct').value      = s.contrarian_reply_pct ?? '33';
+    if ($('s-image-enabled'))       $('s-image-enabled').checked     = s.image_posts_enabled !== 'false';
+    if ($('s-image-per-day'))       $('s-image-per-day').value       = s.image_posts_per_day ?? '1';
+    if ($('s-image-qa'))            $('s-image-qa').checked          = s.image_qa_enabled !== 'false';
   } catch { /* ignore */ }
   await loadDiagnostics();
   await refreshAgentSettingsNote();
@@ -1385,6 +1391,12 @@ document.addEventListener('DOMContentLoaded', () => {
           agentic_generation:           $('s-agentic-generation')?.checked ? 'true' : 'false',
           weekly_digest_enabled:        $('s-weekly-digest')?.checked ? 'true' : 'false',
           weekly_digest_hour:           $('s-weekly-digest-hour')?.value,
+          trend_replies_enabled:        $('s-trend-enabled')?.checked ? 'true' : 'false',
+          trend_reply_ratio:            $('s-trend-ratio')?.value,
+          contrarian_reply_pct:         $('s-contrarian-pct')?.value,
+          image_posts_enabled:          $('s-image-enabled')?.checked ? 'true' : 'false',
+          image_posts_per_day:          $('s-image-per-day')?.value,
+          image_qa_enabled:             $('s-image-qa')?.checked ? 'true' : 'false',
         }),
       });
       toast('Settings saved', 'success');

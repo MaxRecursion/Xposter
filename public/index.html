@@ -515,6 +515,58 @@
           </div>
         </div>
 
+        <h3 class="section-h">Trending Replies</h3>
+        <div class="settings-grid">
+          <div class="settings-field settings-field-toggle">
+            <label for="s-trend-enabled">
+              <span>Reply to trending topics</span>
+              <span class="settings-field-help">Sources reply candidates from X trending topics (split evenly between worldwide and India) instead of the home timeline. Falls back to the timeline automatically if trends are unavailable.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-trend-enabled" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label>Trend share of daily runs (%)</label>
+            <input type="number" id="s-trend-ratio" min="0" max="100" />
+            <span class="settings-field-help">The remainder come from the home timeline.</span>
+          </div>
+          <div class="settings-field">
+            <label>Contrarian replies (%)</label>
+            <input type="number" id="s-contrarian-pct" min="0" max="100" />
+            <span class="settings-field-help">Share of trend replies that argue against the consensus. Automatically forced off for tragedy, health, religion, caste and party-political trends.</span>
+          </div>
+        </div>
+
+        <h3 class="section-h">Image Posts</h3>
+        <div class="settings-grid">
+          <div class="settings-field settings-field-toggle">
+            <label for="s-image-enabled">
+              <span>Daily image post</span>
+              <span class="settings-field-help">Posts a faceless lifestyle photo during the evening window.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-image-enabled" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label>Image posts per day</label>
+            <input type="number" id="s-image-per-day" min="0" max="4" />
+          </div>
+          <div class="settings-field settings-field-toggle">
+            <label for="s-image-qa">
+              <span>Vision quality gate</span>
+              <span class="settings-field-help">Checks each generated image for a visible face, malformed hands or garbled text before posting, and regenerates if it fails. Skips the post entirely rather than publishing a bad image.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-image-qa" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+        </div>
+
         <h3 class="section-h">Follow-back</h3>
         <div class="settings-grid">
           <div class="settings-field">

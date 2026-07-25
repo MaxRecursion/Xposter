@@ -57,6 +57,12 @@ function applyMigrations(db: Database.Database): void {
       generated_reply TEXT,
       final_reply     TEXT,
       posted_tweet_id TEXT,
+      -- Where this candidate came from: TIMELINE | TREND_GLOBAL | TREND_INDIA
+      source          TEXT NOT NULL DEFAULT 'TIMELINE',
+      -- Reply framing for trend candidates: ALIGNED | CONTRARIAN
+      stance          TEXT,
+      -- FK-ish link to trends.key when source is TREND_*
+      trend_key       TEXT,
       ingested_at     INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -376,12 +382,44 @@ function applyMigrations(db: Database.Database): void {
       ('agentic_generation', 'false')
   `).run();
 
+  // Trend-driven engagement replies: source most replies from X trending topics
+  // (50% worldwide / 50% India) instead of the home timeline, and frame a share
+  // of them as contrarian takes.
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('trend_replies_enabled',       'true'),
+      ('trend_reply_ratio',           '70'),
+      ('trend_global_ratio',          '50'),
+      ('contrarian_reply_pct',        '33'),
+      ('trend_refresh_minutes',       '30'),
+      ('trend_max_replies_per_day',   '2'),
+      ('trend_cooldown_hours',        '12'),
+      ('trend_min_reply_interval_sec','90'),
+      ('trend_blocklist',             '')
+  `).run();
+
+  // Image post quality gate + visual identity
+  db.prepare(`
+    INSERT OR IGNORE INTO settings(key, value) VALUES
+      ('image_qa_enabled',      'true'),
+      ('image_qa_max_attempts', '3'),
+      ('image_identity_json',   ''),
+      ('image_aspect',          '4:5')
+  `).run();
+
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');
   addColumnIfMissing(db, 'posts', 'posting_attempts', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'posts', 'retry_after', 'INTEGER');
   addColumnIfMissing(db, 'posts', 'last_error', 'TEXT');
+  // Trend-driven replies: where the candidate came from and how it was framed
+  addColumnIfMissing(db, 'posts', 'source', "TEXT NOT NULL DEFAULT 'TIMELINE'");
+  addColumnIfMissing(db, 'posts', 'stance', 'TEXT');
+  addColumnIfMissing(db, 'posts', 'trend_key', 'TEXT');
+  // Indexed here rather than in the CREATE TABLE block: on an existing database
+  // the table already exists, so the column only appears after the ALTER above.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source, updated_at DESC)');
   addColumnIfMissing(db, 'original_posts', 'post_type', "TEXT NOT NULL DEFAULT 'ORIGINAL'");
   addColumnIfMissing(db, 'original_posts', 'thread_parts_json', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'tweet_ids_json', 'TEXT');
@@ -395,6 +433,7 @@ function applyMigrations(db: Database.Database): void {
   applyContextMigrations(db);
   applyLikesMigrations(db);
   applyImagePostsMigrations(db);
+  applyTrendMigrations(db);
 }
 
 function applyContextMigrations(db: Database.Database): void {
@@ -463,7 +502,7 @@ function applyImagePostsMigrations(db: Database.Database): void {
       file_path       TEXT NOT NULL,
       model           TEXT NOT NULL DEFAULT 'dall-e-3',
       status          TEXT NOT NULL DEFAULT 'PENDING'
-                      CHECK(status IN ('PENDING','POSTING','POSTED','ERROR')),
+                      CHECK(status IN ('PENDING','POSTING','POSTED','ERROR','SKIPPED','REJECTED')),
       tweet_id        TEXT,
       tweet_url       TEXT,
       last_error      TEXT,
@@ -472,6 +511,62 @@ function applyImagePostsMigrations(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_image_posts_created ON image_posts(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_image_posts_status  ON image_posts(status);
+  `);
+
+  // Generation provenance + vision-QA outcome. Added post-hoc so existing DBs upgrade.
+  addColumnIfMissing(db, 'image_posts', 'seed', 'INTEGER');
+  addColumnIfMissing(db, 'image_posts', 'width', 'INTEGER');
+  addColumnIfMissing(db, 'image_posts', 'height', 'INTEGER');
+  addColumnIfMissing(db, 'image_posts', 'provider', 'TEXT');
+  addColumnIfMissing(db, 'image_posts', 'qa_verdict', 'TEXT');
+  addColumnIfMissing(db, 'image_posts', 'qa_attempts', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+/**
+ * X trending topics, polled unauthenticated via the guest-token trends API.
+ *
+ * `trend_snapshots` is the raw per-poll log (used to derive rank velocity);
+ * `trends` is the rollup we actually select from.
+ */
+function applyTrendMigrations(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trend_snapshots (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      woeid        INTEGER NOT NULL,
+      name         TEXT NOT NULL,
+      query        TEXT NOT NULL,
+      url          TEXT,
+      rank         INTEGER NOT NULL,
+      tweet_volume INTEGER,
+      captured_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_trend_snap_captured ON trend_snapshots(captured_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_trend_snap_name     ON trend_snapshots(woeid, name, captured_at DESC);
+
+    CREATE TABLE IF NOT EXISTS trends (
+      key            TEXT PRIMARY KEY,          -- \`\${woeid}:\${lower(name)}\`
+      woeid          INTEGER NOT NULL,
+      name           TEXT NOT NULL,
+      query          TEXT NOT NULL,
+      first_seen_at  INTEGER NOT NULL,
+      last_seen_at   INTEGER NOT NULL,
+      best_rank      INTEGER NOT NULL,
+      last_rank      INTEGER NOT NULL,
+      prev_rank      INTEGER,
+      poll_count     INTEGER NOT NULL DEFAULT 1,
+      peak_volume    INTEGER,
+      script         TEXT NOT NULL DEFAULT 'unknown',
+      safety_class   TEXT NOT NULL DEFAULT 'UNCLASSIFIED'
+                     CHECK(safety_class IN ('UNCLASSIFIED','SAFE_FOR_CONTRARIAN','STRAIGHT_ONLY','SKIP')),
+      safety_reason  TEXT,
+      classified_at  INTEGER,
+      replies_sent   INTEGER NOT NULL DEFAULT 0,
+      last_reply_at  INTEGER,
+      -- -1 = never searched. 0 = searched, yielded no usable English posts.
+      english_yield  INTEGER NOT NULL DEFAULT -1,
+      cooldown_until INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_trends_woeid_seen ON trends(woeid, last_seen_at DESC);
   `);
 }
 

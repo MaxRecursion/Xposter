@@ -1,18 +1,38 @@
 /**
- * Image posts scheduler — generates and posts one AI lifestyle image per day
- * at a random time in the evening window (default 6 PM – 10 PM).
+ * Image post scheduler — generates and posts AI lifestyle images during the
+ * evening window.
+ *
+ * Runs on the shared `scheduled_runs` table (kind='IMAGE_POST') like the
+ * original-post scheduler, rather than the bespoke `image_post_schedule` table
+ * it used to own. That table's UNIQUE(date_key) constraint was what pinned this
+ * to exactly one post per day and made `image_posts_per_day` dead config.
+ *
+ * Every generated image passes a vision QA gate before it is posted. If the
+ * gate rejects every attempt, nothing is posted — a visibly malformed image is
+ * worse for the account than no image at all.
  */
-import crypto from 'crypto';
-import { getDb } from '../storage/db.js';
+import {
+  getDuePendingRuns, getScheduledRunsForDate, insertScheduledRun, markRunFired,
+} from '../storage/scheduled_runs.js';
 import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
+import {
+  getRecentCaptions, insertImagePost, markImagePostError, markImagePostPosted,
+  setImagePostStatus, sweepStuckImagePosts,
+} from '../storage/image_posts.js';
 import { logger } from '../utils/logger.js';
-import { todayDateKey } from './daily_plan.js';
-import { generateImage, pickScene } from '../images/generator.js';
+import { formatLocalTime, generateWeightedSlots, getActiveWindow, todayDateKey } from './daily_plan.js';
+import {
+  buildDetailWithClaude, generateImage, pickSafeScene, pickScene,
+  type GeneratedImage, type GenerateImageOptions, type Scene,
+} from '../images/generator.js';
 import { generateCaption } from '../images/captions.js';
+import { isRejected, judgeImage, rejectionReason, type ImageVerdict } from '../images/vision_qa.js';
 import { postImageTweet } from '../browser/compose.js';
 
-const TICK_INTERVAL_MS = 60_000; // check every minute
+const KIND = 'IMAGE_POST';
+const TICK_INTERVAL_MS = 60_000;
+
 let _tickHandle: NodeJS.Timeout | null = null;
 let _posting = false;
 
@@ -20,10 +40,11 @@ let _posting = false;
 
 export function startImagePostScheduler(): void {
   if (_tickHandle) return;
+  sweepStuckImagePosts();
   ensureTodayImagePlan();
   _tickHandle = setInterval(() => { void tick(); }, TICK_INTERVAL_MS);
   void tick();
-  logger.info('Image post scheduler started (1 image/day, evening window)');
+  logger.info('Image post scheduler started (evening window, vision QA gate)');
 }
 
 export function stopImagePostScheduler(): void {
@@ -32,58 +53,27 @@ export function stopImagePostScheduler(): void {
 
 // ── Scheduler plan ────────────────────────────────────────────────────────────
 
-interface ImagePlan {
-  id: string;
-  date_key: string;
-  scheduled_at: number;    // unix seconds
-  fired: number;           // 0 or 1
-}
-
-function ensureTodayImagePlan(): ImagePlan {
-  const db = getDb();
+export function ensureTodayImagePlan() {
   const dateKey = todayDateKey();
+  const existing = getScheduledRunsForDate(dateKey, KIND);
+  if (existing.length > 0) return existing;
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS image_post_schedule (
-      id           TEXT PRIMARY KEY,
-      date_key     TEXT NOT NULL UNIQUE,
-      scheduled_at INTEGER NOT NULL,
-      fired        INTEGER NOT NULL DEFAULT 0
-    );
-  `);
+  const count = getIntSetting('image_posts_per_day', 1, 0, 4);
+  if (count <= 0) return [];
 
-  const existing = db.prepare(
-    `SELECT * FROM image_post_schedule WHERE date_key = ?`,
-  ).get(dateKey) as ImagePlan | undefined;
+  // Image posts use their own evening window rather than the reply window.
+  const window = getActiveWindow(
+    dateKey, 'image_evening_start_hour', 'image_evening_end_hour', { start: 18, end: 22 },
+  );
+  const slots = generateWeightedSlots(count, dateKey, Math.floor(Date.now() / 1000), window);
+  for (const ts of slots) insertScheduledRun(dateKey, ts, KIND);
 
-  if (existing) return existing;
-
-  const startHour = getIntSetting('image_evening_start_hour', 18, 0, 23);
-  const endHour   = getIntSetting('image_evening_end_hour',   22, 1, 24);
-  const clampedEnd = endHour <= startHour ? startHour + 1 : endHour;
-
-  const [y, m, d] = dateKey.split('-').map(Number);
-  const windowStartMs = new Date(y, m - 1, d, startHour, 0, 0).getTime();
-  const windowEndMs   = new Date(y, m - 1, d, clampedEnd, 0, 0).getTime();
-  const randomMs      = windowStartMs + Math.random() * (windowEndMs - windowStartMs);
-  const scheduledAt   = Math.floor(randomMs / 1000);
-
-  const plan: ImagePlan = {
-    id: crypto.randomUUID(),
-    date_key: dateKey,
-    scheduled_at: scheduledAt,
-    fired: 0,
-  };
-
-  db.prepare(
-    `INSERT OR IGNORE INTO image_post_schedule (id, date_key, scheduled_at, fired) VALUES (?, ?, ?, 0)`,
-  ).run(plan.id, plan.date_key, plan.scheduled_at);
-
-  const scheduledTime = new Date(scheduledAt * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  logEvent('IMAGE_SCHEDULE_CREATED', `image post scheduled for ${scheduledTime}`);
-  logger.info('Image post scheduled', { date: dateKey, time: scheduledTime });
-
-  return plan;
+  const created = getScheduledRunsForDate(dateKey, KIND);
+  if (created.length > 0) {
+    logEvent('IMAGE_SCHEDULE_CREATED', `${created.length} image post(s) at: ${created.map((r) => formatLocalTime(r.run_at)).join(', ')}`);
+    logger.info("Today's image post plan created", { date: dateKey, times: created.map((r) => formatLocalTime(r.run_at)) });
+  }
+  return created;
 }
 
 // ── Tick ──────────────────────────────────────────────────────────────────────
@@ -93,89 +83,149 @@ async function tick(): Promise<void> {
   if (!getBooleanSetting('system_running', true)) return;
   if (_posting) return;
 
-  const plan = ensureTodayImagePlan();
-  if (plan.fired) return;
+  ensureTodayImagePlan();
 
-  const now = Math.floor(Date.now() / 1000);
-  if (now < plan.scheduled_at) return;
+  const due = getDuePendingRuns(Math.floor(Date.now() / 1000), KIND);
+  if (due.length === 0) return;
 
-  // Mark fired immediately to prevent double-run
-  getDb().prepare(`UPDATE image_post_schedule SET fired = 1 WHERE id = ?`).run(plan.id);
+  const run = due[0];
+  markRunFired(run.id);
 
   _posting = true;
-  logEvent('IMAGE_POST_START', `date=${plan.date_key}`);
-
   try {
-    // 1. Pick scene + generate image
-    const scene = pickScene();
-    const generated = await generateImage(scene);
-
-    // 2. Generate caption
-    const recentCaptions = getRecentCaptions(5);
-    const caption = await generateCaption(generated.scene, recentCaptions);
-
-    // 3. Insert pending record
-    const db = getDb();
-    const postId = crypto.randomUUID();
-    db.prepare(`
-      INSERT INTO image_posts (id, scene_id, prompt, revised_prompt, caption, file_path, model, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'POSTING')
-    `).run(
-      postId,
-      generated.scene.id,
-      generated.prompt,
-      generated.revisedPrompt ?? null,
-      caption,
-      generated.filePath,
-      generated.model,
-    );
-
-    logEvent('IMAGE_POST_GENERATED', `scene=${scene.id} caption="${caption.slice(0, 50)}"`, postId);
-
-    // 4. Post to X
-    const result = await postImageTweet(generated.filePath, caption);
-
-    // 5. Mark posted
-    db.prepare(`
-      UPDATE image_posts
-      SET status = 'POSTED', tweet_id = ?, tweet_url = ?, posted_at = unixepoch()
-      WHERE id = ?
-    `).run(result.tweetId ?? null, result.tweetUrl ?? null, postId);
-
-    logEvent('IMAGE_POST_POSTED', `scene=${scene.id} url=${result.tweetUrl ?? 'unknown'}`, postId);
-    logger.info('Image post live', { postId, scene: scene.id, tweetUrl: result.tweetUrl });
+    await fireOneImagePost();
   } catch (err) {
     logger.error('Image post failed', { err: String(err) });
-    logEvent('IMAGE_POST_ERROR', String(err));
-    // Un-fire the plan so it can retry after restart if it was a transient error
-    getDb().prepare(`UPDATE image_post_schedule SET fired = 0 WHERE id = ?`).run(plan.id);
+    logEvent('IMAGE_POST_ERROR', String(err).slice(0, 300));
   } finally {
     _posting = false;
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+/**
+ * Generation attempts, each de-risking the composition further.
+ *
+ * A plain reroll is a weak response to these failures — they're systematic
+ * (the model cannot draw hands, and it renders faces it was told to omit), not
+ * random. So each retry also removes whatever the model keeps getting wrong:
+ * first force a silhouette with hidden hands, then drop the person entirely.
+ */
+function attemptOptions(attempt: number, scene: Scene): { scene: Scene; options: GenerateImageOptions } {
+  if (attempt === 1) return { scene, options: {} };
+  if (attempt === 2) return { scene, options: { framing: 'silhouette', handState: 'hidden' } };
+  return { scene: pickSafeScene(), options: {} };
+}
 
-function getRecentCaptions(limit: number): string[] {
+async function fireOneImagePost(): Promise<void> {
+  const baseScene = pickScene();
+  const maxAttempts = getIntSetting('image_qa_max_attempts', 3, 1, 5);
+
+  logEvent('IMAGE_POST_START', `scene=${baseScene.id}`);
+
+  // The detail sentence is scene-specific, so it's reused across retries of the
+  // same scene and regenerated only when the retry ladder swaps the scene out.
+  let detail = await buildDetailWithClaude(baseScene);
+  let detailSceneId = baseScene.id;
+
+  let best: { image: GeneratedImage; verdict: ImageVerdict } | null = null;
+  let accepted: { image: GeneratedImage; verdict: ImageVerdict | null } | null = null;
+  let attemptsUsed = 0;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attemptsUsed = attempt;
+    const { scene, options } = attemptOptions(attempt, baseScene);
+
+    if (scene.id !== detailSceneId) {
+      detail = await buildDetailWithClaude(scene);
+      detailSceneId = scene.id;
+    }
+
+    const image = await generateImage(scene, { ...options, detail });
+    const verdict = await judgeImage(image.filePath);
+
+    // No verdict means the gate could not run. Fail open and post — failing
+    // closed would silently kill the feature if the CLI ever goes missing.
+    if (!verdict) {
+      logEvent('IMAGE_QA_UNAVAILABLE', `scene=${scene.id} attempt=${attempt}`);
+      accepted = { image, verdict: null };
+      break;
+    }
+
+    if (!isRejected(verdict)) {
+      accepted = { image, verdict };
+      break;
+    }
+
+    logEvent('IMAGE_QA_REJECTED', `scene=${scene.id} attempt=${attempt}/${maxAttempts} reason=${rejectionReason(verdict)}`);
+    logger.warn('Image rejected by QA gate', {
+      scene: scene.id, attempt, reason: rejectionReason(verdict), notes: verdict.notes,
+    });
+
+    if (!best || verdict.score > best.verdict.score) best = { image, verdict };
+  }
+
+  if (!accepted) {
+    // Every attempt was rejected. Skip today rather than post the least-bad
+    // one: a malformed image is negative engagement, and the run stays FIRED so
+    // the 60s tick doesn't retry this all evening.
+    const reason = best ? rejectionReason(best.verdict) : 'unknown';
+    const postId = best ? recordSkipped(best, attemptsUsed, reason) : null;
+    logEvent('IMAGE_QA_EXHAUSTED', `attempts=${attemptsUsed} best_reason=${reason}`, postId ?? undefined);
+    logger.warn('Image post skipped — QA gate rejected every attempt', { attempts: attemptsUsed, reason });
+    return;
+  }
+
+  const { image, verdict } = accepted;
+  const caption = await generateCaption(image.scene, getRecentCaptions(5));
+
+  const postId = insertImagePost({
+    sceneId: image.scene.id,
+    prompt: image.prompt,
+    revisedPrompt: image.revisedPrompt ?? null,
+    caption,
+    filePath: image.filePath,
+    model: image.model,
+    seed: image.seed,
+    width: image.width,
+    height: image.height,
+    qaVerdict: verdict,
+    qaAttempts: attemptsUsed,
+  });
+
+  logEvent('IMAGE_POST_GENERATED', `scene=${image.scene.id} attempts=${attemptsUsed} caption="${caption.slice(0, 50)}"`, postId);
+
   try {
-    const rows = getDb().prepare(
-      `SELECT caption FROM image_posts WHERE status = 'POSTED' ORDER BY posted_at DESC LIMIT ?`,
-    ).all(limit) as Array<{ caption: string }>;
-    return rows.map((r) => r.caption);
-  } catch {
-    return [];
+    const result = await postImageTweet(image.filePath, caption);
+    markImagePostPosted(postId, result.tweetId ?? null, result.tweetUrl ?? null);
+    logEvent('IMAGE_POST_POSTED', `scene=${image.scene.id} url=${result.tweetUrl ?? 'unknown'}`, postId);
+    logger.info('Image post live', { postId, scene: image.scene.id, tweetUrl: result.tweetUrl });
+  } catch (err) {
+    // Previously this only logged, leaving the row stuck in POSTING forever.
+    markImagePostError(postId, err);
+    logEvent('IMAGE_POST_ERROR', String(err).slice(0, 300), postId);
+    throw err;
   }
 }
 
-/** For the API / dashboard: today's scheduled image post time. */
-export function getTodayImageSchedule(): { scheduledAt: number; fired: boolean } | null {
-  try {
-    const row = getDb().prepare(
-      `SELECT scheduled_at, fired FROM image_post_schedule WHERE date_key = ?`,
-    ).get(todayDateKey()) as { scheduled_at: number; fired: number } | undefined;
-    if (!row) return null;
-    return { scheduledAt: row.scheduled_at, fired: row.fired === 1 };
-  } catch {
-    return null;
-  }
+/** Persists the best rejected attempt so the failure is inspectable. */
+function recordSkipped(
+  best: { image: GeneratedImage; verdict: ImageVerdict },
+  attempts: number,
+  reason: string,
+): string {
+  const postId = insertImagePost({
+    sceneId: best.image.scene.id,
+    prompt: best.image.prompt,
+    revisedPrompt: best.image.revisedPrompt ?? null,
+    caption: '',
+    filePath: best.image.filePath,
+    model: best.image.model,
+    seed: best.image.seed,
+    width: best.image.width,
+    height: best.image.height,
+    qaVerdict: best.verdict,
+    qaAttempts: attempts,
+  });
+  setImagePostStatus(postId, 'SKIPPED', `QA rejected all ${attempts} attempts: ${reason}`);
+  return postId;
 }

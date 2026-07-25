@@ -32,23 +32,64 @@ interface RawEngagement {
 }
 
 export async function ingestTimeline(maxPosts = 40): Promise<RawTweet[]> {
+  return collectFromUrl(X_HOME, maxPosts, 'timeline');
+}
+
+export interface SearchOptions {
+  /** 'Top' surfaces high-reach posts; 'Latest' surfaces the freshest. */
+  mode?: 'Top' | 'Latest';
+  max?: number;
+}
+
+/**
+ * Builds an X search URL.
+ *
+ * `query` may arrive percent-encoded — the trends API returns `query` that way
+ * — so decode first, otherwise `%23AI` re-encodes to `%2523AI` and the search
+ * looks for the literal text "%23AI".
+ */
+export function buildSearchUrl(query: string, mode: 'Top' | 'Latest' = 'Top'): string {
+  let decoded = query;
+  try {
+    decoded = decodeURIComponent(query);
+  } catch {
+    // Malformed escape sequence — use the raw string rather than throwing.
+  }
+  return `https://x.com/search?q=${encodeURIComponent(decoded)}`
+    + `&src=typed_query&f=${mode === 'Latest' ? 'live' : 'top'}`;
+}
+
+/**
+ * Runs an X search and extracts the result timeline.
+ *
+ * Shares its entire extraction path with `ingestTimeline` — search results and
+ * the home timeline render the same `article[data-testid="tweet"]` DOM, so one
+ * extractor means the two surfaces can never drift apart.
+ */
+export async function searchTweets(query: string, opts: SearchOptions = {}): Promise<RawTweet[]> {
+  const { mode = 'Top', max = 25 } = opts;
+  return collectFromUrl(buildSearchUrl(query, mode), max, `search:${query.slice(0, 40)}`);
+}
+
+/** Navigate, wait for tweets to render, then scroll-and-extract. */
+async function collectFromUrl(url: string, maxPosts: number, label: string): Promise<RawTweet[]> {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 
   try {
-    logger.info('Navigating to X timeline');
-    await page.goto(X_HOME, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    logger.info('Navigating to X', { label });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await delay(randomBetween(2000, 3500));
 
     // Wait for any tweet selector to appear
     const tweetSel = await waitForAnySelector(page, TWEET_SELECTORS, 20_000);
     if (!tweetSel) {
-      logger.warn('No tweet selector found — possibly not logged in or timeline empty');
+      logger.warn('No tweet selector found — not logged in, no results, or layout changed', { label });
       return [];
     }
 
     const tweets = await scrollAndCollect(page, tweetSel, maxPosts);
-    logger.info(`Collected ${tweets.length} raw tweets from timeline`);
+    logger.info(`Collected ${tweets.length} raw tweets`, { label });
     return tweets;
   } finally {
     await page.close();
@@ -97,6 +138,12 @@ async function extractTweetsFromPage(
 
       for (const article of articles) {
         try {
+          // Search results interleave promoted tweets. They're ads, not
+          // conversations — replying to them is wasted volume.
+          if (article.closest('[data-testid="placementTracking"]')) continue;
+          const promoLabel = article.querySelector('[data-testid="promotedIndicator"]');
+          if (promoLabel) continue;
+
           let text = '';
           for (const sel of textSels) {
             const found = article.querySelector(sel);

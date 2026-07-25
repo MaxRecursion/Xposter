@@ -18,7 +18,7 @@ import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
-import { getNextRuns, getTodayPlan, ensureTodayPlan } from '../scheduler/random_runs.js';
+import { getNextRuns, getTodayPlan, ensureTodayPlan, getTodayMix } from '../scheduler/random_runs.js';
 import { getTodayOriginalPlan, getNextOriginalRuns } from '../scheduler/original_posts.js';
 
 export function createServer(): express.Express {
@@ -76,7 +76,7 @@ export function createServer(): express.Express {
   // Schedule visibility
   app.get('/api/schedule/today', (_req, res) => {
     res.json({
-      pipeline: { today: ensureTodayPlan(), upcoming: getNextRuns(10) },
+      pipeline: { today: ensureTodayPlan(), upcoming: getNextRuns(10), mix: getTodayMix() },
       original_posts: { today: getTodayOriginalPlan(), upcoming: getNextOriginalRuns(10) },
     });
   });

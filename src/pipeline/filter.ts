@@ -157,26 +157,40 @@ export interface FilterResult {
   reason?: string;
 }
 
-export function filterPost(
-  text: string,
-  extraKeywords: string[] = [],
-): FilterResult {
+/**
+ * Language gate: we accept marathi (Devanagari + Roman) and english only.
+ * Shared by the timeline and trend paths — both reject hindi/unknown.
+ */
+export function languageGate(text: string): { language: DetectedLanguage; pass: boolean } {
   const language = detectLanguage(text);
+  return { language, pass: language !== 'unknown' && language !== 'hindi' };
+}
 
-  // Language gate: we accept marathi (Devanagari + Roman) and english only.
-  if (language === 'unknown' || language === 'hindi') {
-    return { pass: false, language, matchedKeywords: [], reason: `unsupported language: ${language}` };
-  }
-
+/**
+ * Topic gate: which of our configured keywords appear in the text.
+ *
+ * Word-boundary matching avoids substring false positives like 'rain'
+ * passing "training" or "brain" posts through the topic gate.
+ */
+export function keywordGate(text: string, extraKeywords: string[] = []): string[] {
   const keywords = [
     ...MARATHI_KEYWORDS,
     ...DEFAULT_ENGLISH_KEYWORDS,
     ...extraKeywords.map((k) => k.toLowerCase()),
   ];
+  return keywords.filter((kw) => keywordMatches(text, kw));
+}
 
-  // Word-boundary matching avoids substring false positives like 'rain'
-  // passing "training" or "brain" posts through the topic gate.
-  const matchedKeywords = keywords.filter((kw) => keywordMatches(text, kw));
+export function filterPost(
+  text: string,
+  extraKeywords: string[] = [],
+): FilterResult {
+  const { language, pass: langOk } = languageGate(text);
+  if (!langOk) {
+    return { pass: false, language, matchedKeywords: [], reason: `unsupported language: ${language}` };
+  }
+
+  const matchedKeywords = keywordGate(text, extraKeywords);
 
   // Marathi (any script) is the PRIMARY target language: pass regardless of
   // explicit topic keywords — we want to reply to Marathi speakers broadly.
@@ -190,6 +204,47 @@ export function filterPost(
   }
 
   return { pass: true, language, matchedKeywords };
+}
+
+/** Minimum body for a post to be worth replying to under a trend. */
+const TREND_MIN_CHARS = 40;
+const TREND_MIN_WORDS = 4;
+
+/**
+ * Filter for trend-sourced candidates.
+ *
+ * Deliberately has NO keyword gate: under a trending topic the trend itself is
+ * the relevance signal, so requiring a Pune/tech keyword would reject almost
+ * everything. The language gate stays — and tightens to english-only, because
+ * the persona replies in polished English and `assertEnglishOnly` throws on
+ * Devanagari. A substance check replaces the keyword gate so we skip one-word
+ * hashtag spam and bare link drops.
+ */
+export function filterTrendPost(text: string): FilterResult {
+  const { language } = languageGate(text);
+
+  if (language !== 'english') {
+    return { pass: false, language, matchedKeywords: [], reason: `not english: ${language}` };
+  }
+
+  // Strip URLs, @mentions and #hashtags before measuring substance so a post
+  // that is nothing but links and tags doesn't look long enough to qualify.
+  const body = text
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[@#]\w+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (body.length < TREND_MIN_CHARS) {
+    return { pass: false, language, matchedKeywords: [], reason: `too short: ${body.length} chars` };
+  }
+
+  const words = body.split(' ').filter(Boolean);
+  if (words.length < TREND_MIN_WORDS) {
+    return { pass: false, language, matchedKeywords: [], reason: `too few words: ${words.length}` };
+  }
+
+  return { pass: true, language, matchedKeywords: [] };
 }
 
 // ── Deduplication ─────────────────────────────────────────────────────────────

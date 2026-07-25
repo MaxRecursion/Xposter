@@ -1,4 +1,4 @@
-import { Post, getSetting, logEvent } from '../storage/queries.js';
+import { Post, Stance, getSetting, logEvent } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
@@ -214,14 +214,43 @@ LANGUAGE: Reply in sharp, polished English only. Do NOT reply in Marathi, Hindi,
 
 OUTPUT: Return ONLY the reply text. No quotes around it, no "Here's a reply:", no explanation, no "Mode A" / "Mode B" label. Just the reply, exactly as it would appear on X.`;
 
-function systemPrompt(tier: WitTier, classification: Classification | null, flavor: Flavor): string {
+function systemPrompt(
+  tier: WitTier,
+  classification: Classification | null,
+  flavor: Flavor,
+  stance: Stance | null = null,
+): string {
   const base = flavor === 'pune' ? SYSTEM_PROMPT_PUNE : SYSTEM_PROMPT_GENERAL;
   const classificationGuidance = classificationGuidanceFor(classification);
   return [
     base,
     witInstructions(tier, flavor),
     classificationGuidance,
+    stanceGuidanceFor(stance),
   ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Reply framing for trend candidates.
+ *
+ * Appended to the base prompt, so it inherits the ANTI-AI-SLOP and content
+ * rules rather than restating them. The contrarian block borrows the
+ * quote-tweet framing — disagree with the claim, never the author — because
+ * that's the difference between a take worth replying to and a fight.
+ */
+export function stanceGuidanceFor(stance: Stance | null): string {
+  if (stance === 'CONTRARIAN') {
+    return `STANCE: CONTRARIAN. The consensus in this thread is obvious — do not join it. Take the strongest honest position against the prevailing take, or name what everyone is missing.
+- Argue with the CLAIM, never the author. No "you're wrong", no condescension, no "actually".
+- One concrete reason, not a list. Specificity is the whole game.
+- Never contrarian for its own sake — if the consensus is simply correct, find the unexamined cost or the second-order effect instead of denying the obvious.
+- No sneering, no "everyone is stupid", no both-sidesing a settled fact.
+- Never make the disagreement about identity, region, religion, caste, gender or party.`;
+  }
+  if (stance === 'ALIGNED') {
+    return `STANCE: ALIGNED. Engage with the topic on its own terms. If you agree, agreement must carry a new detail, example or consequence — never a bare echo of what the post already said.`;
+  }
+  return '';
 }
 
 function classificationGuidanceFor(c: Classification | null): string {
@@ -248,11 +277,13 @@ function classificationGuidanceFor(c: Classification | null): string {
 export async function generateReply(
   post: Post,
   authorAccount: Account | null = null,
-  options: { avoidTexts?: string[] } = {},
+  options: { avoidTexts?: string[]; stance?: Stance | null } = {},
 ): Promise<string> {
   const { level, tier } = readWitLevel();
   const classification = (authorAccount?.classification as Classification | null) ?? null;
   const flavor = pickFlavor(post.text);
+  // Explicit option wins; otherwise fall back to whatever was persisted on the row.
+  const stance = options.stance ?? post.stance ?? null;
 
   const contextBlock = isContextEnabled()
     ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 6, maxTokens: 800 })
@@ -268,8 +299,8 @@ export async function generateReply(
   // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
   const temp = tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
 
-  const sysPrompt = systemPrompt(tier, classification, flavor);
-  logPromptToConsole('REPLY', `${post.id} flavor=${flavor}`, sysPrompt, userPrompt);
+  const sysPrompt = systemPrompt(tier, classification, flavor, stance);
+  logPromptToConsole('REPLY', `${post.id} flavor=${flavor} stance=${stance ?? 'none'}`, sysPrompt, userPrompt);
 
   let rawReply = '';
 
@@ -281,6 +312,7 @@ export async function generateReply(
         systemPrompt: sysPrompt,
         userPrompt,
         avoidTexts: options.avoidTexts ?? [],
+        stance,
       });
     } catch (err) {
       logger.warn('Agentic reply generation failed; falling back to single-shot', { postId: post.id, err: String(err) });

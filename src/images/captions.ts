@@ -4,6 +4,7 @@
  */
 import { logger } from '../utils/logger.js';
 import { getOptionalGroqClient } from '../pipeline/groq_client.js';
+import { identityCaptionHint, resolveIdentity } from './identity.js';
 import type { Scene } from './generator.js';
 
 const SYSTEM_PROMPT = `You write captions for lifestyle photos posted on X (Twitter) by a young Indian woman in her 20s living in an urban city (Pune/Mumbai).
@@ -17,6 +18,7 @@ Style rules:
 - References the specific scene/vibe naturally
 - Occasionally witty or self-aware, never cringe
 - Do NOT mention "AI" or "generated" or anything meta
+- Do NOT describe her face, expression or how she looks — the photo never shows her face
 
 Output ONLY the caption text, nothing else.`;
 
@@ -25,7 +27,10 @@ export async function generateCaption(scene: Scene, recentCaptions: string[] = [
     ? `\n\nAvoid these recent captions:\n${recentCaptions.slice(0, 5).map((c) => `- ${c}`).join('\n')}`
     : '';
 
-  const userPrompt = `Write a caption for a photo of: ${scene.description}.${avoidHint}`;
+  // Give the writer the recurring props so a caption can't contradict the frame.
+  const propsHint = `\n\nRecurring details in her photos: ${identityCaptionHint(resolveIdentity())}.`;
+
+  const userPrompt = `Write a caption for a photo of: ${scene.description}.${propsHint}${avoidHint}`;
 
   try {
     const groq = getOptionalGroqClient();

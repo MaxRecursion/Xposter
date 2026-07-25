@@ -13,6 +13,7 @@ import { startWeeklyDigestScheduler, stopWeeklyDigestScheduler } from './weekly_
 import { startAgentWatcher, stopAgentWatcher } from '../agent/watcher.js';
 import { startLikesScheduler, stopLikesScheduler } from './likes.js';
 import { startImagePostScheduler, stopImagePostScheduler } from './image_posts.js';
+import { startTrendRefreshScheduler, stopTrendRefreshScheduler } from './trend_refresh.js';
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
 import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
@@ -25,8 +26,9 @@ export function startScheduler(): void {
   // Prime Claude CLI availability check so isClaudeAvailable() is accurate immediately
   void primeClaudeCliCheck();
 
-  // The pipeline cron is now driven by random_runs.ts.
-  configureRandomRuns(async () => { await runPipeline(); });
+  // The pipeline cron is now driven by random_runs.ts, which also decides
+  // whether each run pulls from a trending topic or the home timeline.
+  configureRandomRuns(async (source) => { await runReplyPipeline({ source }); });
   startRandomScheduler();
   startFollowerSync();
   startFollowBackProcessor();
@@ -38,6 +40,7 @@ export function startScheduler(): void {
   startAgentWatcher();
   startLikesScheduler();
   startImagePostScheduler();
+  startTrendRefreshScheduler();
 
   if (isContextEnabled()) {
     const store = getContextStore();
@@ -75,6 +78,7 @@ export function stopScheduler(): void {
   stopAgentWatcher();
   stopLikesScheduler();
   stopImagePostScheduler();
+  stopTrendRefreshScheduler();
   stopContextIngest();
   if (_expiryHandle) {
     clearInterval(_expiryHandle);

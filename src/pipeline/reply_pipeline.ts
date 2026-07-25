@@ -1,6 +1,6 @@
 import { ingestTimeline } from '../browser/ingestion.js';
 import { sendApprovalNotification } from '../notifications/ntfy.js';
-import { getHandlesRepliedToToday, getTopicCountsToday, getPost, logEvent, Post, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
+import { getHandlesRepliedToToday, getTopicCountsToday, getPost, logEvent, Post, PostSource, Stance, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
 import { detectTopics } from '../context/topics.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
 import { listRecentReplyTexts } from '../storage/interactions.js';
@@ -15,6 +15,11 @@ import { rankCandidates, scorePostsWithSignals, ScoredPost } from './scorer.js';
 import { generateDistinct } from './dedup.js';
 import { publishReply } from './reply_publisher.js';
 import { runReplyRetryQueue } from '../scheduler/reply_retry.js';
+import { sourceTrendCandidates, type TrendCandidate } from './trend_source.js';
+import { secondsUntilNextReplyAllowed } from './rate_limit.js';
+import { recordTrendReply } from '../trends/x_trends.js';
+import { classifyTrendSafety } from '../trends/trend_filter.js';
+import { updatePostStance } from '../storage/queries.js';
 
 interface FilteredPost {
   post: Post;
@@ -27,7 +32,17 @@ interface FilterRecord extends FilteredPost {
 
 let _running = false;
 
-export async function runReplyPipeline(): Promise<{ ingested: number; candidates: number }> {
+export interface RunReplyPipelineOptions {
+  /**
+   * Where this run should look for candidates. Defaults to TIMELINE so the
+   * manual "Run Now" button and any existing caller behave exactly as before.
+   */
+  source?: PostSource;
+}
+
+export async function runReplyPipeline(
+  opts: RunReplyPipelineOptions = {},
+): Promise<{ ingested: number; candidates: number }> {
   if (_running) {
     logger.warn('Pipeline already running - skipping overlapping run');
     return { ingested: 0, candidates: 0 };
@@ -38,8 +53,9 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
     return { ingested: 0, candidates: 0 };
   }
 
+  const source = opts.source ?? 'TIMELINE';
   _running = true;
-  logEvent('PIPELINE_START');
+  logEvent('PIPELINE_START', `source=${source}`);
 
   try {
     const retries = await runReplyRetryQueue();
@@ -47,6 +63,27 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
       logEvent('POST_RETRY_QUEUE_COMPLETE', `posted=${retries.posted} failed=${retries.failed}`);
     }
 
+    const blocklist = getListSetting('blocklist_classifications', ['BOT', 'SPAM', 'BRAND_PROMO'])
+      .map((value) => value.toUpperCase());
+
+    // ── Trend path ────────────────────────────────────────────────────────────
+    // Deliberately a fall-through rather than a branch: if trend sourcing yields
+    // nothing (API down, no eligible trend, all results non-English) the run
+    // continues into the timeline path and still posts. A total X-trends outage
+    // therefore costs zero replies and degrades to the previous behaviour.
+    if (source !== 'TIMELINE' && getBooleanSetting('trend_replies_enabled', true)) {
+      const trendCandidates = await sourceTrendCandidates(source);
+      if (trendCandidates.candidates.length > 0) {
+        const result = await processTrendCandidates(trendCandidates.candidates, blocklist);
+        logEvent('PIPELINE_COMPLETE', `source=${source} trend="${trendCandidates.trendName}" posted=${result.posted} pending=${result.pendingApproval}`);
+        logger.info('Trend pipeline complete', { source, trend: trendCandidates.trendName, ...result });
+        return { ingested: trendCandidates.candidates.length, candidates: result.posted + result.pendingApproval };
+      }
+      logEvent('TREND_SOURCING_EMPTY', `source=${source} — falling back to timeline`);
+      logger.info('Trend sourcing produced nothing; falling back to home timeline', { source });
+    }
+
+    // ── Timeline path ─────────────────────────────────────────────────────────
     const rawTweets = await ingestTimeline(60);
     logEvent('INGESTION_COMPLETE', `${rawTweets.length} raw tweets`);
 
@@ -60,9 +97,6 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
     const topCandidates = await selectCandidates(filtered, filterResults, newPosts);
     logger.info(`Scored candidates selected: ${topCandidates.length}`);
     logEvent('SCORE_COMPLETE', `${topCandidates.length} candidates selected`);
-
-    const blocklist = getListSetting('blocklist_classifications', ['BOT', 'SPAM', 'BRAND_PROMO'])
-      .map((value) => value.toUpperCase());
 
     let posted = 0;
     let pendingApproval = 0;
@@ -85,6 +119,44 @@ export async function runReplyPipeline(): Promise<{ ingested: number; candidates
   } finally {
     _running = false;
   }
+}
+
+/**
+ * Posts trend candidates with heavier pacing than the timeline path.
+ *
+ * Under a live trending hashtag, five replies 8-15s apart is exactly the burst
+ * pattern that draws rate-limiting — on the home timeline the same cadence is
+ * invisible. So trend runs take fewer candidates and space them further apart.
+ * The daily total is unchanged; it just arrives less suspiciously.
+ */
+async function processTrendCandidates(
+  candidates: TrendCandidate[],
+  blocklist: string[],
+): Promise<{ posted: number; pendingApproval: number }> {
+  const maxCandidates = Math.min(getIntSetting('max_candidates_per_run', 5, 1, 20), 3);
+  const minIntervalSec = getIntSetting('trend_min_reply_interval_sec', 90, 0, 600);
+  const selected = candidates.slice(0, maxCandidates);
+
+  let posted = 0;
+  let pendingApproval = 0;
+
+  for (let i = 0; i < selected.length; i++) {
+    const candidate = selected[i];
+    const outcome = await processCandidate(candidate.scored, blocklist, candidate.post.stance ?? null);
+
+    if (outcome === 'posted') {
+      posted++;
+      recordTrendReply(candidate.trendKey);
+    }
+    if (outcome === 'pending_approval') pendingApproval++;
+
+    if (outcome === 'posted' && i < selected.length - 1) {
+      const waitSec = secondsUntilNextReplyAllowed(minIntervalSec);
+      await delay(Math.max(randomBetween(8000, 15000), waitSec * 1000));
+    }
+  }
+
+  return { posted, pendingApproval };
 }
 
 export function isReplyPipelineRunning(): boolean {
@@ -223,7 +295,11 @@ function selectFallbackCandidate(
 
 type CandidateOutcome = 'posted' | 'pending_approval' | 'skipped' | 'error';
 
-async function processCandidate(candidate: ScoredPost, blocklist: string[]): Promise<CandidateOutcome> {
+async function processCandidate(
+  candidate: ScoredPost,
+  blocklist: string[],
+  stance: Stance | null = null,
+): Promise<CandidateOutcome> {
   try {
     const post = getPost(candidate.id);
     if (!post) return 'skipped';
@@ -249,13 +325,30 @@ async function processCandidate(candidate: ScoredPost, blocklist: string[]): Pro
     }
 
     updatePostStatus(post.id, 'GENERATING');
+
+    // Last line of defence before a contrarian take reaches the model. The
+    // stance was already gated on safety when it was assigned; re-asserting it
+    // here means a future refactor can't quietly route around that check.
+    let safeStance: Stance | null = stance ?? post.stance ?? null;
+    if (safeStance === 'CONTRARIAN') {
+      const postSafety = classifyTrendSafety(post.text);
+      if (postSafety.class !== 'SAFE_FOR_CONTRARIAN') {
+        logEvent('CONTRARIAN_BLOCKED', `post text classified ${postSafety.class} (${postSafety.reason})`, post.id);
+        logger.warn('Contrarian stance blocked by post-text safety check', {
+          postId: post.id, class: postSafety.class, reason: postSafety.reason,
+        });
+        updatePostStance(post.id, 'ALIGNED');
+        safeStance = 'ALIGNED';
+      }
+    }
+
     const recentReplies = listRecentReplyTexts(25);
     const distinct = await generateDistinct({
       existingTexts: recentReplies,
       generate: (attempt) => generateReply(
         post,
         account,
-        attempt > 1 ? { avoidTexts: recentReplies } : {},
+        attempt > 1 ? { avoidTexts: recentReplies, stance: safeStance } : { stance: safeStance },
       ),
       getText: (value) => value,
       onDuplicate: (_value, attempt) => {

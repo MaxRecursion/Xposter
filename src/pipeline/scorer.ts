@@ -138,6 +138,100 @@ export function rankCandidates(scored: ScoredPost[]): ScoredPost[] {
   return [...scored].sort((a, b) => b.score - a.score);
 }
 
+// ── Trend scoring ─────────────────────────────────────────────────────────────
+
+/**
+ * Trend candidates need the opposite of `engagementSweet`.
+ *
+ * `scorePost` awards 10 points for 1-50 total engagement and 0 for anything
+ * above 500 — it deliberately steers away from viral posts, which is right for
+ * the home timeline where the goal is genuine conversation with small accounts.
+ * Under a trending hashtag the goal is reach, so a separate profile inverts
+ * that: reward absolute reach and how fast it's climbing, but penalise posts
+ * already buried under thousands of replies where nobody will scroll far enough
+ * to see ours.
+ *
+ * Kept as its own function rather than a flag on `scorePost` so the two
+ * breakdowns stay separately typed and the existing scorer's pinned behaviour
+ * is untouched.
+ */
+export interface TrendScoreBreakdown {
+  reach: number;           //   0-30: absolute audience, log-scaled
+  velocity: number;        //   0-25: engagement per hour
+  replyWindow: number;     //   0-20: old enough to have traction, young enough to matter
+  crowding: number;        // -20-0 : how buried our reply would be
+  trendHeat: number;       //   0-15: freshness/rank momentum of the trend itself
+  accountHistory: number;  //  -6-10: prior engagement from this author
+}
+
+export interface TrendScoringSignals {
+  trendHeat?: number;
+  accountHistory?: number;
+}
+
+export function scoreTrendPost(post: Post, signals: TrendScoringSignals = {}): ScoredPost {
+  const now = Math.floor(Date.now() / 1000);
+  const ageSeconds = Math.max(0, now - post.timestamp);
+  const ageMinutes = ageSeconds / 60;
+  const ageHours = Math.max(0.25, ageSeconds / 3600);
+
+  const weighted = post.likes + post.retweets * 2 + post.replies;
+
+  // ── Reach (0-30) ──────────────────────────────────────────────────────────
+  // Log-scaled so 10k and 100k don't both saturate; 10^4.5 ≈ 32k caps it.
+  const reach = clamp((Math.log10(1 + weighted) / 4.5) * 30, 0, 30);
+
+  // ── Velocity (0-25) ───────────────────────────────────────────────────────
+  // 2k likes in 40 minutes is a very different bet from 2k over three days.
+  const perHour = weighted / ageHours;
+  const velocity = clamp((Math.log10(1 + perHour) / 3.5) * 25, 0, 25);
+
+  // ── Reply window (0-20) ───────────────────────────────────────────────────
+  // Under 10 min the post may never take off at all; past ~6h the thread is done.
+  let replyWindow: number;
+  if (ageMinutes < 10) replyWindow = 8;
+  else if (ageMinutes <= 180) replyWindow = 20;
+  else if (ageMinutes <= 360) replyWindow = 10;
+  else if (ageMinutes <= 720) replyWindow = 4;
+  else replyWindow = 0;
+
+  // ── Crowding (-20-0) ──────────────────────────────────────────────────────
+  // Paired with reach, the optimum becomes "large audience, not yet buried".
+  const crowding = -clamp((post.replies / 150) * 20, 0, 20);
+
+  const trendHeat = clamp(signals.trendHeat ?? 0, 0, 15);
+  const accountHistory = clamp(signals.accountHistory ?? 0, -6, 10);
+
+  const breakdown: TrendScoreBreakdown = {
+    reach: round1(reach),
+    velocity: round1(velocity),
+    replyWindow,
+    crowding: round1(crowding),
+    trendHeat: round1(trendHeat),
+    accountHistory: round1(accountHistory),
+  };
+
+  const score = clamp(
+    breakdown.reach + breakdown.velocity + breakdown.replyWindow
+    + breakdown.crowding + breakdown.trendHeat + breakdown.accountHistory,
+    0,
+    100,
+  );
+
+  return { id: post.id, score: round1(score), breakdown: breakdown as unknown as ScoreBreakdown };
+}
+
+export function scoreTrendPosts(posts: Post[], trendHeat: number): ScoredPost[] {
+  return posts.map((post) => scoreTrendPost(post, {
+    trendHeat,
+    accountHistory: accountHistorySignal(getAccount(post.author_handle)),
+  }));
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 async function loadTopicalHeat(posts: Post[]): Promise<number[]> {
   if (posts.length === 0) return [];
   const store = getContextStore();

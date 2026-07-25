@@ -18,9 +18,21 @@ export function formatLocalTime(unixSec: number): string {
   return new Date(unixSec * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function getActiveWindow(dateKey: string): ActiveWindow {
-  const startHour = getIntSetting('active_window_start_hour', 9, 0, 23);
-  const endHourRaw = getIntSetting('active_window_end_hour', 22, 1, 24);
+/**
+ * The daily window a scheduler may fire in.
+ *
+ * The setting keys are parameterised so schedulers with their own window (image
+ * posts run in the evening) can reuse the slot machinery instead of rolling
+ * their own plan table.
+ */
+export function getActiveWindow(
+  dateKey: string,
+  startKey = 'active_window_start_hour',
+  endKey = 'active_window_end_hour',
+  defaults: { start: number; end: number } = { start: 9, end: 22 },
+): ActiveWindow {
+  const startHour = getIntSetting(startKey, defaults.start, 0, 23);
+  const endHourRaw = getIntSetting(endKey, defaults.end, 1, 24);
   const endHour = endHourRaw <= startHour ? startHour + 1 : endHourRaw;
 
   const [y, m, d] = dateKey.split('-').map(Number);
@@ -31,9 +43,13 @@ export function getActiveWindow(dateKey: string): ActiveWindow {
   return { startHour, endHour, startMs, endMs, totalMinutes };
 }
 
-export function generateWeightedSlots(count: number, dateKey: string, nowSec = Math.floor(Date.now() / 1000)): number[] {
+export function generateWeightedSlots(
+  count: number,
+  dateKey: string,
+  nowSec = Math.floor(Date.now() / 1000),
+  window: ActiveWindow = getActiveWindow(dateKey),
+): number[] {
   if (count <= 0) return [];
-  const window = getActiveWindow(dateKey);
   if (window.totalMinutes <= 0) return [];
 
   const slotMin = Math.floor(window.totalMinutes / count);

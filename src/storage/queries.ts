@@ -11,6 +11,12 @@ export type PostStatus =
   | 'PENDING_APPROVAL' | 'APPROVED' | 'POSTING'
   | 'POSTED' | 'SKIPPED' | 'EXPIRED' | 'ERROR' | 'DELETED';
 
+/** Where a reply candidate was discovered. */
+export type PostSource = 'TIMELINE' | 'TREND_GLOBAL' | 'TREND_INDIA';
+
+/** How a reply to this post should be framed. */
+export type Stance = 'ALIGNED' | 'CONTRARIAN';
+
 export interface Post {
   id: string;
   tweet_id: string;
@@ -29,6 +35,9 @@ export interface Post {
   generated_reply: string | null;
   final_reply: string | null;
   posted_tweet_id: string | null;
+  source: PostSource;
+  stance: Stance | null;
+  trend_key: string | null;
   deleted_at: number | null;
   posting_attempts: number;
   retry_after: number | null;
@@ -51,8 +60,14 @@ export interface RawTweet {
 
 // ── Insert ────────────────────────────────────────────────────────────────────
 
+export interface UpsertPostMeta {
+  /** Defaults to TIMELINE so existing single-arg callers are unaffected. */
+  source?: PostSource;
+  trendKey?: string | null;
+}
+
 /** Inserts a newly-ingested tweet; returns null for duplicates or invalid refs. */
-export function upsertPost(tweet: RawTweet): Post | null {
+export function upsertPost(tweet: RawTweet, meta: UpsertPostMeta = {}): Post | null {
   if (!isValidTweetReference(tweet.tweet_id, tweet.tweet_url)) {
     return null;
   }
@@ -60,13 +75,14 @@ export function upsertPost(tweet: RawTweet): Post | null {
   const id = crypto.randomUUID();
   const result = getDb().prepare(`
     INSERT INTO posts (id, tweet_id, author_handle, author_name, text,
-      timestamp, likes, replies, retweets, tweet_url, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INGESTED')
+      timestamp, likes, replies, retweets, tweet_url, status, source, trend_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INGESTED', ?, ?)
     ON CONFLICT(tweet_id) DO NOTHING
   `).run(
     id, tweet.tweet_id, tweet.author_handle, tweet.author_name,
     tweet.text, tweet.timestamp, tweet.likes, tweet.replies,
     tweet.retweets, tweet.tweet_url,
+    meta.source ?? 'TIMELINE', meta.trendKey ?? null,
   );
 
   if (result.changes === 0) return null;
@@ -140,6 +156,13 @@ export function updatePostLanguage(id: string, language: string): void {
   getDb()
     .prepare(`UPDATE posts SET language = ?, status = 'FILTERED', updated_at = unixepoch() WHERE id = ?`)
     .run(language, id);
+}
+
+/** Records the reply framing chosen for a trend candidate. Does not touch status. */
+export function updatePostStance(id: string, stance: Stance): void {
+  getDb()
+    .prepare(`UPDATE posts SET stance = ?, updated_at = unixepoch() WHERE id = ?`)
+    .run(stance, id);
 }
 
 export function updatePostScore(
@@ -284,6 +307,31 @@ export function getHandlesRepliedToToday(): Set<string> {
     `)
     .all(startOfDay) as Array<{ author_handle: string }>;
   return new Set(rows.map((r) => r.author_handle));
+}
+
+/**
+ * Counts today's POSTED replies by stance (midnight-to-now, local time).
+ *
+ * Drives the deterministic contrarian allocator: because the safety classifier
+ * can force ALIGNED at any moment, a per-call coin flip would drift away from
+ * the configured ratio. Counting what actually shipped lets the allocator
+ * self-correct.
+ */
+export function getStanceCountsToday(): { aligned: number; contrarian: number } {
+  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const rows = getDb().prepare(`
+    SELECT stance, COUNT(*) AS n
+    FROM posts
+    WHERE status = 'POSTED' AND updated_at >= ? AND stance IS NOT NULL
+    GROUP BY stance
+  `).all(startOfDay) as Array<{ stance: string; n: number }>;
+
+  const out = { aligned: 0, contrarian: 0 };
+  for (const row of rows) {
+    if (row.stance === 'CONTRARIAN') out.contrarian = row.n;
+    else if (row.stance === 'ALIGNED') out.aligned = row.n;
+  }
+  return out;
 }
 
 /**
