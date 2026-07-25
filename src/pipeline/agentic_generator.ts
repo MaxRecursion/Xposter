@@ -192,38 +192,10 @@ async function buildResearchTools(sdk: AgentSdk): Promise<{ defs: SdkToolDef[]; 
     logger.warn('search_news tool unavailable', { err: String(err) });
   }
 
-  // search_twitter — live X search via the local twitter-cli
-  try {
-    const { twitterSearchSource } = await import('../context/sources/twitter_search.js');
-    names.push('search_twitter');
-    defs.push(sdk.tool(
-      'search_twitter',
-      'Live X (Twitter) search for what people are posting right now. Call this for current sentiment, breaking chatter, or to check whether a take is already everywhere.',
-      {
-        query: z.string().describe('X search query'),
-        max_results: z.number().int().min(1).max(15).optional().describe('Max tweets to return (default 10)'),
-      },
-      async (args: { query: string; max_results?: number }) => {
-        const source = twitterSearchSource({
-          name: 'agentic-search',
-          query: args.query,
-          intervalMinutes: 0,
-          credibility: 0.5,
-          maxTweets: args.max_results ?? 10,
-        });
-        const result = await source.fetch();
-        if (result.items.length === 0) {
-          return toolText('No tweets found (the query may have no matches, or the local twitter CLI is unavailable).');
-        }
-        const lines = result.items
-          .slice(0, args.max_results ?? 10)
-          .map((it, i) => `${i + 1}. ${it.body.slice(0, 240)}`);
-        return toolText(lines.join('\n'));
-      },
-    ));
-  } catch (err) {
-    logger.warn('search_twitter tool unavailable', { err: String(err) });
-  }
+  // No search_twitter tool: it was backed by a local twitter-cli that has been
+  // broken since it was added (HTTP 404 on every search), so the agent only
+  // ever burned a research call on it. Live X search runs through the
+  // Playwright session instead — see searchTweets in src/browser/ingestion.ts.
 
   // read_url — fetch one page as markdown via Jina Reader
   try {
@@ -257,7 +229,6 @@ function agentInstructions(kind: 'reply' | 'post', submitTool: string, researchT
     ? [
       `1. RESEARCH (optional — at most ${MAX_RESEARCH_TOOL_CALLS} tool calls): if one concrete fact, number, or fresh event would make the ${what} sharper, look it up first:`,
       researchTools.includes('search_news') ? '   - search_news: recent news/discussion from the local index.' : '',
-      researchTools.includes('search_twitter') ? '   - search_twitter: what people are posting on X right now.' : '',
       researchTools.includes('read_url') ? '   - read_url: fetch one specific page when you need its details.' : '',
       `   Skip research entirely when the ${what} is pure wit or banter and needs no facts.`,
     ].filter(Boolean).join('\n')
