@@ -219,6 +219,8 @@ async function loadSettings() {
     if ($('s-image-enabled'))       $('s-image-enabled').checked     = s.image_posts_enabled !== 'false';
     if ($('s-image-per-day'))       $('s-image-per-day').value       = s.image_posts_per_day ?? '1';
     if ($('s-image-qa'))            $('s-image-qa').checked          = s.image_qa_enabled !== 'false';
+    if ($('s-image-budget'))        $('s-image-budget').value        = s.image_monthly_budget_usd ?? '3.0';
+    if ($('s-image-refs'))          $('s-image-refs').checked        = s.image_use_references !== 'false';
   } catch { /* ignore */ }
   await loadDiagnostics();
   await refreshAgentSettingsNote();
@@ -1397,6 +1399,8 @@ document.addEventListener('DOMContentLoaded', () => {
           image_posts_enabled:          $('s-image-enabled')?.checked ? 'true' : 'false',
           image_posts_per_day:          $('s-image-per-day')?.value,
           image_qa_enabled:             $('s-image-qa')?.checked ? 'true' : 'false',
+          image_monthly_budget_usd:     $('s-image-budget')?.value,
+          image_use_references:         $('s-image-refs')?.checked ? 'true' : 'false',
         }),
       });
       toast('Settings saved', 'success');

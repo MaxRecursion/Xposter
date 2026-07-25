@@ -401,10 +401,12 @@ function applyMigrations(db: Database.Database): void {
   // Image post quality gate + visual identity
   db.prepare(`
     INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('image_qa_enabled',      'true'),
-      ('image_qa_max_attempts', '3'),
-      ('image_identity_json',   ''),
-      ('image_aspect',          '4:5')
+      ('image_qa_enabled',        'true'),
+      ('image_qa_max_attempts',   '3'),
+      ('image_identity_json',     ''),
+      ('image_aspect',            '4:5'),
+      ('image_monthly_budget_usd','3.0'),
+      ('image_use_references',    'true')
   `).run();
 
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
@@ -520,6 +522,19 @@ function applyImagePostsMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'image_posts', 'provider', 'TEXT');
   addColumnIfMissing(db, 'image_posts', 'qa_verdict', 'TEXT');
   addColumnIfMissing(db, 'image_posts', 'qa_attempts', 'INTEGER NOT NULL DEFAULT 0');
+
+  // Spend ledger for paid image providers. Records every call including QA
+  // retries, so the monthly budget guard sees what was actually spent.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS image_generations (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider   TEXT NOT NULL,
+      model      TEXT NOT NULL,
+      cost_usd   REAL NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_image_gen_created ON image_generations(created_at DESC);
+  `);
 }
 
 /**

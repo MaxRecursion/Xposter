@@ -11,9 +11,12 @@ import '../src/env.js';
 import path from 'path';
 import { getDb } from '../src/storage/db.js';
 import {
-  allScenes, buildPrompt, generateImage, getScene, imageDimensions, pickScene,
+  allScenes, buildPrompt, generateImage, getScene, imageAspectRatio, imageDimensions, pickScene,
 } from '../src/images/generator.js';
 import { resolveIdentity } from '../src/images/identity.js';
+import { listAnchorPaths } from '../src/images/anchors.js';
+import { buildImageProviders } from '../src/images/providers/index.js';
+import { budgetStatus } from '../src/storage/image_budget.js';
 import { isRejected, judgeImage, rejectionReason } from '../src/images/vision_qa.js';
 
 async function judgeOnly(file: string): Promise<void> {
@@ -49,8 +52,15 @@ async function main(): Promise<void> {
   }
 
   const { width, height } = imageDimensions();
-  process.stdout.write(`Scene:    ${scene.id} (${scene.framing}, hands: ${scene.handState})\n`);
-  process.stdout.write(`Geometry: ${width}x${height}\n`);
+  const providers = buildImageProviders();
+  const budget = budgetStatus();
+  const anchors = listAnchorPaths();
+
+  process.stdout.write(`Providers: ${providers.map((p) => `${p.name}($${p.costPerImageUsd()})`).join(' -> ') || '(none)'}\n`);
+  process.stdout.write(`Budget:    $${budget.spentUsd} / $${budget.budgetUsd} spent this month (${budget.generations} generations)\n`);
+  process.stdout.write(`Anchors:   ${anchors.length} style reference(s)${anchors.length ? ` — ${anchors.map((a) => a.split('/').pop()).join(', ')}` : ' (text-only identity)'}\n`);
+  process.stdout.write(`Scene:     ${scene.id} (${scene.framing}, hands: ${scene.handState})\n`);
+  process.stdout.write(`Geometry:  ${width}x${height} (${imageAspectRatio()})\n`);
   process.stdout.write(`Identity: ${JSON.stringify(resolveIdentity(), null, 2)}\n\n`);
   process.stdout.write(`Prompt (no detail sentence):\n${buildPrompt(scene)}\n\n`);
 

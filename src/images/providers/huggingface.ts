@@ -10,6 +10,8 @@ export function huggingFaceProvider(): ImageProvider {
   return {
     name: 'huggingface',
     isAvailable: () => !!process.env.HF_API_KEY,
+    // Free-tier inference credits; not metered per image by us.
+    costPerImageUsd: () => 0,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
       const apiKey = process.env.HF_API_KEY;

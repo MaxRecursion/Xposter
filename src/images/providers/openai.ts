@@ -9,6 +9,8 @@ export function openAiProvider(): ImageProvider {
   return {
     name: 'openai',
     isAvailable: () => !!process.env.OPENAI_API_KEY,
+    // DALL-E 3 standard quality, 1024x1024 / 1024x1792.
+    costPerImageUsd: () => 0.04,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
       const apiKey = process.env.OPENAI_API_KEY;

@@ -91,6 +91,11 @@ const intSetting = (fallback: number, min: number, max: number) =>
   (v: unknown) => String(clampInt(v, fallback, min, max));
 const boolSetting = (v: unknown) => String(v === 'true');
 const textSetting = (maxLen: number) => (v: unknown) => String(v).slice(0, maxLen);
+const floatSetting = (fallback: number, min: number, max: number) => (v: unknown) => {
+  const n = parseFloat(String(v));
+  if (!Number.isFinite(n)) return String(fallback);
+  return String(Math.min(max, Math.max(min, n)));
+};
 
 const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   topic_keywords:              textSetting(500),
@@ -125,6 +130,8 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   image_evening_end_hour:           intSetting(22, 1, 24),
   image_qa_enabled:                 boolSetting,
   image_qa_max_attempts:            intSetting(3, 1, 5),
+  image_use_references:             boolSetting,
+  image_monthly_budget_usd:         floatSetting(3.0, 0, 100),
   image_identity_json:              textSetting(1500),
   image_aspect:                     textSetting(8),
   // Trend-driven replies

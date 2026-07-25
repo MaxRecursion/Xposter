@@ -19,12 +19,15 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger.js';
+import { getSetting } from '../storage/settings.js';
 import { getVelocityMap } from '../context/trends.js';
 import { isContextEnabled } from '../context/enrich.js';
 import { generateWithClaude } from '../pipeline/claude_generator.js';
 import { renderIdentity, resolveIdentity } from './identity.js';
 import { buildImageProviders } from './providers/index.js';
 import { readImageSize } from './dimensions.js';
+import { ANCHOR_PROMPT_NOTE, loadAnchors } from './anchors.js';
+import { recordImageGeneration } from '../storage/image_budget.js';
 
 const IMAGES_DIR = path.resolve(process.cwd(), 'data', 'images');
 
@@ -54,6 +57,12 @@ export function imageDimensions(): { width: number; height: number } {
     width: Number.isFinite(width) && width > 0 ? width : DEFAULT_WIDTH,
     height: Number.isFinite(height) && height > 0 ? height : DEFAULT_HEIGHT,
   };
+}
+
+/** Ratio string for providers that take an aspect rather than pixel dimensions. */
+export function imageAspectRatio(): string {
+  const raw = getSetting('image_aspect', '4:5').trim();
+  return /^\d+:\d+$/.test(raw) ? raw : '4:5';
 }
 
 // ── Scene catalogue ───────────────────────────────────────────────────────────
@@ -300,24 +309,40 @@ export async function generateImage(
 ): Promise<GeneratedImage> {
   const scene = sceneOverride ?? pickScene();
   const detail = options.detail ?? await buildDetailWithClaude(scene);
-  const prompt = buildPrompt(scene, { ...options, detail });
+  const basePrompt = buildPrompt(scene, { ...options, detail });
   const { width, height } = imageDimensions();
+  const aspectRatio = imageAspectRatio();
   const seed = options.seed ?? Math.floor(Math.random() * 1_000_000);
 
   const providers = buildImageProviders();
   if (providers.length === 0) throw new Error('No image providers available');
 
+  // Style anchors pin wardrobe, hair and colour grade across posts. Only
+  // append the explanatory note when references are actually being sent —
+  // otherwise it describes images the model never receives.
+  const referenceImages = loadAnchors();
+  const prompt = referenceImages.length > 0
+    ? `${basePrompt}\n\n${ANCHOR_PROMPT_NOTE}`
+    : basePrompt;
+
   logger.info('Generating image', {
     scene: scene.id,
     framing: options.framing ?? scene.framing,
     seed,
+    references: referenceImages.length,
     providers: providers.map((p) => p.name),
   });
 
   let lastErr: unknown;
   for (const provider of providers) {
     try {
-      const result = await provider.generate({ prompt, width, height, seed });
+      const result = await provider.generate({
+        prompt, width, height, seed, aspectRatio, referenceImages,
+      });
+
+      // Record spend before anything else can throw, so the budget guard never
+      // undercounts a call that actually billed.
+      recordImageGeneration(provider.name, result.model, result.costUsd ?? 0);
 
       ensureDir();
       const fileName = `image_${scene.id}_${seed}_${Date.now()}.jpg`;

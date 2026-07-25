@@ -21,8 +21,9 @@ const TIMEOUT_MS = 90_000;
 export function pollinationsProvider(): ImageProvider {
   return {
     name: 'pollinations',
-    // Free and keyless — always available.
+    // Free and keyless — always available, and always affordable.
     isAvailable: () => true,
+    costPerImageUsd: () => 0,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(req.prompt)}`
