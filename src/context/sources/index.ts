@@ -1,8 +1,8 @@
 import { rssSource } from './rss.js';
 import { redditSource } from './reddit.js';
 import { weatherSource } from './weather.js';
+import { getContextIngestIntervalMin, getEnvVar } from '../../config.js';
 import type { ContextSource } from '../types.js';
-
 interface RssDef {
   kind: 'rss';
   name: string;
@@ -94,14 +94,14 @@ const SOURCES: SourceDef[] = [
 ];
 
 export function buildContextSources(): ContextSource[] {
-  const overrideMin = parseInt(process.env.CONTEXT_INGEST_INTERVAL_MIN ?? '', 10);
+  const overrideMin = getContextIngestIntervalMin();
   const sources: ContextSource[] = [];
 
   for (const def of SOURCES) {
-    const intervalMinutes = Number.isFinite(overrideMin) && overrideMin > 0 ? overrideMin : def.intervalMinutes;
+    const intervalMinutes = overrideMin ?? def.intervalMinutes;
 
     if (def.kind === 'rss') {
-      const url = process.env[def.envVar] ?? def.defaultUrl;
+      const url = getEnvVar(def.envVar) ?? def.defaultUrl;
       if (!url || url.trim() === '') continue;
       sources.push(rssSource({
         name: def.name,
@@ -111,7 +111,7 @@ export function buildContextSources(): ContextSource[] {
         credibility: def.credibility,
       }));
     } else if (def.kind === 'reddit') {
-      const sub = process.env[def.envVar] ?? def.defaultSubreddit;
+      const sub = getEnvVar(def.envVar) ?? def.defaultSubreddit;
       if (!sub || sub.trim() === '') continue;
       sources.push(redditSource({
         name: def.name,
@@ -120,7 +120,7 @@ export function buildContextSources(): ContextSource[] {
         credibility: def.credibility,
       }));
     } else {
-      const loc = process.env[def.envVar] ?? def.defaultLocation;
+      const loc = getEnvVar(def.envVar) ?? def.defaultLocation;
       if (!loc || loc.trim() === '') continue;
       sources.push(weatherSource({
         name: def.name,

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { getAnthropicApiKey, getClaudeGeneratorModel } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const DEFAULT_MODEL = 'claude-opus-5';
@@ -15,14 +16,14 @@ let _cliAvailableCache: boolean | null = null;
 
 function getClient(): Anthropic {
   if (_client) return _client;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getAnthropicApiKey();
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
   _client = new Anthropic({ apiKey });
   return _client;
 }
 
 export function claudeGeneratorModel(): string {
-  return process.env.CLAUDE_GENERATOR_MODEL ?? DEFAULT_MODEL;
+  return getClaudeGeneratorModel();
 }
 
 /** Check once whether the `claude` CLI binary is reachable. Result is cached. */
@@ -97,7 +98,7 @@ async function generateWithClaudeCli(
  */
 export function isClaudeAvailable(): boolean {
   // Sync check: either path qualifies
-  return !!process.env.ANTHROPIC_API_KEY || _cliAvailableCache === true;
+  return !!getAnthropicApiKey() || _cliAvailableCache === true;
 }
 
 /**

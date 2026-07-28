@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
 import { getAllowedDashboardOrigins } from '../utils/network.js';
 
+import { getApiKey, isApiKeySet, getTrustDashboardOrigin, getActionTokenTTLSeconds } from '../config.js';
+
 const PLACEHOLDER_API_KEY = 'change_me_generate_with_openssl_rand_hex_32';
 
 export type ActionName = 'approve' | 'skip';
@@ -14,12 +16,11 @@ export function isLoopback(req: Request): boolean {
 }
 
 export function hasConfiguredApiKey(): boolean {
-  const expected = process.env.API_KEY;
-  return Boolean(expected && expected !== PLACEHOLDER_API_KEY);
+  return isApiKeySet();
 }
 
 export function isValidApiKey(candidate: string): boolean {
-  const expected = process.env.API_KEY;
+  const expected = getApiKey();
   if (!expected || expected === PLACEHOLDER_API_KEY || !candidate) return false;
   return timingSafeEqual(candidate, expected);
 }
@@ -71,7 +72,7 @@ export function callerLabel(req: Request): string {
 }
 
 export function isTrustedDashboardRequest(req: Request): boolean {
-  if ((process.env.TRUST_DASHBOARD_ORIGIN ?? 'true') !== 'true') return false;
+  if (!getTrustDashboardOrigin()) return false;
 
   const origin = String(req.headers.origin ?? '');
   const referer = String(req.headers.referer ?? '');
@@ -85,7 +86,7 @@ export function createActionToken(action: ActionName, postId: string): string {
   const secret = getActionSecret();
   if (!secret) return '';
 
-  const ttlSeconds = parseInt(process.env.ACTION_TOKEN_TTL_SECONDS ?? '86400', 10);
+  const ttlSeconds = getActionTokenTTLSeconds();
   const safeTtl = Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 86400;
   const exp = Math.floor(Date.now() / 1000) + safeTtl;
   const signature = signAction(action, postId, exp, secret);
@@ -105,7 +106,7 @@ export function verifyActionToken(action: ActionName, postId: string, token: str
 }
 
 function getActionSecret(): string | null {
-  return hasConfiguredApiKey() ? process.env.API_KEY! : null;
+  return hasConfiguredApiKey() ? getApiKey() : null;
 }
 
 function signAction(action: ActionName, postId: string, exp: number, secret: string): string {

@@ -12,6 +12,7 @@
  */
 import { canAffordImage } from '../../storage/image_budget.js';
 import { logger } from '../../utils/logger.js';
+import { getImageProviderOverride } from '../../config.js';
 import { geminiProvider } from './gemini.js';
 import { huggingFaceProvider } from './huggingface.js';
 import { openAiProvider } from './openai.js';
@@ -42,7 +43,7 @@ export function buildImageProviders(): ImageProvider[] {
     return false;
   });
 
-  const preferred = process.env.IMAGE_PROVIDER?.trim();
+  const preferred = getImageProviderOverride();
   if (preferred) {
     const idx = affordable.findIndex((p) => p.name === preferred);
     if (idx > 0) affordable.unshift(...affordable.splice(idx, 1));

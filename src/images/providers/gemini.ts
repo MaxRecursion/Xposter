@@ -11,6 +11,7 @@
  */
 import axios, { AxiosError } from 'axios';
 import { logger } from '../../utils/logger.js';
+import { getGeminiApiKey, getGeminiImageModel, getGeminiImageSize } from '../../config.js';
 import type { GenerateRequest, GenerateResult, ImageProvider } from './types.js';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
@@ -46,11 +47,11 @@ const SUPPORTED_RATIOS: Array<[string, number]> = [
 ];
 
 export function geminiModel(): string {
-  return process.env.GEMINI_IMAGE_MODEL?.trim() || DEFAULT_MODEL;
+  return getGeminiImageModel();
 }
 
 export function geminiImageSize(): string {
-  return process.env.GEMINI_IMAGE_SIZE?.trim() || DEFAULT_IMAGE_SIZE;
+  return getGeminiImageSize();
 }
 
 export function priceFor(model: string, size: string): number {
@@ -96,11 +97,11 @@ export function extractImage(body: InteractionsResponse): string | null {
 export function geminiProvider(): ImageProvider {
   return {
     name: 'gemini',
-    isAvailable: () => !!process.env.GEMINI_API_KEY,
+    isAvailable: () => !!getGeminiApiKey(),
     costPerImageUsd: () => priceFor(geminiModel(), geminiImageSize()),
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = getGeminiApiKey();
       if (!apiKey) throw new Error('GEMINI_API_KEY not set');
 
       const model = geminiModel();

@@ -4,6 +4,18 @@ import os from 'os';
 import { getSetting } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import type { AgentRunMode } from './types.js';
+import {
+  isAgentInfraEnabled as isAgentInfraEnabledConfig,
+  getAgentModel as getConfigAgentModel,
+  getAgentMaxRunsPerDay,
+  getAgentWatchIntervalMs,
+  getAgentBaseBranch,
+  getAllowAgentWeb,
+  getAgentCliPath,
+  getAgentInvestigatorMaxTurns,
+  getAgentImplementerMaxTurns,
+  getAgentDisallowedPaths,
+} from '../config.js';
 
 /**
  * Readiness + env-config helpers for the Claude Agent SDK integration.
@@ -24,33 +36,30 @@ let _ghChecked = false;
 let _ghFound = false;
 
 export function isAgentEnabled(): boolean {
-  // Hard infra-level kill: if AGENT_ENABLED is explicitly 'false', off everywhere.
-  if ((process.env.AGENT_ENABLED ?? 'true').toLowerCase() === 'false') return false;
-  // User-facing toggle from the dashboard Settings tab.
+  if (!isAgentInfraEnabled()) return false;
   return getSetting('agent_enabled', 'false') === 'true';
 }
 
+export function isAgentInfraEnabled(): boolean {
+  return isAgentInfraEnabledConfig();
+}
+
 export function getAgentModel(): string {
-  return process.env.AGENT_MODEL ?? 'claude-sonnet-4-5';
+  return getConfigAgentModel();
 }
 
 export function getMaxTurnsPerRun(mode: AgentRunMode): number {
-  const fallback = mode === 'investigator' ? '30' : '60';
-  const key = mode === 'investigator'
-    ? 'AGENT_INVESTIGATOR_MAX_TURNS'
-    : 'AGENT_IMPLEMENTER_MAX_TURNS';
-  const n = parseInt(process.env[key] ?? fallback, 10);
-  return Number.isFinite(n) && n > 0 ? n : parseInt(fallback, 10);
+  return mode === 'investigator'
+    ? getAgentInvestigatorMaxTurns()
+    : getAgentImplementerMaxTurns();
 }
 
 export function getMaxRunsPerDay(): number {
-  const n = parseInt(process.env.AGENT_MAX_RUNS_PER_DAY ?? '10', 10);
-  return Number.isFinite(n) && n >= 0 ? n : 10;
+  return getAgentMaxRunsPerDay();
 }
 
 export function getWatchIntervalMs(): number {
-  const n = parseInt(process.env.AGENT_WATCH_INTERVAL_MS ?? '300000', 10);
-  return Number.isFinite(n) && n >= 30_000 ? n : 300_000;
+  return getAgentWatchIntervalMs();
 }
 
 export function getErrorThreshold(): number {
@@ -60,21 +69,15 @@ export function getErrorThreshold(): number {
 }
 
 export function getBaseBranch(): string {
-  return process.env.AGENT_BASE_BRANCH ?? 'main';
+  return getAgentBaseBranch();
 }
 
 export function getAllowWeb(): boolean {
-  return (process.env.AGENT_ALLOW_WEB ?? 'false').toLowerCase() === 'true';
+  return getAllowAgentWeb();
 }
 
-const DEFAULT_DISALLOWED_PATHS = ['.env', '.env.local', 'data/', 'browser-profile/', 'logs/'];
-
 export function getDisallowedPaths(): string[] {
-  const extra = (process.env.AGENT_DISALLOWED_PATHS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return [...new Set([...DEFAULT_DISALLOWED_PATHS, ...extra])];
+  return getAgentDisallowedPaths();
 }
 
 /** Ordered list of absolute paths to check when `which claude` fails (e.g. nohup PATH). */
@@ -88,7 +91,8 @@ const CLAUDE_FALLBACK_PATHS = [
 
 function resolveClaude(): string | null {
   // 1. Explicit env override
-  if (process.env.CLAUDE_CLI_PATH) return process.env.CLAUDE_CLI_PATH;
+  const cliPath = getAgentCliPath();
+  if (cliPath) return cliPath;
   // 2. which (works when PATH is full, e.g. interactive shell)
   try {
     const p = execFileSync('which', ['claude'], { stdio: 'pipe' }).toString().trim();
@@ -150,7 +154,7 @@ export function resetCliCache(): void {
  *   - `claude` CLI missing
  */
 export function assertAgentReady(): void {
-  if ((process.env.AGENT_ENABLED ?? 'true').toLowerCase() === 'false') {
+  if (!isAgentInfraEnabled()) {
     throw new Error('Agent is disabled at the infrastructure level (AGENT_ENABLED=false).');
   }
   if (getSetting('agent_enabled', 'false') !== 'true') {

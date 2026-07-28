@@ -12,6 +12,7 @@
  * what a small model renders badly.
  */
 import { getSetting } from '../storage/settings.js';
+import { getImageCharacterPrompt } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 export interface VisualIdentity {
@@ -48,7 +49,7 @@ export function resolveIdentity(): VisualIdentity {
     }
   }
 
-  const envOverride = process.env.IMAGE_CHARACTER_PROMPT?.trim();
+  const envOverride = getImageCharacterPrompt();
   if (envOverride) {
     return { ...DEFAULT_IDENTITY, hair: envOverride, wardrobe: '', accessory: '' };
   }

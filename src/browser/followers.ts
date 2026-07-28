@@ -1,6 +1,7 @@
 import { getBrowserContext } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
+import { getXHandle } from '../config.js';
 
 export interface FollowerListEntry {
   handle: string;
@@ -8,7 +9,7 @@ export interface FollowerListEntry {
 }
 
 export async function resolveOwnHandle(): Promise<string | null> {
-  const configured = sanitizeHandle(process.env.X_HANDLE ?? '');
+  const configured = sanitizeHandle(getXHandle() ?? '');
   if (configured) return configured;
 
   const ctx = await getBrowserContext();

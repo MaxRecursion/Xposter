@@ -4,6 +4,7 @@
  */
 import { logger } from '../utils/logger.js';
 import { getOptionalGroqClient } from '../pipeline/groq_client.js';
+import { getGroqModel } from '../config.js';
 import { identityCaptionHint, resolveIdentity } from './identity.js';
 import type { Scene } from './generator.js';
 
@@ -37,7 +38,7 @@ export async function generateCaption(scene: Scene, recentCaptions: string[] = [
     if (!groq) throw new Error('GROQ_API_KEY is not set');
 
     const resp = await groq.chat.completions.create({
-      model: process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile',
+      model: getGroqModel(),
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },

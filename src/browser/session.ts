@@ -1,18 +1,15 @@
 import { BrowserContext } from 'playwright';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { getBrowserUserDataDir, isBrowserHeadless, getXAuthToken, getXCt0 } from '../config.js';
 
 // Stealth plugin masks the automation fingerprints X uses to flag the bot
 // (navigator.webdriver, chrome.runtime quirks, plugin/permission shape, etc).
 chromium.use(StealthPlugin());
 
-const USER_DATA_DIR = path.resolve(
-  process.cwd(),
-  process.env.BROWSER_USER_DATA_DIR ?? './browser-profile',
-);
+const USER_DATA_DIR = getBrowserUserDataDir();
 
 let _context: BrowserContext | null = null;
 
@@ -21,7 +18,7 @@ export async function getBrowserContext(): Promise<BrowserContext> {
 
   fs.mkdirSync(USER_DATA_DIR, { recursive: true });
 
-  const headless = (process.env.BROWSER_HEADLESS ?? 'true') === 'true';
+  const headless = isBrowserHeadless();
 
   logger.info('Launching browser', { userDataDir: USER_DATA_DIR, headless });
 
@@ -69,7 +66,7 @@ export async function getBrowserContext(): Promise<BrowserContext> {
  * back to false.
  */
 async function injectAuthCookiesFromEnv(ctx: BrowserContext): Promise<void> {
-  const authToken = process.env.X_AUTH_TOKEN?.trim();
+  const authToken = getXAuthToken();
   if (!authToken) return;
 
   const existing = await ctx.cookies('https://x.com');
@@ -77,7 +74,7 @@ async function injectAuthCookiesFromEnv(ctx: BrowserContext): Promise<void> {
     return; // cookies already present and matching
   }
 
-  const ct0 = process.env.X_CT0?.trim();
+  const ct0 = getXCt0();
   const cookies = [
     {
       name: 'auth_token',

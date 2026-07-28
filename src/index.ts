@@ -6,6 +6,7 @@ import { startScheduler } from './scheduler/cron.js';
 import { isLoggedIn } from './browser/session.js';
 import { logger } from './utils/logger.js';
 import { getBindHost, getBrowserUrls, getPort } from './utils/network.js';
+import { getIngestCron } from './config.js';
 
 async function main(): Promise<void> {
   logger.info('=== Xposter starting ===');
@@ -42,7 +43,7 @@ async function main(): Promise<void> {
 
   // Start scheduler
   startScheduler();
-  logger.info('Scheduler started — cron:', process.env.INGEST_CRON ?? '*/15 * * * *');
+  logger.info('Scheduler started — cron:', getIngestCron());
 
   logger.info('=== Xposter ready ===');
 

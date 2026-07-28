@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { logger } from '../../utils/logger.js';
+import { getVoyageRpm } from '../../config.js';
 import type { EmbeddingClient, EmbeddingKind } from './client.js';
-
 const ENDPOINT = 'https://api.voyageai.com/v1/embeddings';
 const BATCH_SIZE = 64;
 const TIMEOUT_MS = 30_000;
@@ -29,8 +29,7 @@ export class VoyageEmbeddings implements EmbeddingClient {
 
   constructor(private readonly apiKey: string, dim = 512) {
     this.dim = dim;
-    const rpm = parseFloat(process.env.VOYAGE_RPM ?? '');
-    const safeRpm = Number.isFinite(rpm) && rpm > 0 ? rpm : 2.7;
+    const safeRpm = getVoyageRpm();
     this.minIntervalMs = Math.ceil(60_000 / safeRpm);
   }
 

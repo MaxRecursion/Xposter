@@ -9,7 +9,7 @@ import { detectLanguage } from '../../pipeline/filter.js';
 import { buildNeuralSchemaMemory, loadMemoryEvents } from '../../context/neural_memory.js';
 import type { Post } from '../../storage/queries.js';
 import { logger } from '../../utils/logger.js';
-
+import { getVoyageApiKey } from '../../config.js';
 export const contextRouter = express.Router();
 
 interface ContextStats {
@@ -54,7 +54,7 @@ function gatherStats(): ContextStats {
 
 contextRouter.get('/health', (_req, res) => {
   const enabled = isContextEnabled();
-  const apiKeyConfigured = Boolean(process.env.VOYAGE_API_KEY);
+  const apiKeyConfigured = Boolean(getVoyageApiKey());
   const store = enabled ? getContextStore() : null;
 
   res.json({

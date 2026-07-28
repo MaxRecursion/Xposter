@@ -6,6 +6,7 @@ import { getIntSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { fetchProfile, AuthorProfile } from '../browser/profile.js';
 import { getOptionalGroqClient } from './groq_client.js';
+import { getGroqClassifierModel } from '../config.js';
 
 const CLASSIFICATION_VALUES: Classification[] = [
   'SERIOUS', 'NEWS', 'PARODY', 'COMEDY', 'INFLUENCER',
@@ -115,7 +116,7 @@ export async function classifyAccount(
     return getAccount(handle)!;
   }
 
-  const model = process.env.GROQ_CLASSIFIER_MODEL ?? process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const model = getGroqClassifierModel();
   const userPrompt = [
     `Handle: @${handle}`,
     `Display name: ${name ?? '(unknown)'}`,

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireApiKey } from '../auth.js';
 import {
-  isAgentEnabled, isClaudeCliFound, isGhCliFound,
+  isAgentEnabled, isAgentInfraEnabled, isClaudeCliFound, isGhCliFound,
   getAgentModel, getMaxRunsPerDay,
 } from '../../agent/client.js';
 import { getRepoRoot, getRemoteUrl } from '../../agent/repo_ops.js';
@@ -25,7 +25,7 @@ export const agentRouter = Router();
 agentRouter.get('/status', (_req: Request, res: Response) => {
   res.json({
     enabled: isAgentEnabled(),
-    infraDisabled: (process.env.AGENT_ENABLED ?? 'true').toLowerCase() === 'false',
+    infraDisabled: !isAgentInfraEnabled(),
     settingEnabled: getSetting('agent_enabled', 'false') === 'true',
     claudeCliFound: isClaudeCliFound(),
     ghFound: isGhCliFound(),

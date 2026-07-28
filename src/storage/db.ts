@@ -3,12 +3,16 @@ import * as sqliteVec from 'sqlite-vec';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
+import { getVoyageDim, getDbPathOverride } from '../config.js';
 
-const VEC_DIM = parseInt(process.env.VOYAGE_DIM ?? '512', 10) || 512;
+const VEC_DIM = getVoyageDim();
 
-const DB_PATH = process.env.DB_PATH_OVERRIDE
-  ? path.resolve(process.cwd(), process.env.DB_PATH_OVERRIDE)
-  : path.resolve(process.cwd(), 'data', 'xposter.db');
+const DB_PATH = (() => {
+  const override = getDbPathOverride();
+  return override
+    ? path.resolve(process.cwd(), override)
+    : path.resolve(process.cwd(), 'data', 'xposter.db');
+})();
 
 let _db: Database.Database | null = null;
 

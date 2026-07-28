@@ -10,6 +10,7 @@ import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 import { AGENTIC_MAX_ATTEMPTS, getAgenticModel, isAgenticGenerationEnabled, runGenerationAgent, type ValidationResult } from './agentic_generator.js';
+import { getGroqModel } from '../config.js';
 
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
@@ -279,7 +280,7 @@ export async function generateQuoteTweetPost(
   source: Post,
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
-  const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const groqModel = getGroqModel();
   const client = getGroqClient();
   const basePrompt = [
     `Source author: @${source.author_handle}`,
@@ -364,7 +365,7 @@ export async function generateQuoteTweetPost(
 export async function generateEngagementFarmPost(
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
-  const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const groqModel = getGroqModel();
   const client = getGroqClient();
   const strategic = Math.random() < 0.40;
   const baseUserPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
@@ -470,7 +471,7 @@ export async function generateOriginalPost(
     'Write the tweet now:',
   ].filter((l) => l !== undefined).join('\n'), options.avoidTexts);
 
-  const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+  const groqModel = getGroqModel();
   const client = getGroqClient();
 
   logger.info('Generating original post', { topic, category });

@@ -18,22 +18,24 @@ let _store: ContextStore | null = null;
 let _retriever: Retriever | null = null;
 let _initFailed = false;
 
+import { getVoyageApiKey, getVoyageDim, isContextEnabled as isContextEnabledConfig } from '../config.js';
+
 export function isContextEnabled(): boolean {
-  return process.env.CONTEXT_ENABLED === 'true';
+  return isContextEnabledConfig();
 }
 
 function init(): { store: ContextStore; retriever: Retriever } | null {
   if (_retriever && _store) return { store: _store, retriever: _retriever };
   if (_initFailed) return null;
 
-  const apiKey = process.env.VOYAGE_API_KEY;
+  const apiKey = getVoyageApiKey();
   if (!apiKey) {
     logger.warn('CONTEXT_ENABLED=true but VOYAGE_API_KEY is not set — context disabled');
     _initFailed = true;
     return null;
   }
 
-  const dim = parseInt(process.env.VOYAGE_DIM ?? '512', 10) || 512;
+  const dim = getVoyageDim();
   const embeddings = new VoyageEmbeddings(apiKey, dim);
   _store = new ContextStore(embeddings);
   _retriever = new Retriever(_store);

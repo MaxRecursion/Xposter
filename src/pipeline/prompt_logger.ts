@@ -1,8 +1,8 @@
 import { logEvent } from '../storage/queries.js';
+import { shouldLogPrompts } from '../config.js';
 
 export function logPromptToConsole(kind: string, id: string, system: string, user: string): void {
-  if (process.env.LOG_PROMPTS === 'false') return;
-  if (process.env.NODE_ENV === 'test' && process.env.LOG_PROMPTS !== 'true') return;
+  if (!shouldLogPrompts()) return;
 
   const line = '-'.repeat(72);
   process.stdout.write(

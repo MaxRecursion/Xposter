@@ -1,7 +1,7 @@
 import { getDb } from '../storage/db.js';
+import { getXHandle } from '../config.js';
 import { Post } from '../storage/queries.js';
 import { detectTopics } from './topics.js';
-
 export interface TopicVelocity {
   topic: string;
   last6h: number;
@@ -84,7 +84,7 @@ export function selectQuoteTweetCandidate(): QuoteTweetCandidate | null {
     LIMIT 100
   `).all(now - 24 * 3600) as Post[];
 
-  const ownHandle = process.env.X_HANDLE?.replace(/^@/, '').toLowerCase();
+  const ownHandle = getXHandle()?.replace(/^@/, '').toLowerCase();
   const eligible = ownHandle
     ? rows.filter((post) => post.author_handle.replace(/^@/, '').toLowerCase() !== ownHandle)
     : rows;

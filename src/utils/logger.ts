@@ -1,6 +1,7 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import { getLogLevel } from '../config.js';
 
 const LOG_DIR = path.resolve(process.cwd(), 'logs');
 
@@ -36,7 +37,7 @@ const fmt = winston.format.combine(
 );
 
 export const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL ?? 'info',
+  level: getLogLevel(),
   format: fmt,
   transports: [
     new winston.transports.Console({

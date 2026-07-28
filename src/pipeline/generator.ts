@@ -6,6 +6,7 @@ import { detectTopics } from '../context/topics.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
 import { getGroqClient } from './groq_client.js';
+import { getGroqModel } from '../config.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
@@ -349,7 +350,7 @@ export async function generateReply(
 
   // ── Groq (fallback) ──────────────────────────────────────────────────────────
   if (!rawReply) {
-    const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+    const groqModel = getGroqModel();
     const client = getGroqClient();
     logger.info('Calling Groq for reply generation', {
       postId: post.id, model: groqModel, witLevel: level, witTier: tier, flavor,

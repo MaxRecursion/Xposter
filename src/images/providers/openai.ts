@@ -1,6 +1,7 @@
 /** OpenAI DALL-E 3 (~$0.04/image). Opt-in via OPENAI_API_KEY. */
 import axios from 'axios';
 import { logger } from '../../utils/logger.js';
+import { getOpenAiApiKey } from '../../config.js';
 import type { GenerateRequest, GenerateResult, ImageProvider } from './types.js';
 
 const ENDPOINT = 'https://api.openai.com/v1/images/generations';
@@ -8,12 +9,12 @@ const ENDPOINT = 'https://api.openai.com/v1/images/generations';
 export function openAiProvider(): ImageProvider {
   return {
     name: 'openai',
-    isAvailable: () => !!process.env.OPENAI_API_KEY,
+    isAvailable: () => !!getOpenAiApiKey(),
     // DALL-E 3 standard quality, 1024x1024 / 1024x1792.
     costPerImageUsd: () => 0.04,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
-      const apiKey = process.env.OPENAI_API_KEY;
+      const apiKey = getOpenAiApiKey();
       if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
       // DALL-E 3 only accepts a fixed set of sizes; 1024x1792 is its portrait

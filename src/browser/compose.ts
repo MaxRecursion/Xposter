@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { delay, randomBetween, mediumDelay, longDelay, humanType } from '../utils/delay.js';
 import { findEnabled, findVisible, watchCreateTweetId, dismissPromotePopup, clickWithPopupRetry } from './dom.js';
 import { postReply } from './posting.js';
+import { getXHandle } from '../config.js';
 
 // Compose textarea inside the modal (appears after navigating to /compose/post)
 const COMPOSE_BOX_SELECTORS = [
@@ -82,7 +83,7 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
       throw new Error(`X returned error toast: ${toast.trim()}`);
     }
 
-    const handle = process.env.X_HANDLE;
+    const handle = getXHandle();
     const capturedTweetId = getCapturedTweetId();
     const tweetUrl = capturedTweetId && handle
       ? `https://x.com/${handle}/status/${capturedTweetId}`
@@ -196,7 +197,7 @@ export async function postImageTweet(
       throw new Error(`X returned error toast: ${toast.trim()}`);
     }
 
-    const handle = process.env.X_HANDLE;
+    const handle = getXHandle();
     const capturedTweetId = getCapturedTweetId();
     const tweetUrl = capturedTweetId && handle
       ? `https://x.com/${handle}/status/${capturedTweetId}`

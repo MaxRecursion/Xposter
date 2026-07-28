@@ -13,6 +13,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getClaudePath, isClaudeCliFound } from '../agent/client.js';
 import { getBooleanSetting } from '../storage/settings.js';
+import { getImageQaModelOverride } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const execFileAsync = promisify(execFile);
@@ -80,7 +81,7 @@ export async function judgeImage(absPath: string): Promise<ImageVerdict | null> 
   // IMAGE_QA_MODEL overrides the first attempt; the second always uses the
   // default, so a bad override can't disable the gate outright and — with no
   // override — a transient CLI failure still gets one retry.
-  const preferred = process.env.IMAGE_QA_MODEL?.trim();
+  const preferred = getImageQaModelOverride();
   const chain = [preferred || DEFAULT_QA_MODEL, DEFAULT_QA_MODEL];
 
   for (const model of chain) {

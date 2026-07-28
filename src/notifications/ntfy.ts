@@ -5,6 +5,12 @@ import { getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { createActionToken } from '../api/auth.js';
 import type { WeeklyDigest } from '../storage/digest.js';
+import {
+  getApiKey,
+  getNtfyTopic,
+  getNtfyServer,
+  getNtfyActionMode,
+} from '../config.js';
 
 export interface NtfyResult {
   ok: boolean;
@@ -26,12 +32,12 @@ interface NtfyConfig {
 const PLACEHOLDER_TOPIC = 'xposter-your-secret-topic';
 
 function getNtfyConfig(): NtfyConfig | null {
-  const topic = process.env.NTFY_TOPIC;
-  if (!topic || topic === PLACEHOLDER_TOPIC) return null;
+  const topic = getNtfyTopic();
+  if (!topic) return null;
   return {
     topic,
-    server: (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, ''),
-    apiKey: process.env.API_KEY ?? '',
+    server: getNtfyServer(),
+    apiKey: getApiKey() ?? '',
   };
 }
 
@@ -79,7 +85,7 @@ export async function sendApprovalNotification(post: Post): Promise<NtfyResult> 
   const base = getCallbackBase();
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
   const lang = languageLabel(post.language);
-  const actionMode = (process.env.NTFY_ACTION_MODE ?? 'view').toLowerCase();
+  const actionMode = getNtfyActionMode();
   const approveUrl = actionMode === 'http'
     ? `${base}/api/actions/approve/${post.id}`
     : withActionToken(`${base}/api/actions/approve/${post.id}`, createActionToken('approve', post.id));

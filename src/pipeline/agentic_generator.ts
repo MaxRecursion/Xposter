@@ -4,6 +4,7 @@ import { isClaudeCliFound } from '../agent/client.js';
 import { claudeGeneratorModel } from './claude_generator.js';
 import { charLength, cleanModelText } from './text_constraints.js';
 import { logger } from '../utils/logger.js';
+import { getAnthropicApiKey, getAgenticGeneratorModel, getAgenticGenMaxTurns } from '../config.js';
 
 /**
  * Agentic content generation on the Claude Agent SDK.
@@ -47,12 +48,12 @@ export function isAgenticGenerationEnabled(): boolean {
   if (getSetting('agentic_generation', 'false') !== 'true') return false;
   // The SDK authenticates with ANTHROPIC_API_KEY when set, otherwise with the
   // local Claude Code CLI login — one of the two must be present.
-  if (process.env.ANTHROPIC_API_KEY) return true;
+  if (getAnthropicApiKey()) return true;
   return isClaudeCliFound();
 }
 
 export function getAgenticModel(): string {
-  return process.env.AGENTIC_GENERATOR_MODEL ?? claudeGeneratorModel();
+  return getAgenticGeneratorModel();
 }
 
 /**
@@ -63,8 +64,7 @@ export function getAgenticModel(): string {
 export const AGENTIC_MAX_ATTEMPTS = 2;
 
 export function getAgenticMaxTurns(): number {
-  const n = parseInt(process.env.AGENTIC_GEN_MAX_TURNS ?? '12', 10);
-  return Number.isFinite(n) && n > 0 ? n : 12;
+  return getAgenticGenMaxTurns();
 }
 
 function normalizeForComparison(text: string): string {

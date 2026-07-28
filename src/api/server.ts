@@ -18,6 +18,7 @@ import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
+import { getNtfyTopic, getNtfyServer, getNtfyActionMode, getCallbackNetwork, isBrowserHeadless, getGroqApiKey } from '../config.js';
 import { getNextRuns, getTodayPlan, ensureTodayPlan, getTodayMix } from '../scheduler/random_runs.js';
 import { getTodayOriginalPlan, getNextOriginalRuns } from '../scheduler/original_posts.js';
 
@@ -111,18 +112,17 @@ export function createServer(): express.Express {
   // Diagnostics — current configuration / connectivity info
   app.get('/api/diagnostics', (_req, res) => {
     res.json({
-      ntfy_topic: process.env.NTFY_TOPIC ?? '(not set)',
-      ntfy_server: process.env.NTFY_SERVER ?? 'https://ntfy.sh',
-      ntfy_action_mode: process.env.NTFY_ACTION_MODE ?? 'view',
+      ntfy_topic: getNtfyTopic() ?? '(not set)',
+      ntfy_server: getNtfyServer(),
+      ntfy_action_mode: getNtfyActionMode(),
       callback_base: getCallbackBase(),
-      callback_network: process.env.CALLBACK_NETWORK ?? 'lan',
+      callback_network: getCallbackNetwork(),
       bind_host: getBindHost(),
       browser_urls: getBrowserUrls(),
-      groq_configured: Boolean(process.env.GROQ_API_KEY) &&
-        process.env.GROQ_API_KEY !== 'replace_me_with_groq_api_key',
-      api_key_set: Boolean(process.env.API_KEY) &&
-        process.env.API_KEY !== 'change_me_generate_with_openssl_rand_hex_32',
-      browser_headless: process.env.BROWSER_HEADLESS ?? 'true',
+      groq_configured: Boolean(getGroqApiKey()) &&
+        getGroqApiKey() !== 'replace_me_with_groq_api_key',
+      api_key_set: isApiKeySet(),
+      browser_headless: isBrowserHeadless(),
       agent_enabled: isAgentEnabled(),
       agent_model: getAgentModel(),
       claude_cli_found: isClaudeCliFound(),

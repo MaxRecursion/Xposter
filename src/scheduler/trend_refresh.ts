@@ -17,7 +17,7 @@ let _running = false;
 
 export function startTrendRefreshScheduler(): void {
   if (_tickHandle || _bootHandle) return;
-  if (process.env.X_TRENDS_ENABLED === 'false') {
+  if (!isTrendsEnabled()) {
     logger.info('Trend refresh scheduler disabled via X_TRENDS_ENABLED');
     return;
   }

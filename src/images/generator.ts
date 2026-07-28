@@ -28,6 +28,7 @@ import { buildImageProviders } from './providers/index.js';
 import { readImageSize } from './dimensions.js';
 import { ANCHOR_PROMPT_NOTE, loadAnchors } from './anchors.js';
 import { recordImageGeneration } from '../storage/image_budget.js';
+import { getImageWidth, getImageHeight } from '../config.js';
 
 const IMAGES_DIR = path.resolve(process.cwd(), 'data', 'images');
 
@@ -51,11 +52,9 @@ export const DEFAULT_WIDTH = 640;
 export const DEFAULT_HEIGHT = 800;
 
 export function imageDimensions(): { width: number; height: number } {
-  const width = parseInt(process.env.IMAGE_WIDTH ?? '', 10);
-  const height = parseInt(process.env.IMAGE_HEIGHT ?? '', 10);
   return {
-    width: Number.isFinite(width) && width > 0 ? width : DEFAULT_WIDTH,
-    height: Number.isFinite(height) && height > 0 ? height : DEFAULT_HEIGHT,
+    width: getImageWidth(),
+    height: getImageHeight(),
   };
 }
 

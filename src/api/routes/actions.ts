@@ -3,6 +3,7 @@ import {
   getPost, logEvent, getSetting, setSetting, updatePostStatus,
   getLastPostedUnix, claimPostForPosting,
 } from '../../storage/queries.js';
+import { getMinReplyIntervalSeconds } from '../../config.js';
 import { getIntSetting } from '../../storage/settings.js';
 import { logger } from '../../utils/logger.js';
 import { callerLabel, requireActionAuth, requireApiKey } from '../auth.js';
@@ -30,10 +31,7 @@ async function handleApprove(req: Request, res: Response): Promise<void> {
   }
 
   // Enforce minimum reply interval
-  const envInterval = parseInt(process.env.MIN_REPLY_INTERVAL_SECONDS ?? '', 10);
-  const minInterval = Number.isFinite(envInterval) && envInterval >= 0
-    ? envInterval
-    : getIntSetting('min_reply_interval_sec', 300, 0, 86_400);
+  const minInterval = getMinReplyIntervalSeconds();
 
   const lastPosted = getLastPostedUnix();
   const secondsSinceLast = Date.now() / 1000 - lastPosted;

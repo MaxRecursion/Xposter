@@ -1,16 +1,23 @@
 import { networkInterfaces } from 'os';
 import { execFileSync } from 'child_process';
+import {
+  getPort as getConfigPort,
+  getHost as getConfigHost,
+  getCallbackBaseUrl,
+  getCallbackNetwork,
+  getTailScaleIpOverride,
+} from '../config.js';
 
 const PRIVATE_IPV4_RE =
   /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
 const TAILSCALE_IPV4_RE = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
 
 export function getPort(): string {
-  return process.env.PORT ?? '3000';
+  return getConfigPort();
 }
 
 export function getBindHost(): string {
-  return process.env.HOST ?? '0.0.0.0';
+  return getConfigHost();
 }
 
 // IP lookups are called on every request (CORS origin check + dashboard-origin
@@ -55,7 +62,8 @@ function lookupLocalIP(): string {
 
 /** Returns a Tailscale IPv4 address when the tailscale CLI is installed/logged in. */
 export function getTailscaleIP(): string | null {
-  if (process.env.TAILSCALE_IP) return process.env.TAILSCALE_IP;
+  const envOverride = getTailScaleIpOverride();
+  if (envOverride) return envOverride;
   if (_tailscaleIp && Date.now() - _tailscaleIp.at < IP_CACHE_TTL_MS) return _tailscaleIp.value;
   const value = lookupTailscaleIP();
   _tailscaleIp = { value, at: Date.now() };
@@ -96,10 +104,10 @@ export function getTailscaleBase(): string | null {
 
 /** Builds the base URL for ntfy callback buttons. */
 export function getCallbackBase(): string {
-  const envUrl = process.env.CALLBACK_BASE_URL;
-  if (envUrl) return envUrl.replace(/\/$/, '');
+  const envUrl = getCallbackBaseUrl();
+  if (envUrl) return envUrl;
 
-  const network = (process.env.CALLBACK_NETWORK ?? 'lan').toLowerCase();
+  const network = getCallbackNetwork();
   if (network === 'tailscale') {
     return getTailscaleBase() ?? getLanBase();
   }
