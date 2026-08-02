@@ -12,7 +12,8 @@
  * worse for the account than no image at all.
  */
 import {
-  getDuePendingRuns, getScheduledRunsForDate, insertScheduledRun, markRunFired,
+  getDuePendingRuns, getScheduledRunsForDate, insertScheduledRun, markRunError,
+  markRunFired, markRunSkipped, rescheduleRun, retryCountFromDetail, withRetryDetail,
 } from '../storage/scheduled_runs.js';
 import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
@@ -32,6 +33,8 @@ import { postImageTweet } from '../browser/compose.js';
 
 const KIND = 'IMAGE_POST';
 const TICK_INTERVAL_MS = 60_000;
+const MAX_TRANSIENT_RETRIES = 2;
+const RESCHEDULE_DELAY_SEC = 15 * 60;
 
 let _tickHandle: NodeJS.Timeout | null = null;
 let _posting = false;
@@ -89,14 +92,28 @@ async function tick(): Promise<void> {
   if (due.length === 0) return;
 
   const run = due[0];
-  markRunFired(run.id);
-
   _posting = true;
   try {
-    await fireOneImagePost();
+    const result = await fireOneImagePost();
+    if (result === 'posted') {
+      markRunFired(run.id, 'image posted');
+    } else {
+      // QA rejected every attempt — intentional skip, not a transient flake.
+      markRunSkipped(run.id, 'qa exhausted');
+    }
   } catch (err) {
-    logger.error('Image post failed', { err: String(err) });
-    logEvent('IMAGE_POST_ERROR', String(err).slice(0, 300));
+    const retries = retryCountFromDetail(run.detail);
+    const msg = String(err).slice(0, 240);
+    if (retries < MAX_TRANSIENT_RETRIES) {
+      const nextAt = Math.floor(Date.now() / 1000) + RESCHEDULE_DELAY_SEC;
+      rescheduleRun(run.id, nextAt, withRetryDetail(`transient: ${msg}`, retries + 1));
+      logEvent('IMAGE_POST_RESCHEDULED', `retry=${retries + 1} at=${formatLocalTime(nextAt)} err=${msg}`);
+      logger.warn('Image post failed — rescheduled', { retries: retries + 1, err: msg });
+    } else {
+      markRunError(run.id, msg);
+      logger.error('Image post failed', { err: msg });
+      logEvent('IMAGE_POST_ERROR', msg);
+    }
   } finally {
     _posting = false;
   }
@@ -110,13 +127,20 @@ async function tick(): Promise<void> {
  * random. So each retry also removes whatever the model keeps getting wrong:
  * first force a silhouette with hidden hands, then drop the person entirely.
  */
-function attemptOptions(attempt: number, scene: Scene): { scene: Scene; options: GenerateImageOptions } {
+export function attemptOptions(
+  attempt: number,
+  maxAttempts: number,
+  scene: Scene,
+): { scene: Scene; options: GenerateImageOptions } {
   if (attempt === 1) return { scene, options: {} };
-  if (attempt === 2) return { scene, options: { framing: 'silhouette', handState: 'hidden' } };
-  return { scene: pickSafeScene(), options: {} };
+  // The LAST attempt is always the no-person still life — the highest-pass-rate
+  // composition. Keying it to `maxAttempts` rather than a hardcoded 3 means
+  // lowering image_qa_max_attempts to 2 doesn't silently drop it.
+  if (attempt >= maxAttempts) return { scene: pickSafeScene(), options: {} };
+  return { scene, options: { framing: 'silhouette', handState: 'hidden' } };
 }
 
-async function fireOneImagePost(): Promise<void> {
+async function fireOneImagePost(): Promise<'posted' | 'skipped'> {
   const baseScene = pickScene();
   const maxAttempts = getIntSetting('image_qa_max_attempts', 3, 1, 5);
 
@@ -133,7 +157,7 @@ async function fireOneImagePost(): Promise<void> {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attemptsUsed = attempt;
-    const { scene, options } = attemptOptions(attempt, baseScene);
+    const { scene, options } = attemptOptions(attempt, maxAttempts, baseScene);
 
     if (scene.id !== detailSceneId) {
       detail = await buildDetailWithClaude(scene);
@@ -166,13 +190,12 @@ async function fireOneImagePost(): Promise<void> {
 
   if (!accepted) {
     // Every attempt was rejected. Skip today rather than post the least-bad
-    // one: a malformed image is negative engagement, and the run stays FIRED so
-    // the 60s tick doesn't retry this all evening.
+    // one: a malformed image is negative engagement.
     const reason = best ? rejectionReason(best.verdict) : 'unknown';
     const postId = best ? recordSkipped(best, attemptsUsed, reason) : null;
     logEvent('IMAGE_QA_EXHAUSTED', `attempts=${attemptsUsed} best_reason=${reason}`, postId ?? undefined);
     logger.warn('Image post skipped — QA gate rejected every attempt', { attempts: attemptsUsed, reason });
-    return;
+    return 'skipped';
   }
 
   const { image, verdict } = accepted;
@@ -205,6 +228,8 @@ async function fireOneImagePost(): Promise<void> {
     logEvent('IMAGE_POST_ERROR', String(err).slice(0, 300), postId);
     throw err;
   }
+
+  return 'posted';
 }
 
 /** Persists the best rejected attempt so the failure is inspectable. */

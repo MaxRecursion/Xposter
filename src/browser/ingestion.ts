@@ -1,5 +1,5 @@
 import { Page } from 'playwright';
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { RawTweet } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
@@ -32,6 +32,10 @@ interface RawEngagement {
 }
 
 export async function ingestTimeline(maxPosts = 40): Promise<RawTweet[]> {
+  return runExclusive(() => ingestTimelineImpl(maxPosts));
+}
+
+async function ingestTimelineImpl(maxPosts = 40): Promise<RawTweet[]> {
   return collectFromUrl(X_HOME, maxPosts, 'timeline');
 }
 
@@ -67,6 +71,10 @@ export function buildSearchUrl(query: string, mode: 'Top' | 'Latest' = 'Top'): s
  * extractor means the two surfaces can never drift apart.
  */
 export async function searchTweets(query: string, opts: SearchOptions = {}): Promise<RawTweet[]> {
+  return runExclusive(() => searchTweetsImpl(query, opts));
+}
+
+async function searchTweetsImpl(query: string, opts: SearchOptions = {}): Promise<RawTweet[]> {
   const { mode = 'Top', max = 25 } = opts;
   return collectFromUrl(buildSearchUrl(query, mode), max, `search:${query.slice(0, 40)}`);
 }

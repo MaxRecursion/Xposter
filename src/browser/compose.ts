@@ -1,4 +1,4 @@
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween, mediumDelay, longDelay, humanType } from '../utils/delay.js';
 import { findEnabled, findVisible, watchCreateTweetId, dismissPromotePopup, clickWithPopupRetry } from './dom.js';
@@ -40,6 +40,7 @@ export interface ThreadComposeResult {
  *   5. Return { tweetId, tweetUrl }
  */
 export async function postOriginalTweet(content: string): Promise<ComposeResult> {
+  return runExclusive(async () => {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 
@@ -94,10 +95,12 @@ export async function postOriginalTweet(content: string): Promise<ComposeResult>
   } finally {
     await page.close();
   }
+  });
 }
 
 /** Post one original tweet or a 2-3 tweet thread chained through replies. */
 export async function postTweetThread(parts: string[]): Promise<ThreadComposeResult> {
+  return runExclusive(async () => {
   if (parts.length < 1 || parts.length > 3) {
     throw new Error(`Thread must contain 1-3 parts, received ${parts.length}`);
   }
@@ -125,6 +128,7 @@ export async function postTweetThread(parts: string[]): Promise<ThreadComposeRes
   }
 
   return { tweetIds, tweetUrls };
+  });
 }
 
 /**
@@ -147,6 +151,7 @@ export async function postImageTweet(
   imagePath: string,
   caption: string,
 ): Promise<ComposeResult> {
+  return runExclusive(async () => {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
   const getCapturedTweetId = watchCreateTweetId(page);
@@ -208,4 +213,5 @@ export async function postImageTweet(
   } finally {
     await page.close();
   }
+  });
 }

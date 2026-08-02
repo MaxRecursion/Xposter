@@ -87,3 +87,15 @@ export const ANCHOR_PROMPT_NOTE =
   'Reference images are provided for STYLE ONLY: match their wardrobe palette, '
   + 'hair length and texture, accessories and film colour grade. '
   + 'Do NOT copy their composition, framing, location or pose — the scene described above is different.';
+
+/**
+ * Removes the anchor note from a prompt.
+ *
+ * `generateImage()` appends the note whenever anchors load, but a provider may
+ * end up sending no references — uploads failed, or the model has no edit
+ * endpoint. Leaving the note in would describe images the model never receives,
+ * which is worse than saying nothing. Idempotent when the note is absent.
+ */
+export function stripAnchorNote(prompt: string): string {
+  return prompt.replace(ANCHOR_PROMPT_NOTE, '').trimEnd();
+}

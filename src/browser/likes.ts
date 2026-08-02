@@ -8,7 +8,7 @@
  */
 
 import { Page } from 'playwright';
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import { getDb } from '../storage/db.js';
@@ -32,6 +32,10 @@ export interface LikeSessionResult {
  * and like up to `target` of them (that haven't been liked today).
  */
 export async function runLikeSession(target: number): Promise<LikeSessionResult> {
+  return runExclusive(() => runLikeSessionImpl(target));
+}
+
+async function runLikeSessionImpl(target: number): Promise<LikeSessionResult> {
   if (target <= 0) return { liked: 0, skipped: 0, alreadyLiked: 0 };
 
   const keywords = getTopicKeywords();

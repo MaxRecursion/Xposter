@@ -43,5 +43,10 @@ export interface ImageProvider {
    * monthly budget before this provider is used.
    */
   costPerImageUsd(): number;
+  /**
+   * Whether this backend can consume `referenceImages`. Used by generateImage
+   * so the anchor prompt note is only attached when refs will actually be sent.
+   */
+  supportsReferences?: boolean;
   generate(req: GenerateRequest): Promise<GenerateResult>;
 }

@@ -1,4 +1,4 @@
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import type { Locator } from 'playwright';
@@ -21,6 +21,10 @@ export interface AuthorProfile {
  * ingestion/posting). Profile is opened in a new tab and closed immediately.
  */
 export async function fetchProfile(handle: string): Promise<AuthorProfile | null> {
+  return runExclusive(() => fetchProfileImpl(handle));
+}
+
+async function fetchProfileImpl(handle: string): Promise<AuthorProfile | null> {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 

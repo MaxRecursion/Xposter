@@ -7,6 +7,7 @@
 import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
+import { isTrendsEnabled } from '../config.js';
 import { refreshTrends } from '../trends/x_trends.js';
 
 const BOOT_DELAY_MS = 45_000;
@@ -41,7 +42,8 @@ export function stopTrendRefreshScheduler(): void {
 async function runRefresh(): Promise<void> {
   if (_running) return;
   if (!getBooleanSetting('system_running', true)) return;
-  if (!getBooleanSetting('trend_replies_enabled', true)) return;
+  // Intentionally NOT gated on trend_replies_enabled — trends also feed
+  // original/quote selection and image scene velocity.
 
   _running = true;
   try {

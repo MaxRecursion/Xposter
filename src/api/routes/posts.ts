@@ -132,6 +132,7 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   image_qa_max_attempts:            intSetting(3, 1, 5),
   image_use_references:             boolSetting,
   image_monthly_budget_usd:         floatSetting(3.0, 0, 100),
+  image_daily_burst:                floatSetting(2.0, 1, 31),
   image_identity_json:              textSetting(1500),
   image_aspect:                     textSetting(8),
   // Trend-driven replies

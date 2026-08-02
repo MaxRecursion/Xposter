@@ -24,6 +24,7 @@ export function pollinationsProvider(): ImageProvider {
     // Free and keyless — always available, and always affordable.
     isAvailable: () => true,
     costPerImageUsd: () => 0,
+    supportsReferences: false,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(req.prompt)}`

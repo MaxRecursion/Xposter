@@ -410,6 +410,7 @@ function applyMigrations(db: Database.Database): void {
       ('image_identity_json',     ''),
       ('image_aspect',            '4:5'),
       ('image_monthly_budget_usd','3.0'),
+      ('image_daily_burst',       '2.0'),
       ('image_use_references',    'true')
   `).run();
 
@@ -538,6 +539,19 @@ function applyImagePostsMigrations(db: Database.Database): void {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_image_gen_created ON image_generations(created_at DESC);
+
+    -- Cache of style-anchor images uploaded to a provider's file storage.
+    -- Keyed on the file BYTES, so renaming an anchor doesn't re-upload but
+    -- editing one does. Avoids re-sending static files on every generation.
+    CREATE TABLE IF NOT EXISTS image_ref_uploads (
+      provider     TEXT NOT NULL,
+      hash         TEXT NOT NULL,          -- sha256 hex of the file contents
+      url          TEXT NOT NULL,
+      bytes        INTEGER,
+      content_type TEXT,
+      created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (provider, hash)
+    );
   `);
 }
 

@@ -1,5 +1,5 @@
 import { Locator, Page, Response } from 'playwright';
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { mediumDelay, longDelay, humanType, delay, randomBetween } from '../utils/delay.js';
 import { extractTweetIdFromUrl } from '../utils/x.js';
@@ -43,6 +43,10 @@ const SUBMIT_BTN_SELECTORS = [
 ];
 
 export async function postReply(tweetUrl: string, replyText: string): Promise<PostReplyResult> {
+  return runExclusive(() => postReplyImpl(tweetUrl, replyText));
+}
+
+async function postReplyImpl(tweetUrl: string, replyText: string): Promise<PostReplyResult> {
   const tweetId = extractTweetIdFromUrl(tweetUrl);
   if (!tweetId) {
     throw new PostingError(`Invalid tweet URL: ${tweetUrl}`, 'INVALID_TWEET_URL', false);
@@ -156,6 +160,10 @@ const CONFIRM_DELETE_SELECTORS = [
 ];
 
 export async function deleteReply(replyTweetId: string): Promise<void> {
+  return runExclusive(() => deleteReplyImpl(replyTweetId));
+}
+
+async function deleteReplyImpl(replyTweetId: string): Promise<void> {
   if (!/^\d+$/.test(replyTweetId)) {
     throw new Error(`Invalid reply tweet id: ${replyTweetId}`);
   }

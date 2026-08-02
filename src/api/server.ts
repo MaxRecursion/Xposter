@@ -18,7 +18,7 @@ import { sendTestNotification } from '../notifications/ntfy.js';
 import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.js';
 import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
-import { getNtfyTopic, getNtfyServer, getNtfyActionMode, getCallbackNetwork, isBrowserHeadless, getGroqApiKey } from '../config.js';
+import { getNtfyTopic, getNtfyServer, getNtfyActionMode, getCallbackNetwork, isBrowserHeadless, getGroqApiKey, isApiKeySet } from '../config.js';
 import { getNextRuns, getTodayPlan, ensureTodayPlan, getTodayMix } from '../scheduler/random_runs.js';
 import { getTodayOriginalPlan, getNextOriginalRuns } from '../scheduler/original_posts.js';
 

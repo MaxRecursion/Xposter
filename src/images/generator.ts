@@ -28,6 +28,7 @@ import { buildImageProviders } from './providers/index.js';
 import { readImageSize } from './dimensions.js';
 import { ANCHOR_PROMPT_NOTE, loadAnchors } from './anchors.js';
 import { recordImageGeneration } from '../storage/image_budget.js';
+import { logEvent } from '../storage/queries.js';
 import { getImageWidth, getImageHeight } from '../config.js';
 
 const IMAGES_DIR = path.resolve(process.cwd(), 'data', 'images');
@@ -316,13 +317,10 @@ export async function generateImage(
   const providers = buildImageProviders();
   if (providers.length === 0) throw new Error('No image providers available');
 
-  // Style anchors pin wardrobe, hair and colour grade across posts. Only
-  // append the explanatory note when references are actually being sent —
-  // otherwise it describes images the model never receives.
+  // Style anchors pin wardrobe, hair and colour grade across posts. The note
+  // is appended per-provider only when that backend will actually receive refs
+  // — otherwise it describes images the model never sees.
   const referenceImages = loadAnchors();
-  const prompt = referenceImages.length > 0
-    ? `${basePrompt}\n\n${ANCHOR_PROMPT_NOTE}`
-    : basePrompt;
 
   logger.info('Generating image', {
     scene: scene.id,
@@ -335,8 +333,11 @@ export async function generateImage(
   let lastErr: unknown;
   for (const provider of providers) {
     try {
+      const useRefs = Boolean(provider.supportsReferences) && referenceImages.length > 0;
+      const prompt = useRefs ? `${basePrompt}\n\n${ANCHOR_PROMPT_NOTE}` : basePrompt;
       const result = await provider.generate({
-        prompt, width, height, seed, aspectRatio, referenceImages,
+        prompt, width, height, seed, aspectRatio,
+        referenceImages: useRefs ? referenceImages : undefined,
       });
 
       // Record spend before anything else can throw, so the budget guard never
@@ -366,10 +367,26 @@ export async function generateImage(
       };
     } catch (err) {
       lastErr = err;
+
+      // A call that was charged but produced nothing usable must still reach
+      // the ledger. Otherwise a repeated safety refusal is an invisible spend
+      // loop the budget guard never sees. Duck-typed so this file stays free of
+      // provider-specific imports.
+      const billedUsd = (err as { billedUsd?: number })?.billedUsd;
+      if (typeof billedUsd === 'number' && billedUsd > 0) {
+        recordImageGeneration(provider.name, `${provider.name}:billed-no-image`, billedUsd);
+      }
+
       logger.warn('Image provider failed, trying next in chain', {
         provider: provider.name,
         err: String(err).slice(0, 200),
       });
+
+      // A paid provider dropping to a free one silently degrades image quality
+      // for as long as the cause persists — make it visible.
+      if (provider.costPerImageUsd() > 0) {
+        logEvent('IMAGE_PROVIDER_FALLBACK', `${provider.name} failed: ${String(err).slice(0, 160)}`);
+      }
     }
   }
 

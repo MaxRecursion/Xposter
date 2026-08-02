@@ -13,11 +13,13 @@ launchctl stop com.akshay.xposter && sleep 4 && launchctl start com.akshay.xpost
 
 ## What's new
 
-### AI image posts (free)
-- Provider: Pollinations.ai, Flux model — no API key, no cost
-- Schedule: 1 post per day at a random time between 6–10 PM
-- Scene selection: boosted by RAG velocity (monsoon trending → rain scene, AI/tech trending → coworking scene)
-- To use DALL-E 3 instead: set `OPENAI_API_KEY` and `IMAGE_PROVIDER=openai` in `.env`
+### AI image posts
+- Provider chain (preferred first): **fal.ai** (`FAL_KEY`) → Gemini → OpenAI → Hugging Face → Pollinations (free safety net)
+- fal hosts nano-banana-2 (same family as gemini-3.1-flash-image) with no Google minimum spend
+- Style anchors upload to the fal CDN (`FAL_REFERENCE_MODE=upload`); `datauri` / `off` are alternatives
+- Schedule: up to `image_posts_per_day` slots in the evening window (default 18–22), gated by vision QA
+- Scene selection: boosted by RAG velocity when context is enabled
+- Monthly spend is capped (`image_monthly_budget_usd`) with a daily burst allowance so the budget lasts the month
 
 ### Topic diversity
 - 10% daily cap per topic (enforced in reply pipeline and fallback selection)

@@ -12,6 +12,7 @@
 import axios, { AxiosError } from 'axios';
 import { logger } from '../../utils/logger.js';
 import { getGeminiApiKey, getGeminiImageModel, getGeminiImageSize } from '../../config.js';
+import { sniffMime } from '../mime.js';
 import type { GenerateRequest, GenerateResult, ImageProvider } from './types.js';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
@@ -99,6 +100,7 @@ export function geminiProvider(): ImageProvider {
     name: 'gemini',
     isAvailable: () => !!getGeminiApiKey(),
     costPerImageUsd: () => priceFor(geminiModel(), geminiImageSize()),
+    supportsReferences: true,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
       const apiKey = getGeminiApiKey();
@@ -110,7 +112,11 @@ export function geminiProvider(): ImageProvider {
 
       const input: Array<Record<string, string>> = [{ type: 'text', text: req.prompt }];
       for (const ref of req.referenceImages ?? []) {
-        input.push({ type: 'image', mime_type: 'image/jpeg', data: ref.toString('base64') });
+        input.push({
+          type: 'image',
+          mime_type: sniffMime(ref),
+          data: ref.toString('base64'),
+        });
       }
 
       const body = {
@@ -137,7 +143,13 @@ export function geminiProvider(): ImageProvider {
           });
 
           const b64 = extractImage(response.data);
-          if (!b64) throw new Error('Gemini returned no image data');
+          // A 200 has already billed. Throwing OUT of the retry loop (rather
+          // than into it) stops us paying up to 3x for one unusable image.
+          if (!b64) {
+            throw Object.assign(new Error('Gemini returned no image data'), {
+              billedUsd: priceFor(model, imageSize),
+            });
+          }
 
           return {
             buffer: Buffer.from(b64, 'base64'),
@@ -145,6 +157,9 @@ export function geminiProvider(): ImageProvider {
             costUsd: priceFor(model, imageSize),
           };
         } catch (err) {
+          // Already billed — never retry it, and let the caller record the spend.
+          if (typeof (err as { billedUsd?: number })?.billedUsd === 'number') throw err;
+
           lastErr = err;
           const status = (err as AxiosError)?.response?.status;
 

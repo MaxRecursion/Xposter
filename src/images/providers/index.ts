@@ -13,6 +13,7 @@
 import { canAffordImage } from '../../storage/image_budget.js';
 import { logger } from '../../utils/logger.js';
 import { getImageProviderOverride } from '../../config.js';
+import { falProvider } from './fal.js';
 import { geminiProvider } from './gemini.js';
 import { huggingFaceProvider } from './huggingface.js';
 import { openAiProvider } from './openai.js';
@@ -28,7 +29,13 @@ export type { GenerateRequest, GenerateResult, ImageProvider } from './types.js'
  * default, once a key is configured.
  */
 function allProviders(): ImageProvider[] {
-  return [geminiProvider(), openAiProvider(), huggingFaceProvider(), pollinationsProvider()];
+  // fal leads: it has no minimum spend and no expiring credits, and hosts the
+  // same gemini-3.1-flash-image model. Gemini stays in the chain but a key
+  // without billing enabled returns 4xx, so it must not be tried first.
+  return [
+    falProvider(), geminiProvider(), openAiProvider(),
+    huggingFaceProvider(), pollinationsProvider(),
+  ];
 }
 
 export function buildImageProviders(): ImageProvider[] {

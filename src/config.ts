@@ -5,6 +5,8 @@ const DEFAULT_IMAGE_WIDTH = 640;
 const DEFAULT_IMAGE_HEIGHT = 800;
 const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image';
 const DEFAULT_GEMINI_IMAGE_SIZE = '1K';
+const DEFAULT_FAL_MODEL = 'fal-ai/nano-banana-2';
+const DEFAULT_FAL_RESOLUTION = '1K';
 const DEFAULT_IMAGE_QA_MODEL = 'opus';
 const DEFAULT_AGENTIC_GEN_MAX_TURNS = 12;
 const DEFAULT_CLAUDE_GENERATOR_MODEL = 'claude-opus-5';
@@ -155,8 +157,14 @@ export function shouldLogPrompts(): boolean {
   return true;
 }
 
+export function getImageQaModel(): string {
+  return process.env.IMAGE_QA_MODEL?.trim() || DEFAULT_IMAGE_QA_MODEL;
+}
+
+/** @deprecated Prefer getImageQaModel(); kept as a thin alias for IMAGE_QA_MODEL override. */
 export function getImageQaModelOverride(): string | null {
-  return process.env.IMAGE_QA_MODEL?.trim() || null;
+  const value = process.env.IMAGE_QA_MODEL?.trim();
+  return value || null;
 }
 
 export function getClaudeGeneratorModel(): string {
@@ -217,12 +225,39 @@ export function getHfApiKey(): string | null {
   return process.env.HF_API_KEY?.trim() || null;
 }
 
-export function getOpenAiApiKey(): string | null {
-  return process.env.OPENAI_API_KEY?.trim() || null;
+// ── fal.ai ────────────────────────────────────────────────────────────────
+// Chosen over Gemini direct and Kling because it has NO minimum spend and no
+// expiring credits, while hosting the same gemini-3.1-flash-image model.
+
+export function getFalKey(): string | null {
+  return process.env.FAL_KEY?.trim() || null;
 }
 
-export function getImageQaModel(): string {
-  return process.env.IMAGE_QA_MODEL?.trim() || DEFAULT_QA_MODEL;
+export function getFalImageModel(): string {
+  return process.env.FAL_IMAGE_MODEL?.trim() || DEFAULT_FAL_MODEL;
+}
+
+/** Blank means "derive `${model}/edit` when that model is known to have one". */
+export function getFalImageEditModel(): string | null {
+  return process.env.FAL_IMAGE_EDIT_MODEL?.trim() || null;
+}
+
+export function getFalImageResolution(): string {
+  return process.env.FAL_IMAGE_RESOLUTION?.trim() || DEFAULT_FAL_RESOLUTION;
+}
+
+/** upload | datauri | off — see .env.example. */
+export function getFalReferenceMode(): 'upload' | 'datauri' | 'off' {
+  const mode = process.env.FAL_REFERENCE_MODE?.trim().toLowerCase();
+  return mode === 'datauri' || mode === 'off' ? mode : 'upload';
+}
+
+export function getFalUploadTtlDays(): number {
+  return parseIntValue(process.env.FAL_UPLOAD_TTL_DAYS, 30, 1);
+}
+
+export function getOpenAiApiKey(): string | null {
+  return process.env.OPENAI_API_KEY?.trim() || null;
 }
 
 export function getAnthropicApiKey(): string | null {

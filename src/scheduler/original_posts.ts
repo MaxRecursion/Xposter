@@ -1,6 +1,7 @@
 import {
   getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
-  insertScheduledRun, markRunFired, ScheduledRun,
+  insertScheduledRun, markRunError, markRunFired, markRunSkipped,
+  rescheduleRun, retryCountFromDetail, withRetryDetail, ScheduledRun,
 } from '../storage/scheduled_runs.js';
 import {
   insertOriginalPost, markOriginalPostPosted, markOriginalPostError,
@@ -24,6 +25,8 @@ import { selectQuoteTweetCandidate, type QuoteTweetCandidate } from '../context/
 const KIND = 'ORIGINAL_POST';
 const TICK_INTERVAL_MS = 60_000;
 const IMPRESSION_SYNC_MS = 2 * 60 * 60 * 1000; // 2 hours
+const MAX_TRANSIENT_RETRIES = 2;
+const RESCHEDULE_DELAY_SEC = 15 * 60;
 
 let _tickHandle: NodeJS.Timeout | null = null;
 let _syncHandle: NodeJS.Timeout | null = null;
@@ -139,18 +142,46 @@ async function tick(): Promise<void> {
 
   const next = due[0];
   const postType: OriginalPostType = next.detail === 'ENGAGEMENT_FARM'
+    || next.detail?.startsWith('ENGAGEMENT_FARM')
     ? 'ENGAGEMENT_FARM'
-    : next.detail === 'QUOTE_TWEET'
+    : next.detail === 'QUOTE_TWEET' || next.detail?.startsWith('QUOTE_TWEET')
       ? 'QUOTE_TWEET'
-      : 'ORIGINAL';
-  markRunFired(next.id, 'fired by original post scheduler');
-  logEvent('ORIGINAL_RUN_FIRED', `id=${next.id} time=${formatLocalTime(next.run_at)} type=${postType}`);
-  logger.info('Firing scheduled original post', { id: next.id, runAt: formatLocalTime(next.run_at), postType });
+      : next.detail === 'ORIGINAL' || next.detail?.startsWith('ORIGINAL')
+        ? 'ORIGINAL'
+        : 'ORIGINAL';
 
-  await fireOnePost(`scheduled-run-${next.id}`, postType);
+  // Preserve post type across reschedules that append `; retry=N`.
+  const typeToken = postType;
+
+  logEvent('ORIGINAL_RUN_START', `id=${next.id} time=${formatLocalTime(next.run_at)} type=${typeToken}`);
+  logger.info('Firing scheduled original post', { id: next.id, runAt: formatLocalTime(next.run_at), postType: typeToken });
+
+  const result = await fireOnePost(`scheduled-run-${next.id}`, typeToken);
+  if (result.ok) {
+    markRunFired(next.id, typeToken);
+    logEvent('ORIGINAL_RUN_FIRED', `id=${next.id} time=${formatLocalTime(next.run_at)} type=${typeToken}`);
+    return;
+  }
+
+  if (result.skipped) {
+    markRunSkipped(next.id, result.error ?? 'skipped');
+    return;
+  }
+
+  const retries = retryCountFromDetail(next.detail);
+  const msg = (result.error ?? 'unknown error').slice(0, 240);
+  if (retries < MAX_TRANSIENT_RETRIES) {
+    const nextAt = Math.floor(Date.now() / 1000) + RESCHEDULE_DELAY_SEC;
+    rescheduleRun(next.id, nextAt, withRetryDetail(`${typeToken}; transient: ${msg}`, retries + 1));
+    logEvent('ORIGINAL_POST_RESCHEDULED', `id=${next.id} retry=${retries + 1} err=${msg}`);
+    logger.warn('Original post failed — rescheduled', { id: next.id, retries: retries + 1, err: msg });
+  } else {
+    markRunError(next.id, msg);
+    logEvent('ORIGINAL_POST_ERROR', msg);
+  }
 }
 
-async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGINAL'): Promise<{ ok: boolean; id?: string; error?: string }> {
+async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGINAL'): Promise<{ ok: boolean; id?: string; error?: string; skipped?: boolean }> {
   _posting = true;
   logEvent('ORIGINAL_POST_START', `${trigger} type=${postType}`);
   let draftId: string | null = null;
@@ -162,7 +193,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
       quoteCandidate = selectQuoteTweetCandidate();
       if (!quoteCandidate) {
         logEvent('QUOTE_TWEET_SKIPPED', 'no eligible recent source tweet');
-        return { ok: false, error: 'no eligible quote-tweet source' };
+        return { ok: false, skipped: true, error: 'no eligible quote-tweet source' };
       }
     }
 
@@ -185,7 +216,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
     });
     if (!distinct.value) {
       logEvent('ORIGINAL_POST_SKIPPED_DUPLICATE', `type=${postType}; two duplicate drafts`);
-      return { ok: false, error: 'duplicate drafts (skipped)' };
+      return { ok: false, skipped: true, error: 'duplicate drafts (skipped)' };
     }
     const generated = distinct.value;
 
@@ -233,7 +264,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
     if (err instanceof EmptyReplyError) {
       logger.warn('Original post: empty reply from Groq — skipping, waiting for next slot', { trigger });
       logEvent('ORIGINAL_POST_SKIPPED_EMPTY', 'empty reply, skipped');
-      return { ok: false, error: 'empty reply (skipped)' };
+      return { ok: false, skipped: true, error: 'empty reply (skipped)' };
     }
     logger.error('Original post failed', { trigger, err: String(err) });
     logEvent('ORIGINAL_POST_ERROR', String(err));

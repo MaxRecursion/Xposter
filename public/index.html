@@ -568,12 +568,17 @@
           <div class="settings-field">
             <label>Monthly image budget (USD)</label>
             <input type="number" id="s-image-budget" min="0" max="100" step="0.5" />
-            <span class="settings-field-help">Hard cap on paid image generation, counting QA retries. Once spent, generation falls back to the free provider rather than stopping. Only applies when GEMINI_API_KEY is set.</span>
+            <span class="settings-field-help">Hard cap on paid image generation (fal/Gemini/OpenAI), counting QA retries. Once spent, generation falls back to the free provider rather than stopping.</span>
+          </div>
+          <div class="settings-field">
+            <label>Daily burst multiplier</label>
+            <input type="number" id="s-image-burst" min="1" max="31" step="0.5" />
+            <span class="settings-field-help">How many days' allowance may be spent in one day (default 2). Lets QA retries happen without burning the whole month on day one.</span>
           </div>
           <div class="settings-field settings-field-toggle">
             <label for="s-image-refs">
               <span>Use style reference images</span>
-              <span class="settings-field-help">Sends past approved frames as references so wardrobe, hair and colour grade stay consistent across posts. Requires a provider that accepts references (Gemini). Manage the set with <code>npm run image:anchor</code>.</span>
+              <span class="settings-field-help">Sends past approved frames as references so wardrobe, hair and colour grade stay consistent. Requires fal or Gemini. Manage with <code>npm run image:anchor</code>.</span>
             </label>
             <label class="ios-switch">
               <input type="checkbox" id="s-image-refs" />

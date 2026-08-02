@@ -49,3 +49,37 @@ export function markRunSkipped(id: number, detail: string): void {
     WHERE id=?
   `).run(detail, id);
 }
+
+export function markRunError(id: number, detail: string): void {
+  getDb().prepare(`
+    UPDATE scheduled_runs
+    SET status='ERROR', fired_at=unixepoch(), detail=?
+    WHERE id=?
+  `).run(detail, id);
+}
+
+/**
+ * Puts a failed run back on the queue at a later time (transient browser/API
+ * flake). Caps retries via a `retry=N` token in detail so a permanent failure
+ * cannot loop forever.
+ */
+export function rescheduleRun(id: number, runAt: number, detail: string): void {
+  getDb().prepare(`
+    UPDATE scheduled_runs
+    SET status='SCHEDULED', run_at=?, fired_at=NULL, detail=?
+    WHERE id=?
+  `).run(runAt, detail, id);
+}
+
+/** Parses `retry=N` from a detail string; defaults to 0. */
+export function retryCountFromDetail(detail: string | null): number {
+  if (!detail) return 0;
+  const match = /(?:^|[|;,\s])retry=(\d+)/i.exec(detail);
+  return match ? Number.parseInt(match[1], 10) || 0 : 0;
+}
+
+export function withRetryDetail(base: string, retries: number): string {
+  const cleaned = base.replace(/(?:^|[|;,\s])retry=\d+/gi, '').trim().replace(/^[|;,\s]+|[|;,\s]+$/g, '');
+  const prefix = cleaned ? `${cleaned}; ` : '';
+  return `${prefix}retry=${retries}`;
+}

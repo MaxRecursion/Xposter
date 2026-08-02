@@ -2,6 +2,7 @@ import { BrowserContext } from 'playwright';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import fs from 'fs';
+import { AsyncLocalStorage } from 'async_hooks';
 import { logger } from '../utils/logger.js';
 import { getBrowserUserDataDir, isBrowserHeadless, getXAuthToken, getXCt0 } from '../config.js';
 
@@ -12,6 +13,29 @@ chromium.use(StealthPlugin());
 const USER_DATA_DIR = getBrowserUserDataDir();
 
 let _context: BrowserContext | null = null;
+
+/**
+ * Serializes Playwright work across schedulers (reply ingest, originals, image
+ * posts, likes, follower sync, impressions). Nested callers (e.g. thread compose
+ * → postReply) re-enter without deadlocking via AsyncLocalStorage.
+ */
+const _exclusiveDepth = new AsyncLocalStorage<boolean>();
+let _exclusiveTail: Promise<void> = Promise.resolve();
+
+export async function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  if (_exclusiveDepth.getStore()) return fn();
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const prev = _exclusiveTail;
+  _exclusiveTail = prev.then(() => gate).catch(() => gate);
+  await prev;
+  try {
+    return await _exclusiveDepth.run(true, fn);
+  } finally {
+    release();
+  }
+}
 
 export async function getBrowserContext(): Promise<BrowserContext> {
   if (_context) return _context;
@@ -113,7 +137,9 @@ export async function closeBrowser(): Promise<void> {
 
 /** Returns true if the browser profile appears to have an X session. */
 export async function isLoggedIn(): Promise<boolean> {
-  const ctx = await getBrowserContext();
-  const cookies = await ctx.cookies('https://x.com');
-  return cookies.some((c) => c.name === 'auth_token');
+  return runExclusive(async () => {
+    const ctx = await getBrowserContext();
+    const cookies = await ctx.cookies('https://x.com');
+    return cookies.some((c) => c.name === 'auth_token');
+  });
 }

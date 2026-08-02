@@ -1,4 +1,4 @@
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import { getXHandle } from '../config.js';
@@ -9,6 +9,10 @@ export interface FollowerListEntry {
 }
 
 export async function resolveOwnHandle(): Promise<string | null> {
+  return runExclusive(() => resolveOwnHandleImpl());
+}
+
+async function resolveOwnHandleImpl(): Promise<string | null> {
   const configured = sanitizeHandle(getXHandle() ?? '');
   if (configured) return configured;
 
@@ -49,6 +53,13 @@ export async function resolveOwnHandle(): Promise<string | null> {
  * Returns up to `maxFollowers` of the most recent followers (X shows newest first).
  */
 export async function fetchOurFollowerEntries(
+  meHandle: string,
+  maxFollowers = 200,
+): Promise<FollowerListEntry[]> {
+  return runExclusive(() => fetchOurFollowerEntriesImpl(meHandle, maxFollowers));
+}
+
+async function fetchOurFollowerEntriesImpl(
   meHandle: string,
   maxFollowers = 200,
 ): Promise<FollowerListEntry[]> {
@@ -156,6 +167,10 @@ export async function fetchOurFollowerEntries(
  * Returns true on success.
  */
 export async function followBack(handle: string): Promise<boolean> {
+  return runExclusive(() => followBackImpl(handle));
+}
+
+async function followBackImpl(handle: string): Promise<boolean> {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
   try {

@@ -1,4 +1,4 @@
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 
@@ -19,6 +19,10 @@ export interface EngagementData {
  * tsx/esbuild __name injection that would break in browser context.
  */
 export async function scrapeEngagement(tweetUrl: string): Promise<EngagementData> {
+  return runExclusive(() => scrapeEngagementImpl(tweetUrl));
+}
+
+async function scrapeEngagementImpl(tweetUrl: string): Promise<EngagementData> {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 

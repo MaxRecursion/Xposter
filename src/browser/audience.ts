@@ -1,4 +1,4 @@
-import { getBrowserContext } from './session.js';
+import { getBrowserContext, runExclusive } from './session.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 
@@ -20,6 +20,10 @@ export interface AudienceScrapeResult {
 }
 
 export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
+  return runExclusive(() => scrapeAudienceHeatmapImpl());
+}
+
+async function scrapeAudienceHeatmapImpl(): Promise<AudienceScrapeResult> {
   const ctx = await getBrowserContext();
   const page = await ctx.newPage();
 

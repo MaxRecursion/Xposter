@@ -1,6 +1,6 @@
 import {
   getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
-  insertScheduledRun, markRunFired, ScheduledRun,
+  insertScheduledRun, markRunError, markRunFired, ScheduledRun,
 } from '../storage/scheduled_runs.js';
 import { logEvent, type PostSource } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
@@ -168,6 +168,12 @@ async function tick(): Promise<void> {
   try {
     await _onFire(source);
   } catch (err) {
-    logger.error('Scheduled run handler threw', { err: String(err) });
+    // Keep FIRED (slot consumed) but record ERROR detail so the dashboard
+    // shows the loss — reply pipeline has its own single-flight guard and
+    // timeline fall-through, so an immediate reschedule would often pile on.
+    const msg = String(err).slice(0, 300);
+    markRunError(next.id, `source=${source}; ${msg}`);
+    logger.error('Scheduled run handler threw', { err: msg });
+    logEvent('SCHEDULED_RUN_ERROR', `id=${next.id} source=${source} err=${msg}`);
   }
 }

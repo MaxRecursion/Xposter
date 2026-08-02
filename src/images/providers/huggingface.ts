@@ -13,6 +13,7 @@ export function huggingFaceProvider(): ImageProvider {
     isAvailable: () => !!getHfApiKey(),
     // Free-tier inference credits; not metered per image by us.
     costPerImageUsd: () => 0,
+    supportsReferences: false,
 
     async generate(req: GenerateRequest): Promise<GenerateResult> {
       const apiKey = getHfApiKey();
