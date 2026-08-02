@@ -12,6 +12,7 @@ Xposter is a local TypeScript automation project for X/Twitter (macOS). It runs:
 - a local SQLite datastore (`data/xposter.db`) with optional Voyage embeddings / RAG (`src/context/`)
 - optional Claude/Anthropic self-healing agent workflows (`src/agent/`)
 - ntfy iPhone notifications with signed action callbacks (`src/notifications/`)
+- optional OpenTelemetry observability (Grafana/Loki/Prometheus/Tempo via `observability/` + `src/telemetry/`)
 
 ## Primary tasks for an AI assistant
 
@@ -31,6 +32,7 @@ Xposter is a local TypeScript automation project for X/Twitter (macOS). It runs:
 - `npm run install:browsers` — install Playwright browsers
 - `npm run trends:probe` / `npm run trends:search` — trend debugging scripts
 - `npm run image:probe` / `npm run image:anchor` — image provider / style-anchor helpers
+- `npm run obs:up` / `npm run obs:down` — start/stop local Grafana/Loki/Prometheus/Tempo stack
 
 ## Important files and directories
 
@@ -90,6 +92,7 @@ Xposter is a local TypeScript automation project for X/Twitter (macOS). It runs:
 - `.env.example` — full environment reference (including image/fal/gemini and agent knobs)
 - `DEPLOY.md` — local launchctl restart / deploy notes
 - `docs/` — feature plans, diagrams, security notes (some may be historical)
+- `docs/OBSERVABILITY_SETUP.md` — Mac mini setup for OTEL + Grafana/Loki/Prometheus/Tempo
 
 ## What to watch for
 

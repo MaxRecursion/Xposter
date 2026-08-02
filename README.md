@@ -293,6 +293,21 @@ CONTEXT_ENABLED=true
 VOYAGE_API_KEY=your_voyage_key   # voyage.ai; free tier = 50M tokens/month
 ```
 
+### Optional: OpenTelemetry observability
+
+Local Grafana + Loki + Prometheus + Tempo stack. See **[docs/OBSERVABILITY_SETUP.md](docs/OBSERVABILITY_SETUP.md)** for the full Mac mini setup guide.
+
+```bash
+npm run obs:up          # start Docker observability stack
+```
+
+```env
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+```
+
+Grafana: http://localhost:3001 (default `admin` / `admin`)
+
 ### Optional: Claude Agent
 
 Requires `claude` CLI and `gh` CLI in PATH.
@@ -332,6 +347,11 @@ AGENT_MODEL=claude-sonnet-4-5
 | `GROQ_API_KEY` | **required** | Groq API key |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model for reply + original post generation |
 | `LOG_PROMPTS` | `true` | Print full prompts to stdout |
+| `LOG_LEVEL` | `info` | Winston log level (`error`/`warn`/`info`/`http`/`debug`) |
+| `OTEL_ENABLED` | `false` | Export traces, metrics, and logs via OpenTelemetry |
+| `OTEL_SERVICE_NAME` | `xposter` | Service name in Grafana/Tempo |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP HTTP collector URL (e.g. `http://127.0.0.1:4318`) |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Trace sampling ratio (0.0–1.0) |
 
 ### Scheduler
 

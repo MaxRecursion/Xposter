@@ -20,6 +20,7 @@ import { secondsUntilNextReplyAllowed } from './rate_limit.js';
 import { recordTrendReply } from '../trends/x_trends.js';
 import { classifyTrendSafety } from '../trends/trend_filter.js';
 import { updatePostStance } from '../storage/queries.js';
+import { instrumentPipelineRun, recordPipelineSkipped } from '../telemetry/instrument.js';
 
 interface FilteredPost {
   post: Post;
@@ -43,21 +44,25 @@ export interface RunReplyPipelineOptions {
 export async function runReplyPipeline(
   opts: RunReplyPipelineOptions = {},
 ): Promise<{ ingested: number; candidates: number }> {
+  const source = opts.source ?? 'TIMELINE';
+
   if (_running) {
     logger.warn('Pipeline already running - skipping overlapping run');
+    recordPipelineSkipped(source, 'overlap');
     return { ingested: 0, candidates: 0 };
   }
 
   if (!getBooleanSetting('system_running', true)) {
     logger.info('System paused - skipping pipeline run');
+    recordPipelineSkipped(source, 'paused');
     return { ingested: 0, candidates: 0 };
   }
 
-  const source = opts.source ?? 'TIMELINE';
-  _running = true;
-  logEvent('PIPELINE_START', `source=${source}`);
+  return instrumentPipelineRun(source, async () => {
+    _running = true;
+    logEvent('PIPELINE_START', `source=${source}`);
 
-  try {
+    try {
     const retries = await runReplyRetryQueue();
     if (retries.due > 0) {
       logEvent('POST_RETRY_QUEUE_COMPLETE', `posted=${retries.posted} failed=${retries.failed}`);
@@ -112,13 +117,14 @@ export async function runReplyPipeline(
     logEvent('PIPELINE_COMPLETE', `ingested=${ingested} posted=${posted} pending=${pendingApproval}`);
     logger.info('Pipeline complete', { ingested, posted, pendingApproval });
     return { ingested, candidates: posted + pendingApproval };
-  } catch (err) {
-    logger.error('Pipeline failed', { err });
-    logEvent('PIPELINE_ERROR', String(err));
-    throw err;
-  } finally {
-    _running = false;
-  }
+    } catch (err) {
+      logger.error('Pipeline failed', { err });
+      logEvent('PIPELINE_ERROR', String(err));
+      throw err;
+    } finally {
+      _running = false;
+    }
+  });
 }
 
 /**

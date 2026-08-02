@@ -19,6 +19,7 @@ import { getBindHost, getBrowserUrls, getCallbackBase } from '../utils/network.j
 import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
 import { getNtfyTopic, getNtfyServer, getNtfyActionMode, getCallbackNetwork, isBrowserHeadless, getGroqApiKey, isApiKeySet } from '../config.js';
+import { getTelemetryStatus } from '../telemetry/bootstrap.js';
 import { getNextRuns, getTodayPlan, ensureTodayPlan, getTodayMix } from '../scheduler/random_runs.js';
 import { getTodayOriginalPlan, getNextOriginalRuns } from '../scheduler/original_posts.js';
 
@@ -100,7 +101,11 @@ export function createServer(): express.Express {
 
   // Health check
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', ts: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      ts: new Date().toISOString(),
+      telemetry: getTelemetryStatus(),
+    });
   });
 
   // Test notification — verifies ntfy delivery to user's iPhone
@@ -127,6 +132,7 @@ export function createServer(): express.Express {
       agent_model: getAgentModel(),
       claude_cli_found: isClaudeCliFound(),
       gh_cli_found: isGhCliFound(),
+      telemetry: getTelemetryStatus(),
     });
   });
 
