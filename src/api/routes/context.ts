@@ -120,6 +120,7 @@ contextRouter.post('/test-reply', async (req, res) => {
     source: 'TIMELINE',
     stance: null,
     trend_key: null,
+    engagement_mode: null,
     deleted_at: null,
     posting_attempts: 0,
     retry_after: null,

@@ -198,15 +198,25 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
     }
 
     const recentContents = listRecentOriginalPostContents(25);
+    let lockedBaitMode: import('../pipeline/engagement_bait.js').EngagementMode | undefined;
     const distinct = await generateDistinct({
       existingTexts: recentContents,
       generate: (attempt) => {
-        const options = attempt > 1 ? { avoidTexts: recentContents } : {};
-        if (postType === 'ENGAGEMENT_FARM') return generateEngagementFarmPost(options);
-        if (postType === 'QUOTE_TWEET') {
-          return generateQuoteTweetPost(quoteCandidate!.post, options);
-        }
-        return generateOriginalPost(options);
+        const options = {
+          ...(attempt > 1 ? { avoidTexts: recentContents } : {}),
+          ...(lockedBaitMode ? { engagementMode: lockedBaitMode } : {}),
+        };
+        const run = async () => {
+          if (postType === 'ENGAGEMENT_FARM') return generateEngagementFarmPost(options);
+          if (postType === 'QUOTE_TWEET') {
+            return generateQuoteTweetPost(quoteCandidate!.post, options);
+          }
+          return generateOriginalPost(options);
+        };
+        return run().then((value) => {
+          if (!lockedBaitMode && value.engagementMode) lockedBaitMode = value.engagementMode;
+          return value;
+        });
       },
       getText: (value) => value.content,
       onDuplicate: (_value, attempt) => {
@@ -228,6 +238,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
       postType,
       researchContext: generated.researchContext,
       threadParts: generated.parts,
+      engagementMode: generated.engagementMode ?? null,
       quotedTweet: quoteCandidate ? {
         id: quoteCandidate.post.tweet_id,
         url: quoteCandidate.post.tweet_url,

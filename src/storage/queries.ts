@@ -38,6 +38,7 @@ export interface Post {
   source: PostSource;
   stance: Stance | null;
   trend_key: string | null;
+  engagement_mode: string | null;
   deleted_at: number | null;
   posting_attempts: number;
   retry_after: number | null;
@@ -163,6 +164,13 @@ export function updatePostStance(id: string, stance: Stance): void {
   getDb()
     .prepare(`UPDATE posts SET stance = ?, updated_at = unixepoch() WHERE id = ?`)
     .run(stance, id);
+}
+
+/** Records clickbait/ragebait mode for a reply candidate. Does not touch status. */
+export function updatePostEngagementMode(id: string, mode: string): void {
+  getDb()
+    .prepare(`UPDATE posts SET engagement_mode = ?, updated_at = unixepoch() WHERE id = ?`)
+    .run(mode, id);
 }
 
 export function updatePostScore(
@@ -332,6 +340,28 @@ export function getStanceCountsToday(): { aligned: number; contrarian: number } 
     else if (row.stance === 'ALIGNED') out.aligned = row.n;
   }
   return out;
+}
+
+/**
+ * Counts today's POSTED replies by engagement bait mode.
+ * Modes CLICKBAIT/RAGEBAIT count as bait; everything else (incl. null) as normal.
+ */
+export function getReplyBaitCountsToday(): { bait: number; normal: number } {
+  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const rows = getDb().prepare(`
+    SELECT engagement_mode AS mode, COUNT(*) AS n
+    FROM posts
+    WHERE status = 'POSTED' AND updated_at >= ?
+    GROUP BY engagement_mode
+  `).all(startOfDay) as Array<{ mode: string | null; n: number }>;
+
+  let bait = 0;
+  let normal = 0;
+  for (const row of rows) {
+    if (row.mode === 'CLICKBAIT' || row.mode === 'RAGEBAIT') bait += row.n;
+    else normal += row.n;
+  }
+  return { bait, normal };
 }
 
 /**

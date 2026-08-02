@@ -21,6 +21,7 @@ export interface OriginalPost {
   quoted_tweet_id: string | null;
   quoted_tweet_url: string | null;
   quoted_author_handle: string | null;
+  engagement_mode: string | null;
   posted_at: number | null;
   created_at: number;
   updated_at: number;
@@ -56,6 +57,7 @@ export function insertOriginalPost(data: {
   postType?: OriginalPostType;
   researchContext?: string;
   threadParts?: string[];
+  engagementMode?: string | null;
   quotedTweet?: {
     id: string;
     url: string;
@@ -66,9 +68,9 @@ export function insertOriginalPost(data: {
   getDb().prepare(`
     INSERT INTO original_posts (
       id, content, language, topic, post_type, research_context, thread_parts_json,
-      quoted_tweet_id, quoted_tweet_url, quoted_author_handle
+      quoted_tweet_id, quoted_tweet_url, quoted_author_handle, engagement_mode
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.content,
@@ -80,6 +82,7 @@ export function insertOriginalPost(data: {
     data.quotedTweet?.id ?? null,
     data.quotedTweet?.url ?? null,
     data.quotedTweet?.authorHandle ?? null,
+    data.engagementMode ?? null,
   );
   return getOriginalPost(id)!;
 }
@@ -130,6 +133,25 @@ export function markOriginalPostError(id: string): void {
     SET status = 'ERROR', updated_at = unixepoch()
     WHERE id = ?
   `).run(id);
+}
+
+/** Today's posted originals by bait vs normal — drives the 30% allocator. */
+export function getOriginalBaitCountsToday(): { bait: number; normal: number } {
+  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const rows = getDb().prepare(`
+    SELECT engagement_mode AS mode, COUNT(*) AS n
+    FROM original_posts
+    WHERE status = 'POSTED' AND posted_at >= ?
+    GROUP BY engagement_mode
+  `).all(startOfDay) as Array<{ mode: string | null; n: number }>;
+
+  let bait = 0;
+  let normal = 0;
+  for (const row of rows) {
+    if (row.mode === 'CLICKBAIT' || row.mode === 'RAGEBAIT') bait += row.n;
+    else normal += row.n;
+  }
+  return { bait, normal };
 }
 
 // ── Read ──────────────────────────────────────────────────────────────────────

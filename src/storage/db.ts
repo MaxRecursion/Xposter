@@ -424,6 +424,7 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'posts', 'source', "TEXT NOT NULL DEFAULT 'TIMELINE'");
   addColumnIfMissing(db, 'posts', 'stance', 'TEXT');
   addColumnIfMissing(db, 'posts', 'trend_key', 'TEXT');
+  addColumnIfMissing(db, 'posts', 'engagement_mode', 'TEXT');
   // Indexed here rather than in the CREATE TABLE block: on an existing database
   // the table already exists, so the column only appears after the ALTER above.
   db.exec('CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source, updated_at DESC)');
@@ -434,8 +435,15 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'original_posts', 'quoted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'quoted_tweet_url', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'quoted_author_handle', 'TEXT');
+  addColumnIfMissing(db, 'original_posts', 'engagement_mode', 'TEXT');
   // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');
+
+  // Engagement bait quota (clickbait/ragebait share of replies + originals)
+  db.prepare(`
+    INSERT OR IGNORE INTO settings (key, value) VALUES
+      ('engagement_bait_pct', '30')
+  `).run();
 
   applyContextMigrations(db);
   applyLikesMigrations(db);

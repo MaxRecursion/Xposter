@@ -11,6 +11,11 @@ import { assertEnglishOnly, charLength, cleanModelText } from './text_constraint
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 import { AGENTIC_MAX_ATTEMPTS, getAgenticModel, isAgenticGenerationEnabled, runGenerationAgent, type ValidationResult } from './agentic_generator.js';
 import { getGroqModel } from '../config.js';
+import {
+  baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
+  type EngagementMode,
+} from './engagement_bait.js';
+import { getOriginalBaitCountsToday } from '../storage/original_posts.js';
 
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
@@ -27,10 +32,37 @@ export interface GeneratedOriginalPost {
   topic: string;
   category: TopicCategory;
   researchContext: string;
+  engagementMode?: EngagementMode;
 }
 
 export interface OriginalGenerationOptions {
   avoidTexts?: string[];
+  /** Force a bait mode (used so retries don't flip the quota decision). */
+  engagementMode?: EngagementMode;
+}
+
+function allocateOriginalBait(opts: {
+  topicText: string;
+  /** Engagement farms always count as bait. */
+  forceBait?: boolean;
+  forcedMode?: EngagementMode;
+}): EngagementMode {
+  if (opts.forcedMode) return opts.forcedMode;
+  if (opts.forceBait) {
+    const decision = decideEngagementBait({
+      targetPct: 100,
+      blocked: isBlockedForBait(opts.topicText),
+      counts: { bait: 0, normal: 0 },
+    });
+    return decision.mode === 'NONE' ? 'RAGEBAIT' : decision.mode;
+  }
+  const decision = decideEngagementBait({
+    targetPct: getEngagementBaitPct(),
+    blocked: isBlockedForBait(opts.topicText),
+    counts: getOriginalBaitCountsToday(),
+  });
+  logEvent('ENGAGEMENT_BAIT_DECISION', `kind=original mode=${decision.mode} reason=${decision.reason}`);
+  return decision.mode;
 }
 
 // ── Research step ─────────────────────────────────────────────────────────────
@@ -248,14 +280,15 @@ function buildSystemPrompt(category: TopicCategory): string {
 
 // ── Engagement farm ───────────────────────────────────────────────────────────
 
-const ENGAGEMENT_FARM_SYSTEM = `You are a sharp-tongued Punekar with strong opinions posting on X (Twitter). You have hot takes and love a good debate. NOT a bot, NOT a brand — a real person who says what others are afraid to say.`;
+const ENGAGEMENT_FARM_SYSTEM = `You are a sharp-tongued Punekar with strong opinions posting on X (Twitter). You have hot takes and love a good debate. NOT a bot, NOT a brand — a real person who says what others are afraid to say about systems, incentives, and civic absurdity — never about identity.`;
 
 const ENGAGEMENT_FARM_USER = `Write a single short X (Twitter) post that:
-- Makes a provocative hot take on ONE of these topics: business/money, politics, Pune life, social norms, education, tech/startup
-- The "fact" can be edgy or grey-area (controversial but not hateful)
+- Makes a provocative hot take on ONE safe topic: business/money, Pune civic life, traffic/metro, education/hiring, tech/startup theatre, housing costs
+- Use either a CLICKBAIT curiosity gap ("The part about Hinjewadi salaries nobody says out loud:") OR a RAGEBAIT challenge ("Change my mind: X is the real reason Y is broken")
+- The take can be edgy — controversial but not hateful, not about caste/religion/gender/region-as-insult
 - Ends with an open question that invites people to reply and debate
 - Write entirely in sharp, polished English. No Marathi, no Hindi, no Devanagari.
-- Include 1-2 relevant hashtags
+- Include 0-1 relevant hashtags
 - Under 280 characters total
 - NO "💯", NO motivational openers like "In today's world", NO "food for thought"
 - Sound like a real Punekar venting, not an AI
@@ -265,12 +298,14 @@ Reply with ONLY the tweet text, nothing else.`;
 const ENGAGEMENT_FARM_STRATEGIC_USER = `Write a single short X (Twitter) post that:
 - Makes a provocative but fair hot take about how AI, automation, startup funding, hiring, or macro economy shifts are affecting Pune/Maharashtra
 - Connects the take to a concrete local signal: Hinjewadi, Pune IT services, GCCs, founders, campus placements, salaries, housing, MSMEs, Chakan/MIDC, or Maharashtra policy
+- Frame it as either a curiosity gap or a "change my mind" challenge so people reply
 - Ends with an open question that invites people to reply and debate
 - Write entirely in sharp, polished English. No Marathi, no Hindi, no Devanagari.
 - Include zero or one relevant hashtag
 - Under 280 characters total
 - NO "💯", NO motivational openers like "In today's world", NO "food for thought"
 - Sound like a real Punekar close to the tech ecosystem, not an AI
+- Never punch on caste, religion, gender, or region-as-insult
 
 Reply with ONLY the tweet text, nothing else.`;
 
@@ -280,6 +315,11 @@ export async function generateQuoteTweetPost(
   source: Post,
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
+  const engagementMode = allocateOriginalBait({
+    topicText: source.text,
+    forcedMode: options.engagementMode,
+  });
+  const system = [QUOTE_TWEET_SYSTEM, baitGuidanceFor(engagementMode)].filter(Boolean).join('\n\n');
   const groqModel = getGroqModel();
   const client = getGroqClient();
   const basePrompt = [
@@ -294,7 +334,7 @@ export async function generateQuoteTweetPost(
   ].join('\n');
   const userPrompt = appendAvoidancePrompt(basePrompt, options.avoidTexts);
 
-  logPromptToConsole('QUOTE_TWEET', source.tweet_id, QUOTE_TWEET_SYSTEM, userPrompt);
+  logPromptToConsole('QUOTE_TWEET', `${source.tweet_id} bait=${engagementMode}`, system, userPrompt);
 
   let raw = '';
 
@@ -302,9 +342,9 @@ export async function generateQuoteTweetPost(
   if (isClaudeAvailable()) {
     const claudeModel = claudeGeneratorModel();
     logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateQuoteTweetPost tweetId=${source.tweet_id}`);
-    logger.info('Trying Claude for quote tweet generation', { model: claudeModel, tweetId: source.tweet_id });
+    logger.info('Trying Claude for quote tweet generation', { model: claudeModel, tweetId: source.tweet_id, engagementMode });
     try {
-      const result = await generateWithClaude(QUOTE_TWEET_SYSTEM, userPrompt);
+      const result = await generateWithClaude(system, userPrompt);
       const text = result.text.trim();
       if (text.length >= 10) {
         logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`);
@@ -328,11 +368,11 @@ export async function generateQuoteTweetPost(
       const completion = await client.chat.completions.create({
         model: groqModel,
         messages: [
-          { role: 'system', content: QUOTE_TWEET_SYSTEM },
+          { role: 'system', content: system },
           { role: 'user', content: userPrompt },
         ],
         max_completion_tokens: 1000,
-        temperature: 0.85,
+        temperature: engagementMode === 'NONE' ? 0.85 : 0.95,
         top_p: 0.95,
       } as any);
       raw = (completion.choices[0]?.message?.content ?? '').trim();
@@ -359,20 +399,28 @@ export async function generateQuoteTweetPost(
     topic: `quote:${detectTopicsForQuote(source.text)}`,
     category: 'observation',
     researchContext: source.text,
+    engagementMode,
   };
 }
 
 export async function generateEngagementFarmPost(
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
+  // Farms are the dedicated bait slots — always count toward the 30% quota.
+  const engagementMode = allocateOriginalBait({
+    topicText: 'pune tech civic engagement farm',
+    forceBait: true,
+    forcedMode: options.engagementMode,
+  });
+  const system = [ENGAGEMENT_FARM_SYSTEM, baitGuidanceFor(engagementMode)].filter(Boolean).join('\n\n');
   const groqModel = getGroqModel();
   const client = getGroqClient();
   const strategic = Math.random() < 0.40;
   const baseUserPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
   const userPrompt = appendAvoidancePrompt(baseUserPrompt, options.avoidTexts);
 
-  logger.info('Generating engagement farm post', { strategic });
-  logPromptToConsole('ENGAGEMENT_FARM', strategic ? 'strategic-hot-take' : 'hot-take', ENGAGEMENT_FARM_SYSTEM, userPrompt);
+  logger.info('Generating engagement farm post', { strategic, engagementMode });
+  logPromptToConsole('ENGAGEMENT_FARM', `${strategic ? 'strategic' : 'hot-take'} bait=${engagementMode}`, system, userPrompt);
 
   let raw = '';
 
@@ -382,7 +430,7 @@ export async function generateEngagementFarmPost(
     logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateEngagementFarmPost strategic=${strategic}`);
     logger.info('Trying Claude for engagement farm post', { model: claudeModel, strategic });
     try {
-      const result = await generateWithClaude(ENGAGEMENT_FARM_SYSTEM, userPrompt);
+      const result = await generateWithClaude(system, userPrompt);
       const text = result.text.trim();
       if (text.length >= 10) {
         logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`);
@@ -406,7 +454,7 @@ export async function generateEngagementFarmPost(
       const completion = await client.chat.completions.create({
         model: groqModel,
         messages: [
-          { role: 'system', content: ENGAGEMENT_FARM_SYSTEM },
+          { role: 'system', content: system },
           { role: 'user', content: userPrompt },
         ],
         max_completion_tokens: 6000,
@@ -435,7 +483,7 @@ export async function generateEngagementFarmPost(
     throw new Error(`Engagement farm post failed length check: ${chars} chars`);
   }
 
-  logger.info('Engagement farm post generated', { chars, preview: cleaned.slice(0, 60) });
+  logger.info('Engagement farm post generated', { chars, preview: cleaned.slice(0, 60), engagementMode });
 
   return {
     content: cleaned,
@@ -444,6 +492,7 @@ export async function generateEngagementFarmPost(
     topic: strategic ? 'engagement-farm-pune-tech-economy' : 'engagement-farm',
     category: strategic ? 'pune-tech-economy' : 'observation',
     researchContext: '',
+    engagementMode,
   };
 }
 
@@ -454,8 +503,15 @@ export async function generateOriginalPost(
 ): Promise<GeneratedOriginalPost> {
   const { topic, category } = pickTopicAndCategory();
   const { context, snippets } = await gatherResearchContext(topic);
+  const engagementMode = allocateOriginalBait({
+    topicText: `${topic} ${context.slice(0, 400)}`,
+    forcedMode: options.engagementMode,
+  });
 
-  const systemPrompt = buildSystemPrompt(category);
+  const systemPrompt = [
+    buildSystemPrompt(category),
+    baitGuidanceFor(engagementMode),
+  ].filter(Boolean).join('\n\n');
 
   const userPrompt = appendAvoidancePrompt([
     `Category: ${category}`,
@@ -474,7 +530,7 @@ export async function generateOriginalPost(
   const groqModel = getGroqModel();
   const client = getGroqClient();
 
-  logger.info('Generating original post', { topic, category });
+  logger.info('Generating original post', { topic, category, engagementMode });
 
   // ── Model call helper: agentic loop first (opt-in), then Claude, then Groq ─
   const callModel = async (sysPr: string, userPr: string): Promise<string> => {
@@ -558,7 +614,7 @@ export async function generateOriginalPost(
         `Rewrite it as one tweet or a 2-3 tweet thread. Keep every part within ${MAX_ORIGINAL_CHARS} characters and preserve the angle.`,
       ].join('\n');
 
-    logPromptToConsole('ORIGINAL', `topic=${topic} cat=${category} attempt=${attempt}`, systemPrompt, attemptPrompt);
+    logPromptToConsole('ORIGINAL', `topic=${topic} cat=${category} bait=${engagementMode} attempt=${attempt}`, systemPrompt, attemptPrompt);
     const raw = await callModel(systemPrompt, attemptPrompt);
     cleaned = cleanModelText(raw);
 
@@ -587,12 +643,15 @@ export async function generateOriginalPost(
   }
 
   logger.info('Original post generated', {
-    topic, category, chars: charLength(cleaned), preview: cleaned.slice(0, 60),
+    topic, category, chars: charLength(cleaned), preview: cleaned.slice(0, 60), engagementMode,
   });
 
   assertEnglishOnly(cleaned, 'Original post');
   const parts = splitOriginalPostThread(cleaned);
-  return { content: cleaned, parts, language: 'english', topic, category, researchContext: context };
+  return {
+    content: cleaned, parts, language: 'english', topic, category,
+    researchContext: context, engagementMode,
+  };
 }
 
 function appendAvoidancePrompt(prompt: string, avoidTexts: string[] = []): string {

@@ -140,6 +140,7 @@ const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
   trend_reply_ratio:                intSetting(70, 0, 100),  // % of daily runs sourced from trends
   trend_global_ratio:               intSetting(50, 0, 100),  // % of trend runs using worldwide trends
   contrarian_reply_pct:             intSetting(33, 0, 100),
+  engagement_bait_pct:              intSetting(30, 0, 100),
   trend_refresh_minutes:            intSetting(30, 10, 240),
   trend_max_replies_per_day:        intSetting(2, 1, 10),
   trend_cooldown_hours:             intSetting(12, 1, 72),

@@ -1,4 +1,4 @@
-import { Post, Stance, getSetting, logEvent } from '../storage/queries.js';
+import { Post, Stance, getPost, getSetting, logEvent, updatePostEngagementMode } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
@@ -11,6 +11,11 @@ import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 import { isAgenticGenerationEnabled, generateReplyAgentic } from './agentic_generator.js';
+import {
+  baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
+  type EngagementMode,
+} from './engagement_bait.js';
+import { getReplyBaitCountsToday } from '../storage/queries.js';
 
 const MAX_REPLY_CHARS = 280;
 
@@ -220,6 +225,7 @@ function systemPrompt(
   classification: Classification | null,
   flavor: Flavor,
   stance: Stance | null = null,
+  engagementMode: EngagementMode = 'NONE',
 ): string {
   const base = flavor === 'pune' ? SYSTEM_PROMPT_PUNE : SYSTEM_PROMPT_GENERAL;
   const classificationGuidance = classificationGuidanceFor(classification);
@@ -228,6 +234,7 @@ function systemPrompt(
     witInstructions(tier, flavor),
     classificationGuidance,
     stanceGuidanceFor(stance),
+    baitGuidanceFor(engagementMode),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -278,13 +285,48 @@ function classificationGuidanceFor(c: Classification | null): string {
 export async function generateReply(
   post: Post,
   authorAccount: Account | null = null,
-  options: { avoidTexts?: string[]; stance?: Stance | null } = {},
+  options: {
+    avoidTexts?: string[];
+    stance?: Stance | null;
+    engagementMode?: EngagementMode | null;
+  } = {},
 ): Promise<string> {
   const { level, tier } = readWitLevel();
   const classification = (authorAccount?.classification as Classification | null) ?? null;
   const flavor = pickFlavor(post.text);
   // Explicit option wins; otherwise fall back to whatever was persisted on the row.
   const stance = options.stance ?? post.stance ?? null;
+
+  // Engagement bait: explicit option wins; else reuse a mode already written on
+  // this row (retry drafts must not flip the quota decision); else allocate.
+  // NEWS / SERIOUS authors and sensitive source text force NONE.
+  const persistedMode = (getPost(post.id)?.engagement_mode
+    ?? post.engagement_mode
+    ?? null) as EngagementMode | null;
+  let engagementMode: EngagementMode = options.engagementMode ?? persistedMode ?? 'NONE';
+  if (!options.engagementMode && !persistedMode) {
+    const blocked = isBlockedForBait(post.text)
+      || classification === 'NEWS'
+      || classification === 'SERIOUS';
+    const decision = decideEngagementBait({
+      targetPct: getEngagementBaitPct(),
+      blocked,
+      counts: getReplyBaitCountsToday(),
+    });
+    engagementMode = decision.mode;
+    try {
+      updatePostEngagementMode(post.id, engagementMode);
+    } catch {
+      // Synthetic posts in tests/scripts may not exist in DB.
+    }
+    logEvent(
+      'ENGAGEMENT_BAIT_DECISION',
+      `mode=${engagementMode} reason=${decision.reason}`,
+      post.id,
+    );
+  } else if (engagementMode !== 'NONE' && isBlockedForBait(post.text)) {
+    engagementMode = 'NONE';
+  }
 
   const contextBlock = isContextEnabled()
     ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 6, maxTokens: 800 })
@@ -297,11 +339,18 @@ export async function generateReply(
     options.avoidTexts,
   );
 
-  // Slightly higher temperature in WITTY/SHARP tiers to encourage variety
-  const temp = tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
+  // Slightly higher temperature in WITTY/SHARP tiers / bait modes to encourage variety
+  const temp = engagementMode !== 'NONE'
+    ? 0.95
+    : tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
 
-  const sysPrompt = systemPrompt(tier, classification, flavor, stance);
-  logPromptToConsole('REPLY', `${post.id} flavor=${flavor} stance=${stance ?? 'none'}`, sysPrompt, userPrompt);
+  const sysPrompt = systemPrompt(tier, classification, flavor, stance, engagementMode);
+  logPromptToConsole(
+    'REPLY',
+    `${post.id} flavor=${flavor} stance=${stance ?? 'none'} bait=${engagementMode}`,
+    sysPrompt,
+    userPrompt,
+  );
 
   let rawReply = '';
 
@@ -385,7 +434,7 @@ export async function generateReply(
   cleaned = enforceCharacterLimit(cleaned, MAX_REPLY_CHARS);
   assertEnglishOnly(cleaned, 'Reply generation');
 
-  logger.info('Reply generated', { postId: post.id, reply: cleaned, flavor });
+  logger.info('Reply generated', { postId: post.id, reply: cleaned, flavor, engagementMode });
   return cleaned;
 }
 

@@ -30,6 +30,7 @@ function asPost(t: Awaited<ReturnType<typeof searchTweets>>[number]): Post {
     tweet_url: t.tweet_url, status: 'INGESTED',
     score: null, score_breakdown: null, generated_reply: null, final_reply: null,
     posted_tweet_id: null, source: 'TREND_GLOBAL', stance: null, trend_key: null,
+    engagement_mode: null,
     deleted_at: null, posting_attempts: 0, retry_after: null, last_error: null,
     ingested_at: t.timestamp, updated_at: t.timestamp,
   };
