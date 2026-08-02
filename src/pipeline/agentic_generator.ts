@@ -164,8 +164,8 @@ async function buildResearchTools(sdk: AgentSdk): Promise<{ defs: SdkToolDef[]; 
   // search_news — needs the vector context store (CONTEXT_ENABLED + VOYAGE_API_KEY)
   try {
     const enrich = await import('../context/enrich.js');
-    const store = typeof enrich.getContextStore === 'function' ? enrich.getContextStore() : null;
-    if (store) {
+    const retriever = typeof enrich.getRetriever === 'function' ? enrich.getRetriever() : null;
+    if (retriever) {
       names.push('search_news');
       defs.push(sdk.tool(
         'search_news',
@@ -176,7 +176,7 @@ async function buildResearchTools(sdk: AgentSdk): Promise<{ defs: SdkToolDef[]; 
         },
         async (args: { query: string; max_results?: number }) => {
           try {
-            const items = await store.semanticSearch(args.query, { k: args.max_results ?? 5 });
+            const items = await retriever.retrieve({ text: args.query, k: args.max_results ?? 5 });
             if (items.length === 0) return toolText('No matching items in the index. Try a broader query or a different tool.');
             const now = Date.now() / 1000;
             const lines = items.map((it, i) => {

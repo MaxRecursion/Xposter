@@ -22,7 +22,8 @@ export type Topic =
   | 'crime'
   | 'weather'
   | 'festival'
-  | 'pune-area';
+  | 'pune-area'
+  | 'sports';
 
 interface Rule {
   topic: Topic;
@@ -96,6 +97,10 @@ const RULES: Rule[] = [
   { topic: 'festival', patterns: [
     /\b(Ganesh|Ganpati|Diwali|Holi|Pola|Dussehra|Navratri|Eid|Christmas|Gudi ?Padwa|Sankranti)\b/i,
     /(गणेश|गणपती|दिवाळी|होळी|पोला|दसरा|नवरात्र|गुढी ?पाडवा|संक्रांत)/,
+  ] },
+  { topic: 'sports', patterns: [
+    /\b(cricket|IPL|T20|ODI|test match|wicket|century|run chase|bowling|batting|BCCI|ICC|F1|formula 1|grand prix|football|premier league|transfer window|olympics|badminton|tennis grand slam|Wimbledon|US Open|Pro Kabaddi)\b/i,
+    /(क्रिकेट|आयपीएल|सामना|धाव|गोल|फुटबॉल)/,
   ] },
   { topic: 'pune-area', patterns: [
     /\b(Pune|Kothrud|Aundh|Baner|Hinjewadi|Wakad|Viman ?Nagar|Kharadi|Hadapsar|Koregaon ?Park|Kalyani ?Nagar|Magarpatta|Camp|Deccan|Shivajinagar|Karve ?Nagar|Warje|Bibwewadi|Katraj|Sinhagad|Pashan|Bavdhan|Pimpri|Chinchwad)\b/i,

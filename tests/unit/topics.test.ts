@@ -39,6 +39,11 @@ describe('detectTopics', () => {
     expect(detectTopics('Ganpati visarjan procession route')).toContain('festival');
   });
 
+  it('detects sports tags', () => {
+    expect(detectTopics('IPL final run chase goes to the last over')).toContain('sports');
+    expect(detectTopics('India test match wicket on day three')).toContain('sports');
+  });
+
   it('detects AI, jobs, startup, and economy signals', () => {
     const tags = detectTopics('AI automation is changing hiring for Pune startup teams as RBI rates affect funding');
     expect(tags).toEqual(expect.arrayContaining(['ai', 'jobs', 'startup', 'economy', 'pune-area']));

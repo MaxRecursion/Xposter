@@ -47,6 +47,11 @@ export function getContextStore(): ContextStore | null {
   return init()?.store ?? null;
 }
 
+export function getRetriever(): Retriever | null {
+  if (!isContextEnabled()) return null;
+  return init()?.retriever ?? null;
+}
+
 /**
  * Build a context block ready for injection into a prompt. Returns '' if
  * context is disabled, mis-configured, or retrieval finds nothing — callers

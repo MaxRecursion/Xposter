@@ -18,8 +18,25 @@ const ENV_KEYS = [
   'CONTEXT_RSS_INC42_AI_SHIFT',
   'CONTEXT_RSS_INC42_STARTUPS',
   'CONTEXT_RSS_YOURSTORY',
+  'CONTEXT_RSS_GUARDIAN_WORLD',
+  'CONTEXT_RSS_ALJAZEERA',
+  'CONTEXT_RSS_IE_INDIA',
+  'CONTEXT_RSS_HINDU_INDIA',
+  'CONTEXT_RSS_IE_TECH',
+  'CONTEXT_RSS_ET_TECH',
+  'CONTEXT_RSS_ET_ECONOMY',
+  'CONTEXT_RSS_ET_STARTUPS',
+  'CONTEXT_RSS_MINT_TECH',
+  'CONTEXT_RSS_GOOGLE_AI',
+  'CONTEXT_RSS_DEEPMIND',
+  'CONTEXT_RSS_SEMIANALYSIS',
+  'CONTEXT_RSS_MIT_TECH_REVIEW',
+  'CONTEXT_RSS_BBC_TECH',
+  'CONTEXT_RSS_NDTV_INDIA',
+  'CONTEXT_RSS_ESPNCRICINFO',
   'CONTEXT_REDDIT_PUNE',
   'CONTEXT_REDDIT_INDIA',
+  'CONTEXT_REDDIT_STARTUPS',
   'CONTEXT_WEATHER_PUNE',
 ];
 
@@ -58,6 +75,32 @@ describe('buildContextSources', () => {
       'rss:inc42-startups',
       'rss:yourstory',
     ]));
+  });
+
+  it('includes expanded India, AI research, geopolitics, and sports feeds by default', () => {
+    const names = buildContextSources().map((s) => s.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'rss:indian-express-india',
+      'rss:the-hindu-india',
+      'rss:indian-express-tech',
+      'rss:economic-times-tech',
+      'rss:economic-times-economy',
+      'rss:economic-times-startups',
+      'rss:google-ai-blog',
+      'rss:deepmind',
+      'rss:semianalysis',
+      'rss:guardian-world',
+      'rss:aljazeera',
+      'rss:espncricinfo',
+      'reddit:startups',
+    ]));
+    expect(names).not.toContain('rss:apnews-world');
+  });
+
+  it('uses the working NDTV India feed URL by default', () => {
+    const ndtv = buildContextSources().find((s) => s.name === 'rss:ndtv-india');
+    expect(ndtv).toBeDefined();
+    expect(ndtv?.fetch).toBeTypeOf('function');
   });
 
   it('allows individual feeds to be disabled with an empty env var', () => {
