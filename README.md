@@ -607,15 +607,22 @@ Enable with `CONTEXT_ENABLED=true` and a `VOYAGE_API_KEY`.
 
 | Source | Interval | Credibility |
 |---|---|---|
-| Indian Express Pune RSS | 30 min | 0.85 |
-| Hindustan Times Pune RSS | 30 min | 0.80 |
-| Mint AI/Tech RSS | 30 min | 0.80 |
-| Inc42 RSS | 30 min | 0.75 |
-| YourStory RSS | 30 min | 0.70 |
-| RBI RSS | 30 min | 0.85 |
-| Reddit r/pune | 60 min | 0.60 |
-| Reddit r/india | 60 min | 0.55 |
-| wttr.in weather (Pune) | 60 min | 0.80 |
+| Indian Express Pune / India / Tech / AI / Economy / Jobs RSS | 30–60 min | 0.78–0.85 |
+| Hindustan Times Pune RSS | 30 min | 0.82 |
+| Times of India Pune RSS | 30 min | 0.82 |
+| The Hindu India RSS | 45 min | 0.90 |
+| Economic Times Tech / Economy / Startups RSS | 45–60 min | 0.78–0.84 |
+| Mint AI / Industry / Tech RSS | 45–60 min | 0.82 |
+| RBI press releases RSS | 120 min | 0.98 |
+| Inc42 / YourStory startup RSS | 60–120 min | 0.74–0.80 |
+| TechCrunch / VentureBeat / Wired / Ars / The Verge / HN RSS | 30–60 min | 0.78–0.83 |
+| Google AI / DeepMind / SemiAnalysis / MIT Tech Review RSS | 120 min | 0.85–0.88 |
+| BBC World / Tech, NYT World, Guardian World, Al Jazeera RSS | 30–60 min | 0.85–0.92 |
+| NDTV India RSS | 45 min | 0.80 |
+| ESPN Cricinfo RSS | 60 min | 0.82 |
+| EV / space / consumer tech RSS (Electrek, SpaceNews, GSMArena, etc.) | 45–60 min | 0.75–0.85 |
+| Reddit r/pune, r/india, r/startups | 45–90 min | 0.55–0.65 |
+| wttr.in weather (Pune) | 90 min | 0.95 |
 
 **Deduplication:** SHA-256 hash of body prevents re-embedding the same article. Cosine distance < 0.06 against recent (48 h) embeddings filters near-duplicates before any embed cost is incurred.
 

@@ -80,16 +80,35 @@ const SOURCES: SourceDef[] = [
   // ── Geopolitics ─────────────────────────────────────────────────────────────
   { kind: 'rss',     name: 'rss:bbc-world',            envVar: 'CONTEXT_RSS_BBC_WORLD',      defaultUrl: 'https://feeds.bbci.co.uk/news/world/rss.xml',          language: 'english', credibility: 0.90, intervalMinutes: 30 },
   { kind: 'rss',     name: 'rss:nyt-world',            envVar: 'CONTEXT_RSS_NYT_WORLD',      defaultUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml', language: 'english', credibility: 0.92, intervalMinutes: 30 },
-  // Reuters public RSS dropped; replaced with AP News via RSSHub (no login required)
-  { kind: 'rss',     name: 'rss:apnews-world',          envVar: 'CONTEXT_RSS_APNEWS_WORLD',   defaultUrl: 'https://rsshub.app/apnews/topics/apf-topnews',        language: 'english', credibility: 0.90, intervalMinutes: 30 },
+  // AP News RSSHub mirror started returning 403; Guardian + Al Jazeera are direct.
+  { kind: 'rss',     name: 'rss:guardian-world',       envVar: 'CONTEXT_RSS_GUARDIAN_WORLD', defaultUrl: 'https://www.theguardian.com/world/rss',               language: 'english', credibility: 0.90, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:aljazeera',            envVar: 'CONTEXT_RSS_ALJAZEERA',      defaultUrl: 'https://www.aljazeera.com/xml/rss/all.xml',           language: 'english', credibility: 0.85, intervalMinutes: 60 },
   // ── Pune / India ─────────────────────────────────────────────────────────────
   { kind: 'rss',     name: 'rss:toi-pune',             envVar: 'CONTEXT_RSS_TOI_PUNE',       defaultUrl: 'https://www.timesofindia.com/rssfeeds/-2128936835.cms', language: 'english', credibility: 0.82, intervalMinutes: 30 },
+  { kind: 'rss',     name: 'rss:indian-express-india', envVar: 'CONTEXT_RSS_IE_INDIA',     defaultUrl: 'https://indianexpress.com/section/india/feed/',       language: 'english', credibility: 0.85, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:the-hindu-india',      envVar: 'CONTEXT_RSS_HINDU_INDIA',  defaultUrl: 'https://www.thehindu.com/news/national/feeder/default.rss', language: 'english', credibility: 0.90, intervalMinutes: 45 },
+  // ── India tech / economy ─────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:indian-express-tech',  envVar: 'CONTEXT_RSS_IE_TECH',      defaultUrl: 'https://indianexpress.com/section/technology/feed/',  language: 'english', credibility: 0.82, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:economic-times-tech',  envVar: 'CONTEXT_RSS_ET_TECH',      defaultUrl: 'https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms', language: 'english', credibility: 0.82, intervalMinutes: 45 },
+  { kind: 'rss',     name: 'rss:economic-times-economy', envVar: 'CONTEXT_RSS_ET_ECONOMY', defaultUrl: 'https://economictimes.indiatimes.com/news/economy/rssfeeds/1373380680.cms', language: 'english', credibility: 0.84, intervalMinutes: 60 },
+  { kind: 'rss',     name: 'rss:economic-times-startups', envVar: 'CONTEXT_RSS_ET_STARTUPS', defaultUrl: 'https://economictimes.indiatimes.com/small-biz/startups/rssfeeds/78570550.cms', language: 'english', credibility: 0.78, intervalMinutes: 60 },
+  { kind: 'rss',     name: 'rss:mint-tech',            envVar: 'CONTEXT_RSS_MINT_TECH',    defaultUrl: 'https://www.livemint.com/rss/technology',             language: 'english', credibility: 0.82, intervalMinutes: 60 },
+  // ── AI research / analysis ───────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:google-ai-blog',       envVar: 'CONTEXT_RSS_GOOGLE_AI',    defaultUrl: 'https://blog.google/technology/ai/rss/',              language: 'english', credibility: 0.88, intervalMinutes: 120 },
+  { kind: 'rss',     name: 'rss:deepmind',             envVar: 'CONTEXT_RSS_DEEPMIND',    defaultUrl: 'https://deepmind.google/blog/rss.xml',                language: 'english', credibility: 0.88, intervalMinutes: 120 },
+  { kind: 'rss',     name: 'rss:semianalysis',         envVar: 'CONTEXT_RSS_SEMIANALYSIS', defaultUrl: 'https://www.semianalysis.com/feed',                   language: 'english', credibility: 0.86, intervalMinutes: 120 },
+  { kind: 'rss',     name: 'rss:mit-tech-review',      envVar: 'CONTEXT_RSS_MIT_TECH_REVIEW', defaultUrl: 'https://www.technologyreview.com/feed/',           language: 'english', credibility: 0.85, intervalMinutes: 120 },
+  { kind: 'rss',     name: 'rss:bbc-tech',             envVar: 'CONTEXT_RSS_BBC_TECH',     defaultUrl: 'https://feeds.bbci.co.uk/news/technology/rss.xml',    language: 'english', credibility: 0.85, intervalMinutes: 60 },
   // ── Monsoon / India news ─────────────────────────────────────────────────────
-  { kind: 'rss',     name: 'rss:ndtv-india',           envVar: 'CONTEXT_RSS_NDTV_INDIA',     defaultUrl: 'https://feeds.feedburner.com/ndtv/India',             language: 'english', credibility: 0.80, intervalMinutes: 45 },
+  // feedburner.com/ndtv/India now returns HTML; ndtvnews-india-news still works.
+  { kind: 'rss',     name: 'rss:ndtv-india',           envVar: 'CONTEXT_RSS_NDTV_INDIA',     defaultUrl: 'https://feeds.feedburner.com/ndtvnews-india-news',   language: 'english', credibility: 0.80, intervalMinutes: 45 },
+  // ── Sports ───────────────────────────────────────────────────────────────────
+  { kind: 'rss',     name: 'rss:espncricinfo',         envVar: 'CONTEXT_RSS_ESPNCRICINFO',   defaultUrl: 'https://www.espncricinfo.com/rss/content/story/feeds/0.xml', language: 'english', credibility: 0.82, intervalMinutes: 60 },
   // Live X search is not a context source: it runs through the Playwright
   // session (searchTweets in src/browser/ingestion.ts), driven by trend_source.
   { kind: 'reddit',  name: 'reddit:pune',             envVar: 'CONTEXT_REDDIT_PUNE',       defaultSubreddit: 'pune',                                          credibility: 0.65, intervalMinutes: 45 },
   { kind: 'reddit',  name: 'reddit:india',            envVar: 'CONTEXT_REDDIT_INDIA',      defaultSubreddit: 'india',                                         credibility: 0.55, intervalMinutes: 60 },
+  { kind: 'reddit',  name: 'reddit:startups',         envVar: 'CONTEXT_REDDIT_STARTUPS',   defaultSubreddit: 'startups',                                      credibility: 0.55, intervalMinutes: 90 },
   { kind: 'weather', name: 'weather:pune',            envVar: 'CONTEXT_WEATHER_PUNE',      defaultLocation: 'Pune',                                           credibility: 0.95, intervalMinutes: 90 },
 ];
 
