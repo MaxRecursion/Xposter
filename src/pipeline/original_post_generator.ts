@@ -5,17 +5,15 @@ import { detectTopics } from '../context/topics.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
-import { getGroqClient } from './groq_client.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
-import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
-import { AGENTIC_MAX_ATTEMPTS, getAgenticModel, isAgenticGenerationEnabled, runGenerationAgent, type ValidationResult } from './agentic_generator.js';
-import { getGroqModel } from '../config.js';
+import { type ValidationResult } from './agentic_generator.js';
 import {
   baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
   type EngagementMode,
 } from './engagement_bait.js';
 import { getOriginalBaitCountsToday } from '../storage/original_posts.js';
+import { generateText, type GroqCallOptions } from './llm_runner.js';
 
 const MAX_ORIGINAL_CHARS = 280;
 const MAX_THREAD_PARTS = 3;
@@ -311,6 +309,33 @@ Reply with ONLY the tweet text, nothing else.`;
 
 const QUOTE_TWEET_SYSTEM = `You are a sharp, opinionated person quote-tweeting a post on X. Add a fresh angle, useful context, or a concise counterpoint. Do not merely agree, summarize, or restate the source. Never attack the author. Write polished English only and return only your commentary.`;
 
+async function generatePostText(opts: {
+  taskName: string;
+  system: string;
+  userPrompt: string;
+  groq: GroqCallOptions;
+  agenticTask?: {
+    validate: (raw: string) => ValidationResult;
+  };
+  logContext?: Record<string, unknown>;
+}): Promise<string> {
+  return generateText({
+    taskName: opts.taskName,
+    systemPrompt: opts.system,
+    userPrompt: opts.userPrompt,
+    groq: opts.groq,
+    logContext: opts.logContext,
+    agenticTask: opts.agenticTask
+      ? {
+          kind: 'post',
+          systemPrompt: opts.system,
+          userPrompt: opts.userPrompt,
+          validate: opts.agenticTask.validate,
+        }
+      : undefined,
+  });
+}
+
 export async function generateQuoteTweetPost(
   source: Post,
   options: OriginalGenerationOptions = {},
@@ -320,8 +345,6 @@ export async function generateQuoteTweetPost(
     forcedMode: options.engagementMode,
   });
   const system = [QUOTE_TWEET_SYSTEM, baitGuidanceFor(engagementMode)].filter(Boolean).join('\n\n');
-  const groqModel = getGroqModel();
-  const client = getGroqClient();
   const basePrompt = [
     `Source author: @${source.author_handle}`,
     `Source engagement: ${source.likes} likes, ${source.replies} replies, ${source.retweets} reposts`,
@@ -336,53 +359,16 @@ export async function generateQuoteTweetPost(
 
   logPromptToConsole('QUOTE_TWEET', `${source.tweet_id} bait=${engagementMode}`, system, userPrompt);
 
-  let raw = '';
-
-  // ── Claude (primary) ─────────────────────────────────────────────────────────
-  if (isClaudeAvailable()) {
-    const claudeModel = claudeGeneratorModel();
-    logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateQuoteTweetPost tweetId=${source.tweet_id}`);
-    logger.info('Trying Claude for quote tweet generation', { model: claudeModel, tweetId: source.tweet_id, engagementMode });
-    try {
-      const result = await generateWithClaude(system, userPrompt);
-      const text = result.text.trim();
-      if (text.length >= 10) {
-        logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`);
-        logger.info('Claude quote tweet generated', { inputTokens: result.inputTokens, outputTokens: result.outputTokens });
-        raw = text;
-      } else {
-        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback fn=generateQuoteTweetPost`);
-        logger.warn('Claude returned short/empty for quote tweet, falling back to Groq', { textLen: text.length });
-      }
-    } catch (err) {
-      logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=generateQuoteTweetPost`);
-      logger.warn('Claude threw for quote tweet, falling back to Groq', { err: String(err) });
-    }
-  }
-
-  // ── Groq (fallback) ──────────────────────────────────────────────────────────
-  if (!raw) {
-    logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=generateQuoteTweetPost tweetId=${source.tweet_id}`);
-    logger.info('Calling Groq for quote tweet generation', { model: groqModel, tweetId: source.tweet_id });
-    try {
-      const completion = await client.chat.completions.create({
-        model: groqModel,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: userPrompt },
-        ],
-        max_completion_tokens: 1000,
-        temperature: engagementMode === 'NONE' ? 0.85 : 0.95,
-        top_p: 0.95,
-      } as any);
-      raw = (completion.choices[0]?.message?.content ?? '').trim();
-      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${raw.length}`);
-      logger.info('Groq quote tweet generated', { chars: raw.length });
-    } catch (err) {
-      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)} fn=generateQuoteTweetPost`);
-      throw err;
-    }
-  }
+  const raw = await generatePostText({
+    taskName: 'generateQuoteTweetPost',
+    system,
+    userPrompt,
+    groq: {
+      maxCompletionTokens: 1000,
+      temperature: engagementMode === 'NONE' ? 0.85 : 0.95,
+    },
+    logContext: { tweetId: source.tweet_id, engagementMode },
+  });
 
   const cleaned = cleanModelText(raw);
   const chars = charLength(cleaned);
@@ -413,8 +399,6 @@ export async function generateEngagementFarmPost(
     forcedMode: options.engagementMode,
   });
   const system = [ENGAGEMENT_FARM_SYSTEM, baitGuidanceFor(engagementMode)].filter(Boolean).join('\n\n');
-  const groqModel = getGroqModel();
-  const client = getGroqClient();
   const strategic = Math.random() < 0.40;
   const baseUserPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
   const userPrompt = appendAvoidancePrompt(baseUserPrompt, options.avoidTexts);
@@ -422,53 +406,13 @@ export async function generateEngagementFarmPost(
   logger.info('Generating engagement farm post', { strategic, engagementMode });
   logPromptToConsole('ENGAGEMENT_FARM', `${strategic ? 'strategic' : 'hot-take'} bait=${engagementMode}`, system, userPrompt);
 
-  let raw = '';
-
-  // ── Claude (primary) ─────────────────────────────────────────────────────────
-  if (isClaudeAvailable()) {
-    const claudeModel = claudeGeneratorModel();
-    logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateEngagementFarmPost strategic=${strategic}`);
-    logger.info('Trying Claude for engagement farm post', { model: claudeModel, strategic });
-    try {
-      const result = await generateWithClaude(system, userPrompt);
-      const text = result.text.trim();
-      if (text.length >= 10) {
-        logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`);
-        logger.info('Claude engagement farm post generated', { inputTokens: result.inputTokens, outputTokens: result.outputTokens, strategic });
-        raw = text;
-      } else {
-        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback fn=generateEngagementFarmPost`);
-        logger.warn('Claude returned short/empty for engagement farm, falling back to Groq', { textLen: text.length });
-      }
-    } catch (err) {
-      logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=generateEngagementFarmPost`);
-      logger.warn('Claude threw for engagement farm, falling back to Groq', { err: String(err) });
-    }
-  }
-
-  // ── Groq (fallback) ──────────────────────────────────────────────────────────
-  if (!raw) {
-    logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=generateEngagementFarmPost strategic=${strategic}`);
-    logger.info('Calling Groq for engagement farm post', { model: groqModel, strategic });
-    try {
-      const completion = await client.chat.completions.create({
-        model: groqModel,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: userPrompt },
-        ],
-        max_completion_tokens: 6000,
-        temperature: 0.95,
-        top_p: 0.95,
-      } as any);
-      raw = (completion.choices[0]?.message?.content ?? '').trim();
-      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${raw.length}`);
-      logger.info('Groq engagement farm post generated', { chars: raw.length });
-    } catch (err) {
-      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)} fn=generateEngagementFarmPost`);
-      throw err;
-    }
-  }
+  const raw = await generatePostText({
+    taskName: 'generateEngagementFarmPost',
+    system,
+    userPrompt,
+    groq: { maxCompletionTokens: 6000, temperature: 0.95 },
+    logContext: { strategic, engagementMode },
+  });
 
   const cleaned = cleanModelText(raw);
   const chars = charLength(cleaned);
@@ -527,79 +471,23 @@ export async function generateOriginalPost(
     'Write the tweet now:',
   ].filter((l) => l !== undefined).join('\n'), options.avoidTexts);
 
-  const groqModel = getGroqModel();
-  const client = getGroqClient();
-
   logger.info('Generating original post', { topic, category, engagementMode });
 
-  // ── Model call helper: agentic loop first (opt-in), then Claude, then Groq ─
-  const callModel = async (sysPr: string, userPr: string): Promise<string> => {
-    if (isAgenticGenerationEnabled()) {
-      const agenticTask = {
-        kind: 'post' as const,
-        systemPrompt: sysPr,
-        userPrompt: userPr,
-        validate: (raw: string): ValidationResult => {
-          const text = cleanModelText(raw);
-          if (charLength(text) === 0) return { ok: false, reason: 'empty text' };
-          const qError = qualityCheck(text);
-          return qError ? { ok: false, reason: qError } : { ok: true, text };
-        },
-      };
-      // Retry on the same model, then fall through to single-shot.
-      const agModel = getAgenticModel();
-      for (let attempt = 1; attempt <= AGENTIC_MAX_ATTEMPTS; attempt++) {
-        try {
-          return await runGenerationAgent(agenticTask, agModel);
-        } catch (err) {
-          logger.warn(`Agentic original post attempt ${attempt}/${AGENTIC_MAX_ATTEMPTS} failed (model=${agModel})`, { topic, err: String(err).slice(0, 200) });
-        }
-      }
-      logger.warn('Agentic generation exhausted; falling back to single-shot', { topic });
-    }
-
-    if (isClaudeAvailable()) {
-      const claudeModel = claudeGeneratorModel();
-      logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=generateOriginalPost topic=${topic}`);
-      logger.info('Trying Claude for original post generation', { model: claudeModel, topic, category });
-      try {
-        const result = await generateWithClaude(sysPr, userPr);
-        const text = result.text.trim();
-        if (text.length >= 10) {
-          logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} topic=${topic}`);
-          logger.info('Claude original post generated', { inputTokens: result.inputTokens, outputTokens: result.outputTokens, topic });
-          return text;
-        }
-        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback fn=generateOriginalPost`);
-        logger.warn('Claude returned short/empty for original post, falling back to Groq', { topic, textLen: text.length });
-      } catch (err) {
-        logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=generateOriginalPost`);
-        logger.warn('Claude threw for original post, falling back to Groq', { topic, err: String(err) });
-      }
-    }
-
-    logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=generateOriginalPost topic=${topic}`);
-    logger.info('Calling Groq for original post generation', { model: groqModel, topic, category });
-    try {
-      const completion = await client.chat.completions.create({
-        model: groqModel,
-        messages: [
-          { role: 'system', content: sysPr },
-          { role: 'user', content: userPr },
-        ],
-        max_completion_tokens: 6000,
-        temperature: 0.85,
-        top_p: 0.95,
-      } as any);
-      const raw = (completion.choices[0]?.message?.content ?? '').trim();
-      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${raw.length} topic=${topic}`);
-      logger.info('Groq original post generated', { chars: raw.length, topic });
-      return raw;
-    } catch (err) {
-      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)} fn=generateOriginalPost topic=${topic}`);
-      throw err;
-    }
-  };
+  const callModel = async (sysPr: string, userPr: string): Promise<string> => generatePostText({
+    taskName: 'generateOriginalPost',
+    system: sysPr,
+    userPrompt: userPr,
+    groq: { maxCompletionTokens: 6000, temperature: 0.85 },
+    logContext: { topic, category },
+    agenticTask: {
+      validate: (raw: string): ValidationResult => {
+        const text = cleanModelText(raw);
+        if (charLength(text) === 0) return { ok: false, reason: 'empty text' };
+        const qError = qualityCheck(text);
+        return qError ? { ok: false, reason: qError } : { ok: true, text };
+      },
+    },
+  });
 
   let cleaned = '';
   let lastQualityError: string | null = null;

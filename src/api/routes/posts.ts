@@ -9,7 +9,9 @@ import { updateGeneratedReply, updatePostStatus } from '../../storage/queries.js
 import { sendApprovalNotification } from '../../notifications/ntfy.js';
 import { logger } from '../../utils/logger.js';
 import { requireApiKey } from '../auth.js';
-import { clampInt, paramString } from '../http.js';
+import { paramString } from '../http.js';
+import { clampInt } from '../../utils/number.js';
+import { buildWritableSettingNormalizers } from '../../storage/settings_schema.js';
 
 export const postsRouter = Router();
 
@@ -85,68 +87,8 @@ postsRouter.get('/settings/all', (_req: Request, res: Response) => {
   res.json(getAllSettings());
 });
 
-// Allowlist of writable settings and how each value is normalized. Anything
-// not listed here is silently ignored.
-const intSetting = (fallback: number, min: number, max: number) =>
-  (v: unknown) => String(clampInt(v, fallback, min, max));
-const boolSetting = (v: unknown) => String(v === 'true');
-const textSetting = (maxLen: number) => (v: unknown) => String(v).slice(0, maxLen);
-const floatSetting = (fallback: number, min: number, max: number) => (v: unknown) => {
-  const n = parseFloat(String(v));
-  if (!Number.isFinite(n)) return String(fallback);
-  return String(Math.min(max, Math.max(min, n)));
-};
-
-const SETTING_NORMALIZERS: Record<string, (v: unknown) => string> = {
-  topic_keywords:              textSetting(500),
-  min_score:                   intSetting(40, 0, 100),
-  max_candidates_per_run:      intSetting(5, 1, 20),
-  require_approval:            boolSetting,
-  approval_timeout_min:        intSetting(30, 5, 1440),
-  system_running:              boolSetting,
-  wit_level:                   intSetting(55, 0, 100),
-  random_runs_per_day:         intSetting(20, 1, 30),
-  active_window_start_hour:    intSetting(9, 0, 23),
-  active_window_end_hour:      intSetting(22, 1, 24),
-  max_follow_backs_per_day:    intSetting(15, 0, 100),
-  classification_ttl_days:     intSetting(7, 1, 90),
-  blocklist_classifications:   textSetting(200),
-  original_posts_per_day:      intSetting(10, 1, 15),
-  original_post_marathi_ratio: intSetting(40, 0, 100),
-  agent_enabled:               boolSetting,
-  agent_error_threshold:       intSetting(3, 1, 50),
-  agentic_generation:          boolSetting,
-  auto_follow_back_enabled:    boolSetting,
-  auto_follow_back_classifications: textSetting(200),
-  auto_follow_back_min_confidence:  intSetting(60, 0, 100),
-  weekly_digest_enabled:            boolSetting,
-  weekly_digest_hour:               intSetting(9, 0, 23),
-  likes_enabled:                    boolSetting,
-  likes_per_day:                    intSetting(100, 0, 500),
-  topic_daily_cap:                  intSetting(10, 1, 100), // percentage of planned daily volume
-  image_posts_enabled:              boolSetting,
-  image_posts_per_day:              intSetting(1, 0, 4),
-  image_evening_start_hour:         intSetting(18, 0, 23),
-  image_evening_end_hour:           intSetting(22, 1, 24),
-  image_qa_enabled:                 boolSetting,
-  image_qa_max_attempts:            intSetting(3, 1, 5),
-  image_use_references:             boolSetting,
-  image_monthly_budget_usd:         floatSetting(3.0, 0, 100),
-  image_daily_burst:                floatSetting(2.0, 1, 31),
-  image_identity_json:              textSetting(1500),
-  image_aspect:                     textSetting(8),
-  // Trend-driven replies
-  trend_replies_enabled:            boolSetting,
-  trend_reply_ratio:                intSetting(70, 0, 100),  // % of daily runs sourced from trends
-  trend_global_ratio:               intSetting(50, 0, 100),  // % of trend runs using worldwide trends
-  contrarian_reply_pct:             intSetting(33, 0, 100),
-  engagement_bait_pct:              intSetting(30, 0, 100),
-  trend_refresh_minutes:            intSetting(30, 10, 240),
-  trend_max_replies_per_day:        intSetting(2, 1, 10),
-  trend_cooldown_hours:             intSetting(12, 1, 72),
-  trend_min_reply_interval_sec:     intSetting(90, 0, 600),
-  trend_blocklist:                  textSetting(500),
-};
+// Writable settings are defined in storage/settings_schema.ts.
+const SETTING_NORMALIZERS = buildWritableSettingNormalizers();
 
 postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {
   const updates = req.body as Record<string, unknown>;

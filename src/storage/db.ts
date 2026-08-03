@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import { getVoyageDim, getDbPathOverride } from '../config.js';
+import { settingsSeedTuples } from './settings_schema.js';
 
 const VEC_DIM = getVoyageDim();
 
@@ -97,29 +98,6 @@ function applyMigrations(db: Database.Database): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
-
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('system_running',          'true'),
-      ('topic_keywords',          'Pune,AI,Technology,Consumer Electronics,Rage bait,Geopolitics,Monsoon,Rain,Open source,AI assisted coding,Grok,SpaceX,Elon Musk,Electric Vehicles'),
-      ('min_score',               '40'),
-      ('max_candidates_per_run',  '5'),
-      ('require_approval',        'false'),
-      ('approval_timeout_min',    '30'),
-      ('wit_level',               '55'),
-      ('random_runs_per_day',     '20'),
-      ('active_window_start_hour','9'),
-      ('active_window_end_hour',  '22'),
-      ('max_follow_backs_per_day','15'),
-      ('classification_ttl_days', '7'),
-      ('marathi_priority_boost',  '15'),
-      ('blocklist_classifications','BOT,SPAM,BRAND_PROMO'),
-      ('likes_enabled',           'true'),
-      ('likes_per_day',           '100'),
-      ('topic_daily_cap',         '10'),
-      ('image_posts_enabled',     'true'),
-      ('image_posts_per_day',     '1'),
-      ('image_evening_start_hour','18'),
-      ('image_evening_end_hour',  '22');
 
     -- ──────────────────────────────────────────────────────────────────────
     -- accounts: every X account we've encountered + its classification
@@ -347,71 +325,17 @@ function applyMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_feat_created ON agent_feature_tasks(created_at DESC);
   `);
 
-  // Default settings for the agent subsystem — OFF by default; user toggles on from dashboard.
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('agent_enabled',          'false'),
-      ('agent_last_watched_at',  '0'),
-      ('agent_error_threshold',  '3')
-  `).run();
+  seedSettingsFromSchema(db);
 
+  // Legacy settings not yet in SETTINGS_SCHEMA (kept for backward compatibility).
   db.prepare(`
     INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('weekly_digest_enabled',        'true'),
-      ('weekly_digest_hour',           '9'),
-      ('weekly_digest_last_sent_week', '')
-  `).run();
-
-  // Insert default settings for original posts feature
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('original_posts_per_day',    '10'),
-      ('original_post_marathi_ratio','40'),
-      ('impression_sync_interval_h', '2'),
-      ('follow_back_window_hours',   '24'),
-      ('topic_category_weights',    '{"pune-tech-economy":0.40,"local-pune":0.20,"tech":0.15,"politics":0.07,"sports":0.08,"culture":0.07,"observation":0.03}')
-  `).run();
-
-  // Auto-follow-back policy (FEATURE_PLAN P0-2) — off by default
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('auto_follow_back_enabled',         'false'),
-      ('auto_follow_back_classifications', 'REGULAR,SERIOUS'),
-      ('auto_follow_back_min_confidence',  '60')
-  `).run();
-
-  // Agentic content generation (Claude Agent SDK loop) — off by default
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('agentic_generation', 'false')
-  `).run();
-
-  // Trend-driven engagement replies: source most replies from X trending topics
-  // (50% worldwide / 50% India) instead of the home timeline, and frame a share
-  // of them as contrarian takes.
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('trend_replies_enabled',       'true'),
-      ('trend_reply_ratio',           '70'),
-      ('trend_global_ratio',          '50'),
-      ('contrarian_reply_pct',        '33'),
-      ('trend_refresh_minutes',       '30'),
-      ('trend_max_replies_per_day',   '2'),
-      ('trend_cooldown_hours',        '12'),
-      ('trend_min_reply_interval_sec','90'),
-      ('trend_blocklist',             '')
-  `).run();
-
-  // Image post quality gate + visual identity
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('image_qa_enabled',        'true'),
-      ('image_qa_max_attempts',   '3'),
-      ('image_identity_json',     ''),
-      ('image_aspect',            '4:5'),
-      ('image_monthly_budget_usd','3.0'),
-      ('image_daily_burst',       '2.0'),
-      ('image_use_references',    'true')
+      ('marathi_priority_boost',         '15'),
+      ('agent_last_watched_at',          '0'),
+      ('weekly_digest_last_sent_week',   ''),
+      ('impression_sync_interval_h',     '2'),
+      ('follow_back_window_hours',       '24'),
+      ('topic_category_weights',         '{"pune-tech-economy":0.40,"local-pune":0.20,"tech":0.15,"politics":0.07,"sports":0.08,"culture":0.07,"observation":0.03}')
   `).run();
 
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
@@ -439,16 +363,18 @@ function applyMigrations(db: Database.Database): void {
   // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');
 
-  // Engagement bait quota (clickbait/ragebait share of replies + originals)
-  db.prepare(`
-    INSERT OR IGNORE INTO settings (key, value) VALUES
-      ('engagement_bait_pct', '30')
-  `).run();
-
   applyContextMigrations(db);
   applyLikesMigrations(db);
   applyImagePostsMigrations(db);
   applyTrendMigrations(db);
+}
+
+function seedSettingsFromSchema(db: Database.Database): void {
+  const insert = db.prepare('INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)');
+  const seed = db.transaction((rows: Array<[string, string]>) => {
+    for (const [key, value] of rows) insert.run(key, value);
+  });
+  seed(settingsSeedTuples());
 }
 
 function applyContextMigrations(db: Database.Database): void {

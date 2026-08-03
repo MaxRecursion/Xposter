@@ -5,12 +5,10 @@ import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
-import { getGroqClient } from './groq_client.js';
-import { getGroqModel } from '../config.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
-import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
-import { isAgenticGenerationEnabled, generateReplyAgentic } from './agentic_generator.js';
+import { generateReplyAgentic } from './agentic_generator.js';
+import { generateText } from './llm_runner.js';
 import {
   baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
   type EngagementMode,
@@ -352,82 +350,21 @@ export async function generateReply(
     userPrompt,
   );
 
-  let rawReply = '';
-
-  // ── Agentic loop (Claude Agent SDK) — opt-in, research + revise-until-valid ──
-  if (isAgenticGenerationEnabled()) {
-    try {
-      rawReply = await generateReplyAgentic({
-        postId: post.id,
-        systemPrompt: sysPrompt,
-        userPrompt,
-        avoidTexts: options.avoidTexts ?? [],
-        stance,
-      });
-    } catch (err) {
-      logger.warn('Agentic reply generation failed; falling back to single-shot', { postId: post.id, err: String(err) });
-    }
-  }
-
-  // ── Claude (primary single-shot) ─────────────────────────────────────────────
-  if (!rawReply && isClaudeAvailable()) {
-    const claudeModel = claudeGeneratorModel();
-    logger.info('Trying Claude for reply generation', {
-      postId: post.id, model: claudeModel, witLevel: level, witTier: tier, flavor,
-      classification: classification ?? 'unknown',
-      contextChars: contextBlock.length, memoryChars: memoryBlock.length,
-    });
-    logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} witTier=${tier} flavor=${flavor} postId=${post.id}`, post.id);
-    try {
-      const result = await generateWithClaude(sysPrompt, userPrompt);
-      const text = result.text.trim();
-      if (text.length >= 10) {
-        logEvent('CLAUDE_GENERATION_SUCCESS', `model=${claudeModel} in=${result.inputTokens} out=${result.outputTokens} chars=${text.length}`, post.id);
-        logger.info('Claude reply generation succeeded', {
-          postId: post.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, chars: text.length,
-        });
-        rawReply = text;
-      } else {
-        logEvent('CLAUDE_GENERATION_FAILED', `response too short (${text.length} chars) — triggering Groq fallback`, post.id);
-        logger.warn('Claude returned short/empty reply, falling back to Groq', { postId: post.id, textLen: text.length });
-      }
-    } catch (err) {
-      logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback`, post.id);
-      logger.warn('Claude threw error for reply generation, falling back to Groq', { postId: post.id, err: String(err) });
-    }
-  }
-
-  // ── Groq (fallback) ──────────────────────────────────────────────────────────
-  if (!rawReply) {
-    const groqModel = getGroqModel();
-    const client = getGroqClient();
-    logger.info('Calling Groq for reply generation', {
-      postId: post.id, model: groqModel, witLevel: level, witTier: tier, flavor,
-      classification: classification ?? 'unknown',
-      contextChars: contextBlock.length, memoryChars: memoryBlock.length,
-    });
-    logEvent('GROQ_FALLBACK_START', `model=${groqModel} witTier=${tier} flavor=${flavor}`, post.id);
-    try {
-      const completion = await client.chat.completions.create({
-        model: groqModel,
-        messages: [
-          { role: 'system', content: sysPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: 400,
-        temperature: temp,
-        top_p: 0.95,
-      });
-      rawReply = completion.choices[0]?.message?.content?.trim() ?? '';
-      logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${rawReply.length}`, post.id);
-      logger.info('Groq reply generation succeeded', { postId: post.id, chars: rawReply.length });
-    } catch (err) {
-      logEvent('GROQ_FALLBACK_FAILED', `error: ${String(err)}`, post.id);
-      throw err;
-    }
-  }
-
-  if (!rawReply) throw new EmptyReplyError();
+  const rawReply = await generateText({
+    taskName: 'generateReply',
+    systemPrompt: sysPrompt,
+    userPrompt,
+    postId: post.id,
+    groq: { maxTokens: 400, temperature: temp },
+    logContext: { witLevel: level, witTier: tier, flavor, classification: classification ?? 'unknown' },
+    agenticRunner: () => generateReplyAgentic({
+      postId: post.id,
+      systemPrompt: sysPrompt,
+      userPrompt,
+      avoidTexts: options.avoidTexts ?? [],
+      stance,
+    }),
+  });
 
   // Sanitize: strip any surrounding quotes the model might add
   let cleaned = cleanModelText(rawReply);
