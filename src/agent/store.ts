@@ -6,6 +6,7 @@ import type {
   FeatureTaskRow, FeatureTaskStatus,
   ActivityRow,
 } from './types.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 
 // ── agent_runs ────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ export function listAgentRuns(limit = 50): AgentRunRow[] {
 }
 
 export function getRunCountToday(): number {
-  const startOfDay = startOfTodayUnix();
+  const startOfDay = startOfLocalDayUnix();
   const row = getDb().prepare(`
     SELECT COUNT(*) AS n FROM agent_runs WHERE started_at >= ?
   `).get(startOfDay) as { n: number };
@@ -216,12 +217,4 @@ export function getActivityRowsSince(
     WHERE created_at >= ? AND event IN (${placeholders})
     ORDER BY created_at ASC
   `).all(sinceUnix, ...eventNames) as ActivityRow[];
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function startOfTodayUnix(): number {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.floor(start.getTime() / 1000);
 }

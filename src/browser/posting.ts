@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 import { mediumDelay, longDelay, humanType, delay, randomBetween } from '../utils/delay.js';
 import { extractTweetIdFromUrl } from '../utils/x.js';
 import { findEnabled, findVisible, watchCreateTweetId, dismissPromotePopup, clickWithPopupRetry } from './dom.js';
-import { PostingError } from '../pipeline/errors.js';
+import { PostingError } from './errors.js';
 
 export interface PostReplyResult {
   replyTweetId: string | null;

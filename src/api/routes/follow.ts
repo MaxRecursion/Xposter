@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
 import {
-  countActionedFollowBacksToday, getFollowerEvent, listFollowerEvents, listPendingFollowBackEvents,
-  setFollowerEventStatus, setFollowingState,
-} from '../../storage/accounts.js';
+  countActionedFollowBacksToday, getFollowerEvent, listFollowerEvents,
+  listPendingFollowBackEvents, setFollowerEventStatus,
+} from '../../storage/follower_events.js';
+import { setFollowingState } from '../../storage/accounts.js';
 import { claimFollowerEventForApproval } from '../../storage/follower_events.js';
 import { logEvent } from '../../storage/queries.js';
 import { getIntSetting } from '../../storage/settings.js';

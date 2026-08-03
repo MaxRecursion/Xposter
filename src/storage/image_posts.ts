@@ -2,6 +2,7 @@
 import crypto from 'crypto';
 import { getDb } from './db.js';
 import { logger } from '../utils/logger.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 
 export type ImagePostStatus = 'PENDING' | 'POSTING' | 'POSTED' | 'ERROR' | 'SKIPPED' | 'REJECTED';
 
@@ -119,7 +120,7 @@ export function sweepStuckImagePosts(maxAgeSeconds = 3600): number {
 }
 
 export function countImagePostsToday(): number {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const row = getDb().prepare(`
     SELECT COUNT(*) AS n FROM image_posts
     WHERE created_at >= ? AND status IN ('POSTING','POSTED')

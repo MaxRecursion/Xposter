@@ -1,6 +1,7 @@
 import { getDb } from './db.js';
 import crypto from 'crypto';
 import { isValidTweetReference } from '../utils/x.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 import { getIntSetting } from './settings.js';
 import { detectTopics } from '../context/topics.js';
 
@@ -305,7 +306,7 @@ export function claimPostRetry(id: string): boolean {
  * per-day rule regardless of which post triggered the reply.
  */
 export function getHandlesRepliedToToday(): Set<string> {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const rows = getDb()
     .prepare(`
       SELECT DISTINCT author_handle
@@ -326,7 +327,7 @@ export function getHandlesRepliedToToday(): Set<string> {
  * self-correct.
  */
 export function getStanceCountsToday(): { aligned: number; contrarian: number } {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const rows = getDb().prepare(`
     SELECT stance, COUNT(*) AS n
     FROM posts
@@ -347,7 +348,7 @@ export function getStanceCountsToday(): { aligned: number; contrarian: number } 
  * Modes CLICKBAIT/RAGEBAIT count as bait; everything else (incl. null) as normal.
  */
 export function getReplyBaitCountsToday(): { bait: number; normal: number } {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const rows = getDb().prepare(`
     SELECT engagement_mode AS mode, COUNT(*) AS n
     FROM posts
@@ -372,7 +373,7 @@ export function getReplyBaitCountsToday(): { bait: number; normal: number } {
  * Topics are detected from posted reply texts + original post topic strings.
  */
 export function getTopicCountsToday(): Map<string, number> {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const db = getDb();
   const counts = new Map<string, number>();
 

@@ -21,6 +21,7 @@
 import { getDb } from './db.js';
 import { getFloatSetting } from './settings.js';
 import { logger } from '../utils/logger.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 
 /**
  * `now` is injectable throughout so tests are deterministic. Without it, every
@@ -35,7 +36,7 @@ export function startOfMonth(now: Date = new Date()): number {
 
 /** Unix seconds at local midnight today. */
 export function startOfDay(now: Date = new Date()): number {
-  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).getTime() / 1000);
+  return startOfLocalDayUnix(now);
 }
 
 /** Days left in the month, counting today. Never below 1. */

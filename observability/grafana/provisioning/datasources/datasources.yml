@@ -2,6 +2,10 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+<<<<<<< HEAD
+=======
+    uid: prometheus
+>>>>>>> cursor/phase1-refactors-2f11
     type: prometheus
     access: proxy
     url: http://prometheus:9090
@@ -9,6 +13,10 @@ datasources:
     editable: false
 
   - name: Loki
+<<<<<<< HEAD
+=======
+    uid: loki
+>>>>>>> cursor/phase1-refactors-2f11
     type: loki
     access: proxy
     url: http://loki:3100

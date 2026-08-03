@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPostingError, PostingError } from '../../src/pipeline/errors.js';
+import { classifyPostingError, PostingError } from '../../src/browser/errors.js';
 
 describe('classifyPostingError', () => {
   it('treats compose and timeout failures as transient', () => {

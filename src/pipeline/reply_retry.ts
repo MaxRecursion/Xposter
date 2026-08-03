@@ -1,4 +1,4 @@
-import { publishReply } from '../pipeline/reply_publisher.js';
+import { publishReply } from './reply_publisher.js';
 import { claimPostRetry, getPost, getPostsDueForRetry, logEvent } from '../storage/queries.js';
 import { getBooleanSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';

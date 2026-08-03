@@ -51,7 +51,7 @@ describe('reply retry queue', () => {
     queries.incrementPostingAttempt(post.id);
     queries.schedulePostRetry(post.id, 'COMPOSE_NOT_FOUND: compose missing');
 
-    const { runReplyRetryQueue } = await import('../../src/scheduler/reply_retry.js');
+    const { runReplyRetryQueue } = await import('../../src/pipeline/reply_retry.js');
     const result = await runReplyRetryQueue();
 
     expect(result).toEqual({ due: 1, posted: 1, failed: 0 });

@@ -14,7 +14,7 @@ import { generateReply } from './generator.js';
 import { rankCandidates, scorePostsWithSignals, ScoredPost } from './scorer.js';
 import { generateDistinct } from './dedup.js';
 import { publishReply } from './reply_publisher.js';
-import { runReplyRetryQueue } from '../scheduler/reply_retry.js';
+import { runReplyRetryQueue } from './reply_retry.js';
 import { sourceTrendCandidates, type TrendCandidate } from './trend_source.js';
 import { secondsUntilNextReplyAllowed } from './rate_limit.js';
 import { recordTrendReply } from '../trends/x_trends.js';

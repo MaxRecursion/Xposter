@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getDb } from './db.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 
 export type OriginalPostStatus = 'GENERATING' | 'POSTED' | 'ERROR' | 'SKIPPED';
 
@@ -137,7 +138,7 @@ export function markOriginalPostError(id: string): void {
 
 /** Today's posted originals by bait vs normal — drives the 30% allocator. */
 export function getOriginalBaitCountsToday(): { bait: number; normal: number } {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const rows = getDb().prepare(`
     SELECT engagement_mode AS mode, COUNT(*) AS n
     FROM original_posts

@@ -180,12 +180,6 @@ export function getImageQaModel(): string {
   return process.env.IMAGE_QA_MODEL?.trim() || DEFAULT_IMAGE_QA_MODEL;
 }
 
-/** @deprecated Prefer getImageQaModel(); kept as a thin alias for IMAGE_QA_MODEL override. */
-export function getImageQaModelOverride(): string | null {
-  const value = process.env.IMAGE_QA_MODEL?.trim();
-  return value || null;
-}
-
 export function getClaudeGeneratorModel(): string {
   return process.env.CLAUDE_GENERATOR_MODEL?.trim() || DEFAULT_CLAUDE_GENERATOR_MODEL;
 }

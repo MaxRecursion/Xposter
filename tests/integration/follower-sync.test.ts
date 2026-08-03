@@ -78,7 +78,8 @@ describe('runFollowerSync', () => {
     }));
 
     const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
-    const { listFollowerEvents, getAccount } = await import('../../src/storage/accounts.js');
+    const { listFollowerEvents } = await import('../../src/storage/follower_events.js');
+    const { getAccount } = await import('../../src/storage/accounts.js');
 
     const result = await runFollowerSync();
 
@@ -117,7 +118,8 @@ describe('runFollowerSync', () => {
     }));
 
     const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
-    const { listPendingFollowBackEvents, getAccount } = await import('../../src/storage/accounts.js');
+    const { listPendingFollowBackEvents } = await import('../../src/storage/follower_events.js');
+    const { getAccount } = await import('../../src/storage/accounts.js');
 
     const result = await runFollowerSync();
 
@@ -158,7 +160,7 @@ describe('runFollowerSync', () => {
 
     expect(result).toMatchObject({ ok: true, queued: 1, autoScheduled: 1 });
 
-    const { listFollowerEvents } = await import('../../src/storage/accounts.js');
+    const { listFollowerEvents } = await import('../../src/storage/follower_events.js');
     const approved = listFollowerEvents('APPROVED');
     expect(approved).toHaveLength(1);
     expect(approved[0].account_handle).toBe('safe_follower');
@@ -187,8 +189,8 @@ describe('runFollowerSync', () => {
     }));
 
     // Seed two known followers; the scrape only returns one of them.
-    const { setFollowerState, getAccount, listFollowerEvents } =
-      await import('../../src/storage/accounts.js');
+    const { setFollowerState, getAccount } = await import('../../src/storage/accounts.js');
+    const { listFollowerEvents } = await import('../../src/storage/follower_events.js');
     setFollowerState('loyal_fan', true);
     setFollowerState('fickle_fan', true);
 
