@@ -6,11 +6,20 @@
   <title>Xposter Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/liquid-glass.css" />
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 </head>
 <body>
+  <svg class="lg-filters" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="lg-edge-lens" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="4" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+    </defs>
+  </svg>
+
   <div class="ambient-bg" aria-hidden="true">
     <div class="ambient-orb orb-1"></div>
     <div class="ambient-orb orb-2"></div>
@@ -18,7 +27,7 @@
   </div>
 
   <div class="app-shell" id="app-shell">
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar lg-chrome" id="sidebar">
       <div class="sidebar-brand">
         <div class="brand-mark">X</div>
         <div class="brand-copy">
@@ -28,6 +37,7 @@
       </div>
 
       <nav class="sidebar-nav" aria-label="Dashboard sections">
+        <div class="nav-selection-capsule" id="nav-capsule" aria-hidden="true"></div>
         <div class="nav-group">
           <span class="nav-group-label">Content</span>
           <button class="nav-item active" data-tab="queue"><span class="nav-icon">📥</span><span class="nav-label">Queue</span><span class="nav-badge" id="nav-badge-queue" hidden>0</span></button>
@@ -68,7 +78,7 @@
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
     <div class="main-wrapper">
-      <header class="topbar">
+      <header class="topbar lg-chrome">
         <button class="icon-btn sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Toggle navigation">☰</button>
 
         <div class="topbar-status">
@@ -92,7 +102,7 @@
         </div>
       </header>
 
-      <main class="content-area">
+      <main class="content-area" id="content-area">
       <!-- Stats -->
       <div class="stats-bar stagger-in" id="stats-bar">
         <div class="stat-card" style="--i:0"><div class="value" id="stat-pending">–</div><div class="label">Pending</div></div>
@@ -109,9 +119,31 @@
       </div>
 
       <!-- Tab panels (sidebar-driven) -->
-      <!-- Queue Tab -->
+      <!-- Queue Tab — Netflix homescreen -->
       <div class="tab-content active" id="tab-queue">
-        <div id="queue-list"></div>
+        <div class="nf-home" id="nf-home">
+          <section class="nf-hero" id="nf-hero" aria-label="Featured reply">
+            <div class="nf-hero-media" id="nf-hero-media">
+              <img class="nf-hero-img nf-hero-img--current" id="nf-hero-img-a" alt="" crossorigin="anonymous" decoding="async" />
+              <img class="nf-hero-img nf-hero-img--next" id="nf-hero-img-b" alt="" crossorigin="anonymous" decoding="async" />
+              <div class="nf-hero-vignette" aria-hidden="true"></div>
+              <div class="nf-hero-scrim" aria-hidden="true"></div>
+              <div class="nf-hero-grain" aria-hidden="true"></div>
+            </div>
+            <div class="nf-hero-body" id="nf-hero-body">
+              <div class="nf-hero-empty" id="nf-hero-empty">
+                <span class="nf-hero-eyebrow">Approval queue</span>
+                <span class="nf-hero-empty-title">Your queue is clear</span>
+                <span class="nf-hero-empty-sub">New candidates land here after the next pipeline run</span>
+              </div>
+              <div class="nf-hero-featured" id="nf-hero-featured" hidden></div>
+            </div>
+          </section>
+          <div class="nf-rows-wrap">
+            <div class="nf-rows" id="nf-rows"></div>
+          </div>
+        </div>
+        <div id="queue-list" hidden aria-hidden="true"></div>
       </div>
 
       <!-- Followers Tab -->

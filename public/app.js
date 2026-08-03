@@ -92,7 +92,7 @@ async function approvePost(postId) {
     await apiFetch(`/api/actions/approve/${postId}`, { method: 'POST' });
     toast('Reply queued for posting!', 'success');
     removeCard(postId);
-    setTimeout(refresh, 3000);
+    setTimeout(() => refresh({ rotateWallpaper: false }), 3000);
   } catch (e) {
     toast(`Approve failed: ${e.message}`, 'error');
   }
@@ -123,17 +123,30 @@ async function saveReply(postId) {
 }
 
 async function regenerateReply(postId) {
-  const btn = document.querySelector(`#card-${postId} .btn-ghost[onclick*="regenerate"]`);
+  const btn = document.querySelector(`[onclick*="regenerateReply('${postId}')"]`);
+  const prevLabel = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
   try {
     const data = await apiFetch(`/api/posts/${postId}/regenerate`, { method: 'POST' });
     toast('Reply regenerated', 'success');
     const ta = $(`reply-${postId}`);
-    if (ta && data.reply) { ta.value = data.reply; updateCharCount(postId); }
+    if (ta && data.reply) {
+      ta.value = data.reply;
+      updateCharCount(postId);
+    }
+    const idx = nfQueuePosts.findIndex((p) => p.id === postId);
+    if (idx >= 0) {
+      nfQueuePosts[idx] = {
+        ...nfQueuePosts[idx],
+        generated_reply: data.reply ?? nfQueuePosts[idx].generated_reply,
+        final_reply: data.reply ?? nfQueuePosts[idx].final_reply,
+      };
+      if (nfFeaturedId === postId) nfRenderHero(nfQueuePosts[idx]);
+    }
   } catch (e) {
     toast(`Regenerate failed: ${e.message}`, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔄 Regenerate'; }
+    if (btn) { btn.disabled = false; btn.textContent = prevLabel ?? '🔄 Regenerate'; }
   }
 }
 
@@ -142,6 +155,12 @@ function removeCard(postId) {
   if (card) {
     card.classList.add('card-exit');
     setTimeout(() => card.remove(), 320);
+  }
+  if (nfQueuePosts.some((p) => p.id === postId)) {
+    nfQueuePosts = nfQueuePosts.filter((p) => p.id !== postId);
+    if (nfFeaturedId === postId) nfFeaturedId = null;
+    nfRenderRows(nfQueuePosts);
+    nfRenderHero(nfQueuePosts[0] ?? null);
   }
   loadStats();
 }
@@ -177,19 +196,283 @@ async function loadStats() {
   } catch { /* ignore */ }
 }
 
-async function loadQueue() {
-  try {
-    const posts = await apiFetch('/api/posts/pending');
-    const el = $('queue-list');
-    if (posts.length === 0) {
-      el.innerHTML = `<div class="empty-state"><div class="icon">📭</div><div>No posts pending approval</div></div>`;
-      return;
-    }
-    el.innerHTML = posts.map((p, i) => renderPostCard({ ...p, _cardIndex: i }, true)).join('');
-  } catch (e) {
-    $('queue-list').innerHTML = `<div class="empty-state">Error: ${escHtml(e.message)}</div>`;
+// ── Netflix Queue (homescreen) ────────────────────────────────────────────────
+
+/** Crystal-clear landscape wallpapers — Unsplash, 2400×1350 */
+const NF_WALLPAPERS = [
+  'photo-1506905925346-21bda4d32df4',
+  'photo-1470071459603-3b5ae7fd5316',
+  'photo-1464822759023-fed8ff8c879b',
+  'photo-1441974231531-c6227db76b6e',
+  'photo-1501785888041-ca74b707ba03',
+  'photo-1469474968028-56623f02e42e',
+  'photo-1475929416735-c29c00c8cc74',
+  'photo-1519681393784-d120267933ba',
+  'photo-1439066615861-963643645bb2',
+  'photo-1518837695005-2083093ee35b',
+  'photo-1454496526348-ccf6d9dbf953',
+  'photo-1469854523086-cc02fe5d8800',
+  'photo-1472214103451-9374bd8c063e',
+  'photo-1418065467417-d4afde776d71',
+  'photo-1483728642387-6bc3bdd88c95',
+  'photo-1511595547461-6926945917fe',
+  'photo-1500530855697-b586d89ba3ee',
+  'photo-1472214346353-452f4bf9a2ba',
+  'photo-1527482790391-2366bfbf5756',
+];
+
+const NF_ROW_COPY = {
+  'Featured Queue': 'Highest-scoring candidates curated for your review.',
+  'Trending Now': 'Replies sourced from live X trends and momentum topics.',
+  'From Timeline': 'Fresh picks from your home timeline ingest.',
+  'Just Arrived': 'The newest candidates in the approval queue.',
+  'More to Review': 'Additional posts waiting for a decision.',
+};
+
+let nfLastWallpaperIdx = -1;
+let nfFeaturedId = null;
+let nfQueuePosts = [];
+let nfWallpaperGen = 0;
+
+function nfWallpaperUrl(photoId, width = 2400, height = 1350) {
+  return `https://images.unsplash.com/${photoId}?auto=format&fit=crop&w=${width}&h=${height}&q=90`;
+}
+
+function nfPickWallpaperIndex() {
+  if (NF_WALLPAPERS.length <= 1) return 0;
+  let idx = Math.floor(Math.random() * NF_WALLPAPERS.length);
+  if (idx === nfLastWallpaperIdx) idx = (idx + 1) % NF_WALLPAPERS.length;
+  nfLastWallpaperIdx = idx;
+  return idx;
+}
+
+function nfTileWallpaperIndex(postId, salt = 0) {
+  let hash = salt;
+  for (let i = 0; i < postId.length; i++) hash = (hash * 31 + postId.charCodeAt(i)) >>> 0;
+  return hash % NF_WALLPAPERS.length;
+}
+
+function nfSetQueueChrome(active) {
+  $('content-area')?.classList.toggle('queue-mode', active);
+  document.body.classList.toggle('queue-active', active);
+  const stats = $('stats-bar');
+  const schedule = $('schedule-strip');
+  if (stats) stats.style.display = active ? 'none' : '';
+  if (schedule && !active) {
+    schedule.style.display = schedule.dataset.wasVisible === '1' ? 'flex' : 'none';
+  } else if (schedule && active) {
+    schedule.dataset.wasVisible = schedule.style.display === 'flex' ? '1' : '0';
+    schedule.style.display = 'none';
   }
 }
+
+async function nfLoadWallpaper(forceNew = true) {
+  const imgA = $('nf-hero-img-a');
+  const imgB = $('nf-hero-img-b');
+  if (!imgA || !imgB) return;
+
+  const gen = ++nfWallpaperGen;
+  const idx = forceNew ? nfPickWallpaperIndex() : (nfLastWallpaperIdx >= 0 ? nfLastWallpaperIdx : nfPickWallpaperIndex());
+  const url = nfWallpaperUrl(NF_WALLPAPERS[idx]);
+
+  const current = imgA.classList.contains('is-visible') ? imgA : imgB;
+  const next = current === imgA ? imgB : imgA;
+
+  const loaded = await new Promise((resolve) => {
+    const pre = new Image();
+    pre.decoding = 'async';
+    pre.onload = () => resolve(true);
+    pre.onerror = () => resolve(false);
+    pre.src = url;
+  });
+
+  if (gen !== nfWallpaperGen) return;
+
+  const finalUrl = loaded ? url : nfWallpaperUrl(NF_WALLPAPERS[0]);
+  next.src = finalUrl;
+  next.classList.remove('is-visible');
+  requestAnimationFrame(() => {
+    current.classList.remove('is-visible');
+    next.classList.add('is-visible');
+  });
+}
+
+function nfGroupRows(posts) {
+  const high = posts.filter((p) => (p.score ?? 0) >= 65);
+  const trend = posts.filter((p) => p.source?.startsWith('TREND') || p.trend_key);
+  const timeline = posts.filter((p) => p.source === 'TIMELINE' || !p.source);
+  const fresh = [...posts].sort((a, b) => b.ingested_at - a.ingested_at);
+
+  const used = new Set();
+  const rows = [];
+
+  const addRow = (title, list) => {
+    const unique = list.filter((p) => !used.has(p.id));
+    if (unique.length === 0) return;
+    unique.forEach((p) => used.add(p.id));
+    rows.push({ title, posts: unique });
+  };
+
+  addRow('Featured Queue', high.length ? high : posts.slice(0, Math.min(8, posts.length)));
+  addRow('Trending Now', trend);
+  addRow('From Timeline', timeline);
+  addRow('Just Arrived', fresh);
+
+  const rest = posts.filter((p) => !used.has(p.id));
+  if (rest.length) addRow('More to Review', rest);
+
+  return rows;
+}
+
+function nfRenderHero(post) {
+  const featured = $('nf-hero-featured');
+  const empty = $('nf-hero-empty');
+  if (!featured || !empty) return;
+
+  if (!post) {
+    empty.hidden = false;
+    featured.hidden = true;
+    nfFeaturedId = null;
+    return;
+  }
+
+  nfFeaturedId = post.id;
+  empty.hidden = true;
+  featured.hidden = false;
+
+  const score = post.score ?? 0;
+  const reply = post.final_reply ?? post.generated_reply ?? '';
+  const tweetAge = timeAgo(post.timestamp);
+  const ingested = timeAgo(post.ingested_at);
+
+  featured.innerHTML = `
+    <div class="nf-hero-meta">
+      <span class="nf-hero-badge">Pending approval</span>
+      <span class="nf-score-pill ${scoreBadgeClass(score)}">${score}/100</span>
+      ${post.stance ? `<span class="nf-score-pill">${escHtml(post.stance)}</span>` : ''}
+      ${post.engagement_mode && post.engagement_mode !== 'NONE'
+        ? `<span class="nf-score-pill">${escHtml(post.engagement_mode)}</span>` : ''}
+    </div>
+    <h1 class="nf-hero-title">
+      ${escHtml(post.author_name)}
+      <span class="nf-hero-handle">@${escHtml(post.author_handle)}</span>
+    </h1>
+    <p class="nf-hero-desc">${escHtml(post.text)}</p>
+    <div class="nf-hero-reply">
+      <div class="nf-hero-reply-label">Generated reply</div>
+      <textarea id="reply-${post.id}" rows="3" maxlength="280"
+        oninput="updateCharCount('${post.id}')">${escHtml(reply)}</textarea>
+      <div class="reply-char-count" id="cc-${post.id}">${reply.length}/280</div>
+    </div>
+    <div class="nf-hero-actions">
+      <button type="button" class="nf-btn-play" onclick="approvePost('${post.id}')">
+        <span class="nf-play-icon">▶</span> Approve
+      </button>
+      <button type="button" class="nf-btn-ghost" onclick="nfToggleDetail('${post.id}')">ℹ More info</button>
+      <a class="nf-btn-ghost" href="${escAttr(post.tweet_url)}" target="_blank" rel="noopener">View on X</a>
+    </div>
+    <div class="nf-hero-detail" id="nf-detail-${post.id}" hidden>
+      <div class="nf-hero-reply-label">Tweet · ${tweetAge} · ingested ${ingested}</div>
+      <p style="font-size:13px;line-height:1.5;color:var(--nf-text-dim);margin-bottom:8px;">♥ ${post.likes} · 💬 ${post.replies} · 🔁 ${post.retweets}</p>
+      <div class="nf-hero-detail-actions">
+        <button type="button" class="btn btn-ghost" onclick="saveReply('${post.id}')">💾 Save edit</button>
+        <button type="button" class="btn btn-ghost" onclick="regenerateReply('${post.id}')">🔄 Regenerate</button>
+        <button type="button" class="btn btn-danger" onclick="skipPost('${post.id}')">Skip</button>
+      </div>
+    </div>`;
+
+  document.querySelectorAll('.nf-tile').forEach((el) => {
+    el.classList.toggle('is-featured', el.dataset.postId === post.id);
+  });
+}
+
+function nfToggleDetail(postId) {
+  const panel = $(`nf-detail-${postId}`);
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+}
+
+function nfSelectFeatured(postId) {
+  const post = nfQueuePosts.find((p) => p.id === postId);
+  if (post) nfRenderHero(post);
+}
+
+function nfRenderTile(post, rowIndex) {
+  const score = post.score ?? 0;
+  const thumbIdx = nfTileWallpaperIndex(post.id, rowIndex);
+  const imgUrl = nfWallpaperUrl(NF_WALLPAPERS[thumbIdx], 800, 450);
+  const isFeatured = post.id === nfFeaturedId;
+  const scoreClass = scoreBadgeClass(score);
+
+  return `
+    <article class="nf-tile${isFeatured ? ' is-featured' : ''}" data-post-id="${post.id}"
+      onclick="nfSelectFeatured('${post.id}')" role="button" tabindex="0"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nfSelectFeatured('${post.id}')}">
+      <div class="nf-tile-media">
+        <img class="nf-tile-img" src="${escAttr(imgUrl)}" alt="" loading="lazy" decoding="async" />
+      </div>
+      <div class="nf-tile-content">
+        <div class="nf-tile-meta">
+          <span class="nf-tile-author">@${escHtml(post.author_handle)}</span>
+          <span class="nf-tile-score ${scoreClass}">${score}/100</span>
+        </div>
+        <p class="nf-tile-text">${escHtml(post.text)}</p>
+      </div>
+    </article>`;
+}
+
+function nfRenderRows(posts) {
+  const container = $('nf-rows');
+  if (!container) return;
+
+  if (posts.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const rows = nfGroupRows(posts);
+  container.innerHTML = rows.map((row, ri) => `
+    <section class="nf-row" aria-label="${escAttr(row.title)}">
+      <div class="nf-row-head">
+        <h2 class="nf-row-title">${escHtml(row.title)}</h2>
+        ${NF_ROW_COPY[row.title] ? `<p class="nf-row-sub">${escHtml(NF_ROW_COPY[row.title])}</p>` : ''}
+      </div>
+      <div class="nf-row-track">
+        ${row.posts.map((p) => nfRenderTile(p, ri)).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
+async function loadQueue(opts = {}) {
+  const rotateWallpaper = opts.rotateWallpaper !== false;
+  nfSetQueueChrome(true);
+  try {
+    if (rotateWallpaper) await nfLoadWallpaper(true);
+    const posts = await apiFetch('/api/posts/pending');
+    nfQueuePosts = posts;
+
+    if (posts.length === 0) {
+      nfRenderHero(null);
+      nfRenderRows([]);
+      return;
+    }
+
+    const featured = nfFeaturedId
+      ? posts.find((p) => p.id === nfFeaturedId)
+      : null;
+    nfRenderHero(featured ?? posts[0]);
+    nfRenderRows(posts);
+  } catch (e) {
+    const rows = $('nf-rows');
+    if (rows) rows.innerHTML = `<div class="nf-row-empty">Error: ${escHtml(e.message)}</div>`;
+    nfRenderHero(null);
+  }
+}
+
+window.nfSelectFeatured = nfSelectFeatured;
+window.nfToggleDetail = nfToggleDetail;
+
 
 async function loadHistory() {
   try {
@@ -1351,10 +1634,13 @@ function safeParse(s) {
 
 // ── Full refresh ──────────────────────────────────────────────────────────────
 
-async function refresh() {
+async function refresh(opts = {}) {
   await Promise.all([loadStats(), loadSystemStatus(), loadSchedule()]);
   const activeTab = document.querySelector('.nav-item.active, .tab-btn.active')?.dataset.tab;
-  if (activeTab === 'queue')     await loadQueue();
+  nfSetQueueChrome(activeTab === 'queue');
+  if (activeTab === 'queue') {
+    await loadQueue({ rotateWallpaper: opts.rotateWallpaper !== false });
+  }
   if (activeTab === 'history')   await loadHistory();
   if (activeTab === 'settings')  await loadSettings();
   if (activeTab === 'followers') await loadFollowers();
@@ -1371,6 +1657,7 @@ async function refresh() {
 document.addEventListener('DOMContentLoaded', () => {
   themeEngine.init();
   initShell();
+  nfSetQueueChrome(true);
 
   // Theme toggle
   $('theme-toggle').addEventListener('change', () => {
@@ -1392,12 +1679,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Tab changes (sidebar + legacy)
   document.addEventListener('xposter:tab', (ev) => {
     const tab = ev.detail?.tab;
+    nfSetQueueChrome(tab === 'queue');
     if (tab === 'console') hc.start();
-    refresh();
+    refresh({ rotateWallpaper: tab === 'queue' });
   });
 
   // Header buttons
-  $('btn-refresh').addEventListener('click', refresh);
+  $('btn-refresh').addEventListener('click', () => refresh({ rotateWallpaper: true }));
 
   $('btn-run').addEventListener('click', async () => {
     const btn = $('btn-run');
@@ -1628,9 +1916,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Memory tab
   initMemoryTab();
 
-  // Initial load + auto-refresh every 30s
-  refresh();
-  setInterval(refresh, 30_000);
+  // Initial load + auto-refresh every 30s (keep wallpaper on auto-poll)
+  refresh({ rotateWallpaper: true });
+  setInterval(() => refresh({ rotateWallpaper: false }), 30_000);
 });
 
 /* ═══════════════════════════════════════════════════════════
