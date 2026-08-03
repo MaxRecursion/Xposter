@@ -1,0 +1,317 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   liquid-glass — core stylesheet
+   ─────────────────────────────────────────────────────────────────────────────
+
+   Z-index layer map (all relative to the .liquid-glass isolation context):
+     -2   .liquid-glass__refraction  — displaced background copy (SVG filter)
+     -1   .liquid-glass::before      — white tint fill (opacity layer)
+      2   .liquid-glass__content     — user content
+      3   .liquid-glass::after       — chromatic edge highlights (mix-blend: screen)
+
+   CSS custom properties — all prefixed --lg- and inherited from the element:
+     --lg-blur            backdrop blur radius
+     --lg-saturate        backdrop saturation boost
+     --lg-opacity         tint fill opacity (how "milky" the glass looks)
+     --lg-radius          corner radius
+     --lg-border-opacity  outer border alpha
+     --lg-tint            RGB triplet (no alpha) for the white/coloured tint
+     --lg-shadow          drop shadow shorthand
+     --lg-edge-red        left chromatic fringe colour
+     --lg-edge-cyan       right chromatic fringe colour
+     --lg-scene-background  the background image painted behind the refraction
+                             layer; set to match the page's scene background so
+                             the displaced copy samples the right content
+     --lg-filter          url() reference to the injected SVG filter
+     --lg-sheen-angle     (animatable) gradient angle for the surface sheen
+     --lg-pulse-amplitude how far --lg-opacity swings under .liquid-glass--pulse-*
+     --lg-pulse-duration  period of the opacity pulse animation
+
+   Transparency variants: .liquid-glass--static (default, no animation),
+   .liquid-glass--pulse-subtle, .liquid-glass--pulse-vivid — make the glass
+   sometimes more and sometimes less transparent over time.
+
+   Activation modes: by default the effect is always on; add
+   .liquid-glass--drag-only to only reveal blur/refraction while the element
+   also has `.is-dragging` (set by the consumer's drag handler).
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@property --lg-sheen-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 135deg;
+}
+
+/* Registering --lg-opacity as a typed <number> lets the browser interpolate
+   it smoothly during the pulse keyframes below — an untyped custom property
+   can only jump discretely between keyframe values. */
+@property --lg-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.58;
+}
+
+/* Resting defaults live on :root (not on .liquid-glass itself) so they act
+   as true inherited fallbacks. A custom property declared directly on the
+   matching element always wins over an inherited value regardless of
+   selector specificity — if these lived on `.liquid-glass`, a value written
+   to :root by a consumer (e.g. the demo's control panel) would always be
+   shadowed and never reach the element. Presets and inline styles still
+   override per-instance, since those are deliberate, element-level
+   overrides rather than accidental shadowing of the global default. */
+:root {
+  --lg-filter:          url("#liquid-glass-filter");
+  --lg-blur:            8px;
+  --lg-saturate:        180%;
+  --lg-opacity:         0.58;
+  --lg-radius:          24px;
+  --lg-border-opacity:  0.45;
+  --lg-tint:            255 255 255;
+  --lg-shadow:          0 22px 70px rgb(0 0 0 / 0.24);
+  --lg-edge-red:        rgb(255 86 116 / 0.42);
+  --lg-edge-cyan:       rgb(54 226 255 / 0.38);
+}
+
+/* ── Base element ─────────────────────────────────────────────────── */
+
+.liquid-glass {
+  /* `isolation` prevents the ::after mix-blend from bleeding out */
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--lg-radius);
+
+  /* Surface sheen — a subtle gradient that shifts with --lg-sheen-angle */
+  background: linear-gradient(
+    var(--lg-sheen-angle),
+    rgb(var(--lg-tint) / 0.38),
+    rgb(var(--lg-tint) / 0.12) 38%,
+    rgb(var(--lg-tint) / 0.2)
+  );
+
+  border: 1px solid rgb(255 255 255 / var(--lg-border-opacity));
+  box-shadow: var(--lg-shadow), inset 0 1px 0 rgb(255 255 255 / 0.42);
+
+  /* Backdrop blur + saturation produce the frosted-glass base */
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate));
+          backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate));
+}
+
+/* Shared pseudo-element base */
+.liquid-glass::before,
+.liquid-glass::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+  inset: 0;
+  border-radius: inherit;
+}
+
+/* z: -1 — white tint that softens the blurred content beneath */
+.liquid-glass::before {
+  z-index: -1;
+  background: rgb(var(--lg-tint) / var(--lg-opacity));
+}
+
+/* z: 3 — chromatic edge highlights rendered via mix-blend: screen so they
+   brighten the glass without obscuring content */
+.liquid-glass::after {
+  z-index: 3;
+  box-shadow:
+    inset  1px 0 var(--lg-edge-red),
+    inset -1px 0 var(--lg-edge-cyan),
+    inset  0  1px rgb(255 255 255 / 0.52),
+    inset  0 -18px 32px rgb(255 255 255 / 0.08);
+  mix-blend-mode: screen;
+}
+
+/* z: 2 — user-provided children sit above the tint, below the highlights */
+.liquid-glass__content {
+  position: relative;
+  z-index: 2;
+}
+
+/* ── Refraction sprite (z: -2) ────────────────────────────────────── */
+
+/* The refraction layer re-renders the scene background with the SVG
+   displacement filter applied, creating the illusion that the glass is
+   bending the light behind it.  The element is inset by -36px so displaced
+   pixels at the edges don't reveal empty space.
+
+   `background-attachment: fixed` ensures the sample coordinates stay aligned
+   with the page coordinate system even after the glass element is translated. */
+.liquid-glass__refraction {
+  position: absolute;
+  z-index: -2;
+  inset: -36px;
+  background: var(--lg-scene-background, transparent);
+  background-attachment: fixed;
+  background-position: center;
+  background-size: cover;
+  filter: var(--lg-filter);
+  opacity: 0.82;
+  transform: scale(1.035); /* counter-shrink caused by the filter's region clipping */
+}
+
+/* ── True backdrop refraction (preferred) ─────────────────────────── */
+
+/* Where the engine supports running an SVG filter through backdrop-filter,
+   feed the same displacement filter directly into the live backdrop instead
+   of the static `.liquid-glass__refraction` sprite above. The sprite can
+   only ever sample a frozen copy of the page background (--lg-scene-
+   background), so it never reflects whatever is actually painted behind the
+   element at a given moment — other glass windows included. Routing the
+   filter through backdrop-filter makes the distortion apply to the real,
+   live composited backdrop, so stacked liquid-glass windows correctly
+   refract one another in paint order with no extra wiring. The sprite stays
+   as the fallback for engines that only support backdrop-filter without an
+   SVG filter reference (older Firefox/Safari). */
+@supports (backdrop-filter: url("#liquid-glass-filter")) or (-webkit-backdrop-filter: url("#liquid-glass-filter")) {
+  .liquid-glass:not(.liquid-glass--simple) {
+    -webkit-backdrop-filter: var(--lg-filter) blur(var(--lg-blur)) saturate(var(--lg-saturate));
+            backdrop-filter: var(--lg-filter) blur(var(--lg-blur)) saturate(var(--lg-saturate));
+  }
+
+  .liquid-glass:not(.liquid-glass--simple) .liquid-glass__refraction {
+    /* The live backdrop above already carries the distortion — keeping the
+       sprite visible too would double it up. */
+    display: none;
+  }
+}
+
+/* ── Simple mode ──────────────────────────────────────────────────── */
+
+/* Applies the displacement filter to the whole element instead of a
+   dedicated refraction sprite.  Lower fidelity — works without knowing the
+   background image — useful for quick integration or non-image backgrounds. */
+.liquid-glass--simple {
+  filter: var(--lg-filter);
+}
+
+/* ── Presets ──────────────────────────────────────────────────────── */
+
+/* Presets are shape/trim variants only — blur, saturation and opacity are
+   deliberately left out so they never shadow the optical values a consumer
+   sets globally (e.g. the demo's Blur/Saturation/Opacity sliders write to
+   :root; see the .liquid-glass base rule above for why a value declared
+   directly on a class would otherwise always win over that). Each demo
+   window can therefore keep its own preset "shape" while still responding
+   live to the shared optical sliders. */
+.liquid-glass--subtle {
+  --lg-border-opacity: 0.32;
+}
+
+.liquid-glass--vivid {
+  --lg-border-opacity: 0.56;
+}
+
+.liquid-glass--vision {
+  --lg-radius:         32px;
+  --lg-shadow:         0 30px 90px rgb(0 0 0 / 0.3);
+}
+
+/* ── Transparency variants ────────────────────────────────────────── */
+
+/* Oscillates --lg-opacity around whatever resting value the active preset
+   set, so the glass is sometimes more and sometimes less transparent
+   instead of a single fixed value. Amplitude is expressed via
+   --lg-pulse-amplitude (set per-variant below) so one keyframe serves all
+   variants instead of duplicating the animation per amplitude. */
+@keyframes lg-opacity-pulse {
+  0%, 100% { --lg-opacity: calc(var(--lg-opacity-base, 0.58) - var(--lg-pulse-amplitude, 0.18)); }
+  50%      { --lg-opacity: calc(var(--lg-opacity-base, 0.58) + var(--lg-pulse-amplitude, 0.18)); }
+}
+
+/* Explicit opt-out — same as the default, kept as a named class so callers
+   can switch between transparency modes without removing a class entirely. */
+.liquid-glass--static {
+  animation: none;
+}
+
+.liquid-glass--pulse-subtle,
+.liquid-glass--pulse-vivid {
+  /* Capture the preset's resting opacity once so the keyframes can swing
+     around it instead of around a hardcoded number. */
+  --lg-opacity-base: var(--lg-opacity);
+  animation: lg-opacity-pulse var(--lg-pulse-duration, 6s) ease-in-out infinite;
+}
+
+.liquid-glass--pulse-subtle {
+  --lg-pulse-amplitude: 0.1;
+  --lg-pulse-duration:  8s;
+}
+
+.liquid-glass--pulse-vivid {
+  --lg-pulse-amplitude: 0.24;
+  --lg-pulse-duration:  4s;
+}
+
+/* ── Drag-only activation ──────────────────────────────────────────── */
+
+/* Collapses the glass to a flat, near-invisible surface at rest and only
+   reveals the full blur/refraction/tint while the element carries
+   `.is-dragging` (toggled by the consumer's drag handler, e.g. demo's
+   useDrag.js). Declared after the presets above so equal-specificity
+   source order lets it win; .is-dragging then wins over that. */
+.liquid-glass--drag-only {
+  --lg-blur:     0px;
+  --lg-saturate: 100%;
+  --lg-opacity:  0.08;
+  transition:
+    backdrop-filter 0.25s ease,
+    -webkit-backdrop-filter 0.25s ease;
+}
+
+.liquid-glass--drag-only .liquid-glass__refraction {
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.liquid-glass--drag-only.is-dragging {
+  --lg-blur:     var(--lg-blur-active, 8px);
+  --lg-saturate: var(--lg-saturate-active, 180%);
+  --lg-opacity:  var(--lg-opacity-active, 0.58);
+}
+
+.liquid-glass--drag-only.is-dragging .liquid-glass__refraction {
+  opacity: 0.72;
+}
+
+/* ── Artifacts: animated caustics ─────────────────────────────────── */
+
+/* Slow drift of the chromatic/caustic highlight layer so "artifacts" mode
+   feels alive instead of a static overlay. Off by default — opt in via
+   .liquid-glass--artifacts (the demo's `glass-artifacts` toggle applies
+   this at the body level so it can affect every window without per-component
+   wiring; see demo/src/styled/GlobalStyles.js). */
+@keyframes lg-caustic-drift {
+  0%   { background-position: 18% 28%, 78% 18%, 50% 80%, 0 0; }
+  50%  { background-position: 24% 22%, 72% 26%, 46% 74%, 0 0; }
+  100% { background-position: 18% 28%, 78% 18%, 50% 80%, 0 0; }
+}
+
+.liquid-glass--artifacts::after {
+  animation: lg-caustic-drift 9s ease-in-out infinite;
+}
+
+/* ── Fallback ─────────────────────────────────────────────────────── */
+
+/* When backdrop-filter is unsupported (Firefox <103, some mobile browsers)
+   fall back to a fully opaque tint so text remains readable. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .liquid-glass {
+    background: rgb(var(--lg-tint) / 0.78);
+  }
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────── */
+
+/* The filter animation is already gated by `prefers-reduced-motion` in JS
+   (see inject-filter.js).  This rule handles any CSS-side animations attached
+   to glass elements or their descendants — e.g. the sheen gradient rotation. */
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass,
+  .liquid-glass *,
+  .liquid-glass-filter-root * {
+    animation: none !important;
+  }
+}

@@ -8,18 +8,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/liquid-glass.css" />
+  <link rel="stylesheet" href="/vendor/dp-liquid-glass.css" />
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 </head>
 <body>
-  <svg class="lg-filters" width="0" height="0" aria-hidden="true" focusable="false">
-    <defs>
-      <filter id="lg-edge-lens" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
-        <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="4" result="noise"/>
-        <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
-      </filter>
-    </defs>
-  </svg>
-
   <div class="ambient-bg" aria-hidden="true">
     <div class="ambient-orb orb-1"></div>
     <div class="ambient-orb orb-2"></div>
@@ -27,51 +19,54 @@
   </div>
 
   <div class="app-shell" id="app-shell">
-    <aside class="sidebar lg-chrome" id="sidebar">
-      <div class="sidebar-brand">
-        <div class="brand-mark">X</div>
-        <div class="brand-copy">
-          <span class="brand-name">Xposter</span>
-          <span class="brand-tag">Command Center</span>
+    <aside class="sidebar liquid-glass liquid-glass--subtle" id="sidebar">
+      <span class="liquid-glass__refraction" aria-hidden="true"></span>
+      <div class="liquid-glass__content sidebar__inner">
+        <div class="sidebar-brand" id="sidebar-brand">
+          <div class="brand-mark">X</div>
+          <div class="brand-copy">
+            <span class="brand-name">Xposter</span>
+            <span class="brand-tag">Command Center</span>
+          </div>
         </div>
-      </div>
 
-      <nav class="sidebar-nav" aria-label="Dashboard sections">
-        <div class="nav-selection-capsule" id="nav-capsule" aria-hidden="true"></div>
-        <div class="nav-group">
-          <span class="nav-group-label">Content</span>
-          <button class="nav-item active" data-tab="queue"><span class="nav-icon">📥</span><span class="nav-label">Queue</span><span class="nav-badge" id="nav-badge-queue" hidden>0</span></button>
-          <button class="nav-item" data-tab="history"><span class="nav-icon">📜</span><span class="nav-label">History</span></button>
-          <button class="nav-item" data-tab="originals"><span class="nav-icon">✍️</span><span class="nav-label">Originals</span></button>
-        </div>
-        <div class="nav-group">
-          <span class="nav-group-label">Social</span>
-          <button class="nav-item" data-tab="followers"><span class="nav-icon">👥</span><span class="nav-label">Followers</span></button>
-          <button class="nav-item" data-tab="accounts"><span class="nav-icon">🏷️</span><span class="nav-label">Accounts</span></button>
-          <button class="nav-item" data-tab="audience"><span class="nav-icon">🕐</span><span class="nav-label">Activity</span></button>
-        </div>
-        <div class="nav-group">
-          <span class="nav-group-label">Intelligence</span>
-          <button class="nav-item" data-tab="analytics"><span class="nav-icon">📊</span><span class="nav-label">Analytics</span></button>
-          <button class="nav-item" data-tab="memory"><span class="nav-icon">🧠</span><span class="nav-label">Mind</span></button>
-          <button class="nav-item" data-tab="rag"><span class="nav-icon">📡</span><span class="nav-label">RAG</span></button>
-          <button class="nav-item" data-tab="agent"><span class="nav-icon">🤖</span><span class="nav-label">Agent</span></button>
-          <button class="nav-item" data-tab="console"><span class="nav-icon">💻</span><span class="nav-label">Console</span></button>
-        </div>
-        <div class="nav-group">
-          <span class="nav-group-label">System</span>
-          <button class="nav-item" data-tab="settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
-        </div>
-      </nav>
+        <nav class="sidebar-nav" aria-label="Dashboard sections">
+          <div class="nav-selection-capsule" id="nav-capsule" aria-hidden="true"></div>
+          <div class="nav-group">
+            <span class="nav-group-label">Content</span>
+            <button class="nav-item active" data-tab="queue"><span class="nav-icon">📥</span><span class="nav-label">Queue</span><span class="nav-badge" id="nav-badge-queue" hidden>0</span></button>
+            <button class="nav-item" data-tab="history"><span class="nav-icon">📜</span><span class="nav-label">History</span></button>
+            <button class="nav-item" data-tab="originals"><span class="nav-icon">✍️</span><span class="nav-label">Originals</span></button>
+          </div>
+          <div class="nav-group">
+            <span class="nav-group-label">Social</span>
+            <button class="nav-item" data-tab="followers"><span class="nav-icon">👥</span><span class="nav-label">Followers</span></button>
+            <button class="nav-item" data-tab="accounts"><span class="nav-icon">🏷️</span><span class="nav-label">Accounts</span></button>
+            <button class="nav-item" data-tab="audience"><span class="nav-icon">🕐</span><span class="nav-label">Activity</span></button>
+          </div>
+          <div class="nav-group">
+            <span class="nav-group-label">Intelligence</span>
+            <button class="nav-item" data-tab="analytics"><span class="nav-icon">📊</span><span class="nav-label">Analytics</span></button>
+            <button class="nav-item" data-tab="memory"><span class="nav-icon">🧠</span><span class="nav-label">Mind</span></button>
+            <button class="nav-item" data-tab="rag"><span class="nav-icon">📡</span><span class="nav-label">RAG</span></button>
+            <button class="nav-item" data-tab="agent"><span class="nav-icon">🤖</span><span class="nav-label">Agent</span></button>
+            <button class="nav-item" data-tab="console"><span class="nav-icon">💻</span><span class="nav-label">Console</span></button>
+          </div>
+          <div class="nav-group">
+            <span class="nav-group-label">System</span>
+            <button class="nav-item" data-tab="settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+          </div>
+        </nav>
 
-      <div class="sidebar-footer">
-        <label class="toggle-group sidebar-theme" title="Toggle light / dark">
-          <span id="theme-icon">🌙</span>
-          <span class="ios-switch">
-            <input type="checkbox" id="theme-toggle" />
-            <span class="ios-slider"></span>
-          </span>
-        </label>
+        <div class="sidebar-footer">
+          <label class="toggle-group sidebar-theme" title="Toggle light / dark">
+            <span id="theme-icon">🌙</span>
+            <span class="ios-switch">
+              <input type="checkbox" id="theme-toggle" />
+              <span class="ios-slider"></span>
+            </span>
+          </label>
+        </div>
       </div>
     </aside>
 
@@ -743,6 +738,7 @@
 
   <div id="toast-container"></div>
 
+  <script type="module" src="/js/liquid-glass-init.js"></script>
   <script src="/js/core.js"></script>
   <script src="/app.js"></script>
 </body>

@@ -18,14 +18,15 @@
     "trends:search": "tsx scripts/trends_search.ts",
     "image:probe": "tsx scripts/image_probe.ts",
     "image:anchor": "tsx scripts/image_anchor.ts",
-    "obs:up": "docker compose -f observability/docker-compose.yml up -d",
-    "obs:down": "docker compose -f observability/docker-compose.yml down",
-    "obs:logs": "docker compose -f observability/docker-compose.yml logs -f",
-    "obs:status": "docker compose -f observability/docker-compose.yml ps"
+    "obs:up": "bash scripts/obs-compose.sh up -d",
+    "obs:down": "bash scripts/obs-compose.sh down",
+    "obs:logs": "bash scripts/obs-compose.sh logs -f",
+    "obs:status": "bash scripts/obs-compose.sh ps"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.143",
     "@anthropic-ai/sdk": "^0.104.1",
+    "@dpawlikowski/liquid-glass": "^0.3.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/api-logs": "^0.200.0",
     "@opentelemetry/auto-instrumentations-node": "^0.57.1",

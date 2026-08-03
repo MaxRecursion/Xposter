@@ -70,7 +70,7 @@ function syncNavCapsule() {
 }
 
 function initSpecularTracking() {
-  const chrome = document.querySelectorAll('.lg-chrome, .sidebar, .topbar, .toast, .icon-btn');
+  const chrome = document.querySelectorAll('.lg-chrome, .topbar, .toast, .icon-btn');
   chrome.forEach((el) => {
     el.addEventListener('pointermove', (e) => {
       const r = el.getBoundingClientRect();
@@ -219,6 +219,7 @@ const themeEngine = {
     if (toggle) toggle.checked = theme === 'light';
     const icon = $('theme-icon');
     if (icon) icon.textContent = theme === 'light' ? '☀️' : '🌙';
+    document.dispatchEvent(new CustomEvent('xposter:theme', { detail: { theme } }));
   },
   toggle() {
     this.set(this.get() === 'dark' ? 'light' : 'dark');

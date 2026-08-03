@@ -345,6 +345,24 @@ curl -v http://127.0.0.1:4318/v1/traces
 
 3. Check Prometheus targets: http://localhost:9090/targets — `otel-collector` should be **UP**.
 
+### `npm run obs:up` fails (`docker: unknown command: docker compose` or `unknown shorthand flag: -f`)
+
+Homebrew installs the Docker **CLI** separately from Docker Desktop. The Compose plugin is not always on your `PATH`.
+
+1. Ensure a Docker engine is running (Docker Desktop, or [Colima](https://github.com/abiosoft/colima): `brew install colima docker docker-compose && colima start`).
+2. Repo scripts use `scripts/obs-compose.sh`, which prefers `docker compose` and falls back to `docker-compose`.
+3. If you use only Homebrew's `docker` formula, also run `brew install docker-compose`.
+
+### Tempo container restart loop (`permission denied` on `/tmp/tempo`)
+
+Tempo 2.7+ runs as a non-root user. Mount the data volume at `/var/tempo` (see `observability/tempo/tempo.yaml`). After updating, recreate the stack:
+
+```bash
+npm run obs:down
+docker volume rm xposter-observability_tempo-data 2>/dev/null || true
+npm run obs:up
+```
+
 ### Docker port conflicts
 
 If port 3001 is taken, edit `observability/docker-compose.yml`:
