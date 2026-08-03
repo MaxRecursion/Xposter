@@ -459,11 +459,11 @@ All mutation endpoints require `X-API-Key` header matching `API_KEY` in `.env`. 
 | `GET` | `/api/posts/:id` | Single post by ID |
 | `GET` | `/api/posts/pending` | All PENDING_APPROVAL posts |
 | `GET` | `/api/posts/stats` | Dashboard stats (pending, posted, skipped, total 24 h) |
-| `GET` | `/api/posts/log/activity` | Activity log. `?limit=N` (default 100) |
-| `GET` | `/api/posts/settings/all` | All settings key-value pairs |
+| `GET` | `/api/activity` | Activity log. `?limit=N` (default 100) |
+| `GET` | `/api/settings/all` | All settings key-value pairs |
+| `PATCH` | `/api/settings/update` | Bulk update settings |
 | `PATCH` | `/api/posts/:id/reply` | Edit pending reply text before posting |
 | `POST` | `/api/posts/:id/regenerate` | Regenerate reply for a post |
-| `PATCH` | `/api/posts/settings/update` | Bulk update settings |
 
 ### Actions
 

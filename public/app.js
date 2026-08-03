@@ -193,7 +193,7 @@ async function loadHistory() {
 
 async function loadSettings() {
   try {
-    const s = await apiFetch('/api/posts/settings/all');
+    const s = await apiFetch('/api/settings/all');
     if ($('s-keywords'))       $('s-keywords').value       = s.topic_keywords ?? '';
     if ($('s-min-score'))      $('s-min-score').value      = s.min_score ?? '40';
     if ($('s-max-candidates')) $('s-max-candidates').value = s.max_candidates_per_run ?? '3';
@@ -321,7 +321,7 @@ const hc = {
     const banner =
 `╔════════════════════════════════════════════════════════════╗
 ║  XPOSTER ACTIVITY MONITOR · v1.0                           ║
-║  Streaming live events from /api/posts/log/activity        ║
+║  Streaming live events from /api/activity                  ║
 ║  Status legend: GREEN=ok  AMBER=warn  RED=error            ║
 ╚════════════════════════════════════════════════════════════╝`;
     if (!this.bannerShown) {
@@ -367,7 +367,7 @@ const hc = {
   async tick() {
     if (this.paused) return;
     try {
-      const entries = await apiFetch('/api/posts/log/activity?limit=200');
+      const entries = await apiFetch('/api/activity?limit=200');
       const lines = $('hc-lines');
       if (!lines) return;
 
@@ -1373,7 +1373,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Settings save
   $('btn-save-settings').addEventListener('click', async () => {
     try {
-      await apiFetch('/api/posts/settings/update', {
+      await apiFetch('/api/settings/update', {
         method: 'PATCH',
         body: JSON.stringify({
           topic_keywords:           $('s-keywords').value,

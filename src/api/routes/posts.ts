@@ -1,8 +1,7 @@
 import { Router, Request, Response } from 'express';
 import {
   getRecentPosts, getPendingApproval, getDashboardStats,
-  getActivityLog, getAllSettings, setSetting, updateFinalReply,
-  getPost,
+  updateFinalReply, getPost,
 } from '../../storage/queries.js';
 import { generateReply } from '../../pipeline/generator.js';
 import { updateGeneratedReply, updatePostStatus } from '../../storage/queries.js';
@@ -11,7 +10,6 @@ import { logger } from '../../utils/logger.js';
 import { requireApiKey } from '../auth.js';
 import { paramString } from '../http.js';
 import { clampInt } from '../../utils/number.js';
-import { buildWritableSettingNormalizers } from '../../storage/settings_schema.js';
 
 export const postsRouter = Router();
 
@@ -74,29 +72,4 @@ postsRouter.post('/:id/regenerate', requireApiKey, async (req: Request, res: Res
     updatePostStatus(post.id, 'ERROR');
     res.status(500).json({ error: String(err) });
   }
-});
-
-// Activity log
-postsRouter.get('/log/activity', (req: Request, res: Response) => {
-  const limit = clampInt(req.query['limit'], 100, 1, 500);
-  res.json(getActivityLog(limit));
-});
-
-// Settings
-postsRouter.get('/settings/all', (_req: Request, res: Response) => {
-  res.json(getAllSettings());
-});
-
-// Writable settings are defined in storage/settings_schema.ts.
-const SETTING_NORMALIZERS = buildWritableSettingNormalizers();
-
-postsRouter.patch('/settings/update', requireApiKey, (req: Request, res: Response) => {
-  const updates = req.body as Record<string, unknown>;
-
-  for (const [key, normalize] of Object.entries(SETTING_NORMALIZERS)) {
-    if (updates[key] !== undefined) {
-      setSetting(key, normalize(updates[key]));
-    }
-  }
-  res.json({ ok: true });
 });

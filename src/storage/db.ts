@@ -327,17 +327,6 @@ function applyMigrations(db: Database.Database): void {
 
   seedSettingsFromSchema(db);
 
-  // Legacy settings not yet in SETTINGS_SCHEMA (kept for backward compatibility).
-  db.prepare(`
-    INSERT OR IGNORE INTO settings(key, value) VALUES
-      ('marathi_priority_boost',         '15'),
-      ('agent_last_watched_at',          '0'),
-      ('weekly_digest_last_sent_week',   ''),
-      ('impression_sync_interval_h',     '2'),
-      ('follow_back_window_hours',       '24'),
-      ('topic_category_weights',         '{"pune-tech-economy":0.40,"local-pune":0.20,"tech":0.15,"politics":0.07,"sports":0.08,"culture":0.07,"observation":0.03}')
-  `).run();
-
   // Forward-compatible column adds (sqlite ALTER TABLE doesn't support IF NOT EXISTS)
   addColumnIfMissing(db, 'posts', 'posted_tweet_id', 'TEXT');
   addColumnIfMissing(db, 'posts', 'deleted_at', 'INTEGER');

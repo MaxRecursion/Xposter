@@ -3,6 +3,8 @@ import cors from 'cors';
 import morgan from 'morgan';
 import path from 'path';
 import { postsRouter } from './routes/posts.js';
+import { settingsRouter } from './routes/settings.js';
+import { activityRouter } from './routes/activity.js';
 import { actionsRouter } from './routes/actions.js';
 import { accountsRouter } from './routes/accounts.js';
 import { followRouter } from './routes/follow.js';
@@ -65,6 +67,10 @@ export function createServer(): express.Express {
 
   // API routes
   app.use('/api/posts', postsRouter);
+  app.use('/api/settings', settingsRouter);
+  app.use('/api/posts/settings', settingsRouter); // backward compat
+  app.use('/api/activity', activityRouter);
+  app.use('/api/posts/log/activity', activityRouter); // backward compat
   app.use('/api/actions', actionsRouter);
   app.use('/api/accounts', accountsRouter);
   app.use('/api/follow', followRouter);
