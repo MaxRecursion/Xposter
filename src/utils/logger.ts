@@ -2,7 +2,8 @@ import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import { trace } from '@opentelemetry/api';
-import { getLogLevel } from '../config.js';
+import { OpenTelemetryTransportV3 } from '@opentelemetry/winston-transport';
+import { getLogLevel, isOtelEnabled } from '../config.js';
 
 const LOG_DIR = path.resolve(process.cwd(), 'logs');
 
@@ -57,5 +58,6 @@ export const logger = winston.createLogger({
       maxFiles: '14d',
       zippedArchive: true,
     }),
+    ...(isOtelEnabled() ? [new OpenTelemetryTransportV3()] : []),
   ],
 });

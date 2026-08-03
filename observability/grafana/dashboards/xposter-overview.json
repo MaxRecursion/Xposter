@@ -26,7 +26,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "sum(rate(http_server_duration_milliseconds_count{service_name=\"xposter\"}[5m]))",
+          "expr": "sum(rate(http_server_duration_milliseconds_count{service_name=\"xposter\"}[5m])) or sum(rate(http_server_duration_milliseconds_count{exported_job=\"xposter\"}[5m]))",
           "legendFormat": "HTTP requests/s",
           "refId": "A"
         }
@@ -41,7 +41,7 @@
       "id": 2,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{service_name=\"xposter\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{service_name=\"xposter\"}[5m])) by (le)) or histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{exported_job=\"xposter\"}[5m])) by (le))",
           "legendFormat": "p95 latency",
           "refId": "A"
         }
@@ -98,9 +98,12 @@
       "id": 6,
       "targets": [
         {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "limit": 20,
           "query": "{ resource.service.name = \"xposter\" }",
-          "queryType": "traceql",
-          "refId": "A"
+          "queryType": "traceqlSearch",
+          "refId": "A",
+          "tableType": "traces"
         }
       ],
       "title": "Recent traces",

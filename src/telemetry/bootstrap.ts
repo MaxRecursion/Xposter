@@ -73,7 +73,7 @@ export function startTelemetry(): void {
       }),
       new WinstonInstrumentation({
         disableLogCorrelation: false,
-        disableLogSending: false,
+        disableLogSending: true,
       }),
     ],
     sampler: undefined,
