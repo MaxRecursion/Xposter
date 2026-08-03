@@ -124,4 +124,75 @@ describe('analytics overview', () => {
     expect(digest.top_reply?.success_score).toBeGreaterThan(0);
     expect(digest.best_topic?.topic).toBe('pune metro');
   });
+
+  it('breaks reply performance down by source (TIMELINE vs TREND)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const queries = await import('../../src/storage/queries.js');
+    const interactions = await import('../../src/storage/interactions.js');
+
+    // Timeline post → reply with metric sync
+    const timelinePost = queries.upsertPost({
+      tweet_id: 'tl_tweet_001',
+      author_handle: 'user_a',
+      author_name: 'User A',
+      text: 'Timeline tweet',
+      timestamp: now - 3600,
+      likes: 5, replies: 1, retweets: 0,
+      tweet_url: 'https://x.com/user_a/status/tl_tweet_001',
+    })!;
+    // source defaults to TIMELINE on insert
+
+    const tlId = interactions.recordInteraction(
+      timelinePost.id, 'user_a', 'Timeline reply', { tweetId: 'our_tl_001' },
+    );
+    interactions.updateInteractionMetrics(tlId, {
+      likes: 10, replies: 2, retweets: 1, impressions: 400,
+    });
+
+    // Trend post → reply with metric sync
+    const trendPost = queries.upsertPost({
+      tweet_id: 'tr_tweet_001',
+      author_handle: 'user_b',
+      author_name: 'User B',
+      text: '#TrendingTopic tweet',
+      timestamp: now - 3600,
+      likes: 500, replies: 200, retweets: 80,
+      tweet_url: 'https://x.com/user_b/status/tr_tweet_001',
+    }, { source: 'TREND_GLOBAL', trendKey: '#TrendingTopic' })!;
+
+    const trId = interactions.recordInteraction(
+      trendPost.id, 'user_b', 'Trend reply', { tweetId: 'our_tr_001' },
+    );
+    interactions.updateInteractionMetrics(trId, {
+      likes: 2, replies: 0, retweets: 0, impressions: 80,
+    });
+
+    // A reply without metric sync should be excluded from source breakdown
+    const unsyncedPost = queries.upsertPost({
+      tweet_id: 'un_tweet_001',
+      author_handle: 'user_a',
+      author_name: 'User A',
+      text: 'Unsynced tweet',
+      timestamp: now - 7200,
+      likes: 1, replies: 0, retweets: 0,
+      tweet_url: 'https://x.com/user_a/status/un_tweet_001',
+    })!;
+    interactions.recordInteraction(
+      unsyncedPost.id, 'user_a', 'Unsynced reply', { tweetId: 'our_un_001' },
+    );
+
+    const { getAnalyticsOverview } = await import('../../src/storage/analytics.js');
+    const result = getAnalyticsOverview(30);
+
+    expect(result.reply_by_source).toHaveLength(2);
+    const tl = result.reply_by_source.find((r) => r.source === 'TIMELINE');
+    const tr = result.reply_by_source.find((r) => r.source === 'TREND_GLOBAL');
+    expect(tl).toBeDefined();
+    expect(tl!.total_replies).toBe(1);
+    expect(tl!.avg_impressions).toBeGreaterThan(0);
+    expect(tr).toBeDefined();
+    expect(tr!.total_replies).toBe(1);
+    // TIMELINE should outperform TREND in this fixture (10 likes vs 2 likes)
+    expect(tl!.avg_success_score).toBeGreaterThan(tr!.avg_success_score);
+  });
 });

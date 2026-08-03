@@ -1056,6 +1056,7 @@ async function loadAnalytics() {
 
     renderFollowerGrowth(data.follower_growth || []);
     renderReplyClassPerformance(data.reply_by_classification || []);
+    renderReplySourcePerformance(data.reply_by_source || []);
     renderTopicTrends(data.topic_trends || []);
     renderPostingHours(data.posting_hours || []);
     renderBaitTuning(bait);
@@ -1159,6 +1160,31 @@ function renderReplyClassPerformance(rows) {
       <div class="analytics-bar-value">${row.avg_success_score} avg · ${row.success_rate}% success · ${row.total_replies}</div>
     </div>
   `).join('');
+}
+
+const SOURCE_LABELS = { TIMELINE: 'Timeline', TREND_GLOBAL: 'Trend (Global)', TREND_INDIA: 'Trend (India)' };
+
+function renderReplySourcePerformance(rows) {
+  const el = $('analytics-reply-source');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="analytics-no-data">No source performance data yet — needs metric-synced replies.</div>';
+    return;
+  }
+  const maxScore = Math.max(...rows.map((r) => r.avg_success_score || 0), 1);
+  el.innerHTML = rows.map((row) => {
+    const label = SOURCE_LABELS[row.source] || row.source;
+    const barPct = Math.max(2, (row.avg_success_score / maxScore) * 100);
+    const impStr = row.avg_impressions > 0 ? ` · ${row.avg_impressions} imp` : '';
+    return `
+    <div class="analytics-bar-row">
+      <div class="analytics-bar-label">${escHtml(label)}</div>
+      <div class="analytics-bar-track">
+        <div class="analytics-bar-fill" style="width:${barPct}%"></div>
+      </div>
+      <div class="analytics-bar-value">${row.avg_success_score} avg · ${row.success_rate}% success${impStr} · n=${row.total_replies}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderTopicTrends(rows) {

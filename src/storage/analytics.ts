@@ -35,6 +35,17 @@ export interface PostingHourPerformance {
   avg_engagement_score: number;
 }
 
+export interface SourcePerformance {
+  /** TIMELINE | TREND_GLOBAL | TREND_INDIA */
+  source: string;
+  total_replies: number;
+  successful_replies: number;
+  success_rate: number;
+  avg_success_score: number;
+  avg_likes: number;
+  avg_impressions: number;
+}
+
 export interface AnalyticsOverview {
   days: number;
   summary: {
@@ -45,6 +56,7 @@ export interface AnalyticsOverview {
   };
   follower_growth: FollowerGrowthPoint[];
   reply_by_classification: ReplyClassPerformance[];
+  reply_by_source: SourcePerformance[];
   topic_trends: TopicTrendPoint[];
   posting_hours: PostingHourPerformance[];
 }
@@ -159,6 +171,30 @@ export function getAnalyticsOverview(days = 30): AnalyticsOverview {
     ORDER BY hour
   `).all(since, since) as PostingHourPerformance[];
 
+  // How well our replies perform depending on where we sourced the candidate tweet
+  // (timeline scroll vs trending hashtag). Joins via posts.source which is written
+  // at ingestion time. Only rows with a metric sync are included (posted replies
+  // that haven't been checked yet have success_score = 0 and would skew the avg).
+  const replyBySource = db.prepare(`
+    SELECT
+      COALESCE(p.source, 'TIMELINE') AS source,
+      COUNT(*) AS total_replies,
+      SUM(CASE WHEN i.success_score >= 5 THEN 1 ELSE 0 END) AS successful_replies,
+      ROUND(
+        100.0 * SUM(CASE WHEN i.success_score >= 5 THEN 1 ELSE 0 END) / COUNT(*),
+        1
+      ) AS success_rate,
+      ROUND(AVG(i.success_score), 1) AS avg_success_score,
+      ROUND(AVG(i.likes_received), 1) AS avg_likes,
+      ROUND(AVG(i.impressions), 1) AS avg_impressions
+    FROM interactions i
+    JOIN posts p ON p.id = i.post_id
+    WHERE i.posted_at >= ?
+      AND i.last_metric_check IS NOT NULL
+    GROUP BY COALESCE(p.source, 'TIMELINE')
+    ORDER BY avg_success_score DESC
+  `).all(since) as SourcePerformance[];
+
   const originals = (db.prepare(`
     SELECT COUNT(*) AS count FROM original_posts
     WHERE status = 'POSTED' AND posted_at >= ?
@@ -177,6 +213,7 @@ export function getAnalyticsOverview(days = 30): AnalyticsOverview {
     },
     follower_growth: followerGrowth,
     reply_by_classification: replyByClassification,
+    reply_by_source: replyBySource,
     topic_trends: topicTrends,
     posting_hours: postingHours,
   };
