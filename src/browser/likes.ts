@@ -14,6 +14,7 @@ import { delay, randomBetween } from '../utils/delay.js';
 import { getDb } from '../storage/db.js';
 import { getListSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 
 const X_HOME = 'https://x.com/home';
 
@@ -196,7 +197,7 @@ function getReplyQueueTweetIds(): Set<string> {
 }
 
 function isAlreadyLikedToday(tweetId: string): boolean {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const db = getDb();
   const row = db.prepare(
     'SELECT 1 FROM liked_tweets WHERE tweet_id = ? AND liked_at >= ?',
@@ -214,7 +215,7 @@ function recordLike(tweetId: string): void {
 
 /** How many likes have been sent today so far. */
 export function getLikesCountToday(): number {
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const startOfDay = startOfLocalDayUnix();
   const db = getDb();
   const row = db.prepare(
     'SELECT COUNT(*) AS c FROM liked_tweets WHERE liked_at >= ?',

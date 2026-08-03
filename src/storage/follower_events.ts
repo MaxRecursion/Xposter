@@ -1,4 +1,5 @@
 import { getDb } from './db.js';
+import { startOfLocalDayUnix } from '../utils/time.js';
 
 export type FollowerEventType = 'NEW_FOLLOWER' | 'UNFOLLOWED' | 'FOLLOW_BACK_DUE';
 export type FollowerEventStatus =
@@ -172,7 +173,7 @@ export function getDueScheduledFollowBacks(): FollowerEvent[] {
 }
 
 export function countActionedFollowBacksToday(): number {
-  const startOfDay = startOfTodayUnix();
+  const startOfDay = startOfLocalDayUnix();
   const row = getDb().prepare(`
     SELECT COUNT(*) AS n FROM follower_events
     WHERE event_type = 'NEW_FOLLOWER'
@@ -180,10 +181,4 @@ export function countActionedFollowBacksToday(): number {
       AND COALESCE(action_taken_at, 0) >= ?
   `).get(startOfDay) as { n: number };
   return row.n;
-}
-
-function startOfTodayUnix(): number {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.floor(start.getTime() / 1000);
 }

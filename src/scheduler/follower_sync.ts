@@ -1,9 +1,11 @@
 import { fetchOurFollowerEntries, resolveOwnHandle, type FollowerListEntry } from '../browser/followers.js';
 import {
-  enqueueFollowerEvent, listFollowerHandles, setFollowerState, setFollowingState,
-  setFollowerEventStatus, upsertPendingFollowBackEvent,
+  listFollowerHandles, setFollowerState, setFollowingState,
 } from '../storage/accounts.js';
-import { autoApproveFollowBack } from '../storage/follower_events.js';
+import {
+  autoApproveFollowBack, enqueueFollowerEvent, setFollowerEventStatus,
+  upsertPendingFollowBackEvent,
+} from '../storage/follower_events.js';
 import { logEvent } from '../storage/queries.js';
 import { getBooleanSetting, getIntSetting, getListSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';

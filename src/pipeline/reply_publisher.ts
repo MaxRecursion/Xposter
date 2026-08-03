@@ -6,7 +6,7 @@ import {
   markPostPostingError, MAX_POSTING_ATTEMPTS, Post, schedulePostRetry,
 } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
-import { classifyPostingError } from './errors.js';
+import { classifyPostingError } from '../browser/errors.js';
 
 export type PublishReplyOutcome = 'posted' | 'retry_scheduled' | 'error';
 

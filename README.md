@@ -544,7 +544,7 @@ All scheduler jobs are backed by the `scheduled_runs` SQLite table with jittered
 | Job | File | Trigger | What it does |
 |---|---|---|---|
 | **Reply pipeline** | `scheduler/random_runs.ts` | 5×/day (configurable), random offsets within active window (default 09:00–22:00), 60 s tick | Ingest timeline → filter → score → classify → generate → approval or automatic post |
-| **Reply retry queue** | `scheduler/reply_retry.ts` | Each random-run tick | Retry one eligible transient posting failure |
+| **Reply retry queue** | `pipeline/reply_retry.ts` | Each random-run tick | Retry one eligible transient posting failure |
 | **Original posts** | `scheduler/original_posts.ts` | 7×/day (4 ORIGINAL + 2 ENGAGEMENT_FARM + 1 QUOTE_TWEET), jittered grid, 60 s tick | Draft and post a single tweet, thread, or quote tweet |
 | **Impression sync** | `scheduler/original_posts.ts` | Every 2 h (10 min initial delay), `setTimeout` chain | Playwright scrapes engagement for recent originals |
 | **Reply metrics sync** | `scheduler/reply_metrics_sync.ts` | Periodic | Scrape reply engagement and update interaction success scores |

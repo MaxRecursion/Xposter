@@ -142,40 +142,6 @@ export function classificationIsFresh(
   return ageSec < ttlDays * 86400;
 }
 
-export {
-  getInteractionStats,
-  listRecentInteractions,
-  recordInteraction,
-  updateInteractionMetrics,
-} from './interactions.js';
-export type { Interaction } from './interactions.js';
-
-export {
-  countActionedFollowBacksToday,
-  enqueueFollowerEvent,
-  getFollowerEvent,
-  listFollowerEvents,
-  listPendingFollowBackEvents,
-  setFollowerEventStatus,
-  upsertPendingFollowBackEvent,
-} from './follower_events.js';
-export type {
-  FollowerEvent,
-  FollowerEventStatus,
-  FollowerEventType,
-  UpsertFollowerEventResult,
-} from './follower_events.js';
-
-export {
-  getDuePendingRuns,
-  getScheduledRunsForDate,
-  getUpcomingRuns,
-  insertScheduledRun,
-  markRunFired,
-  markRunSkipped,
-} from './scheduled_runs.js';
-export type { ScheduledRun } from './scheduled_runs.js';
-
 /**
  * Original-case handles of every account currently marked as following us.
  * Callers lowercase for comparisons but must keep the original case for
