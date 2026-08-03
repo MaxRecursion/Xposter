@@ -51,6 +51,25 @@ export function getLogLevel(): string {
   return process.env.LOG_LEVEL?.trim() || 'info';
 }
 
+export function isOtelEnabled(): boolean {
+  if (process.env.NODE_ENV?.trim() === 'test') return false;
+  return parseBool(process.env.OTEL_ENABLED, false);
+}
+
+export function getOtelServiceName(): string {
+  return process.env.OTEL_SERVICE_NAME?.trim() || 'xposter';
+}
+
+export function getOtelExporterEndpoint(): string | null {
+  const value = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
+  return value || null;
+}
+
+export function getOtelTracesSamplerArg(): number {
+  const parsed = Number.parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG ?? '1.0');
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 1.0;
+}
+
 export function getDbPathOverride(): string | null {
   const value = process.env.DB_PATH_OVERRIDE?.trim();
   return value && value !== '' ? value : null;

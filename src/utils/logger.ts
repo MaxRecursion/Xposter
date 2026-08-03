@@ -1,6 +1,7 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import { trace } from '@opentelemetry/api';
 import { getLogLevel } from '../config.js';
 
 const LOG_DIR = path.resolve(process.cwd(), 'logs');
@@ -31,7 +32,13 @@ const fmt = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
-    const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(serializeErrors(meta))}` : '';
+    const span = trace.getActiveSpan();
+    const ctx = span?.spanContext();
+    const traceMeta = ctx?.traceId
+      ? { trace_id: ctx.traceId, span_id: ctx.spanId }
+      : {};
+    const merged = { ...traceMeta, ...meta };
+    const metaStr = Object.keys(merged).length ? ` ${JSON.stringify(serializeErrors(merged))}` : '';
     return `[${timestamp}] ${level.toUpperCase().padEnd(5)} ${message}${metaStr}`;
   }),
 );

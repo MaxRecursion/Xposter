@@ -7,6 +7,8 @@ import { isLoggedIn } from './browser/session.js';
 import { logger } from './utils/logger.js';
 import { getBindHost, getBrowserUrls, getPort } from './utils/network.js';
 import { getIngestCron } from './config.js';
+import { getTelemetryStatus, shutdownTelemetry } from './telemetry/bootstrap.js';
+import { stopScheduler } from './scheduler/cron.js';
 
 async function main(): Promise<void> {
   logger.info('=== Xposter starting ===');
@@ -45,6 +47,15 @@ async function main(): Promise<void> {
   startScheduler();
   logger.info('Scheduler started — cron:', getIngestCron());
 
+  const telemetry = getTelemetryStatus();
+  if (telemetry.enabled) {
+    logger.info('OpenTelemetry enabled', {
+      endpoint: telemetry.endpoint,
+      service: telemetry.serviceName,
+      started: telemetry.started,
+    });
+  }
+
   logger.info('=== Xposter ready ===');
 
   // Graceful shutdown
@@ -54,8 +65,10 @@ async function main(): Promise<void> {
 
 async function shutdown(): Promise<void> {
   logger.info('Shutting down...');
+  stopScheduler();
   const { closeBrowser } = await import('./browser/session.js');
   await closeBrowser();
+  await shutdownTelemetry();
   process.exit(0);
 }
 
