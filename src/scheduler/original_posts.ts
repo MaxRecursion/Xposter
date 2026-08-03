@@ -247,6 +247,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
       researchContext: generated.researchContext,
       threadParts: generated.parts,
       engagementMode: generated.engagementMode ?? null,
+      contentStructure: generated.contentStructure ?? null,
       quotedTweet: quoteCandidate ? {
         id: quoteCandidate.post.tweet_id,
         url: quoteCandidate.post.tweet_url,

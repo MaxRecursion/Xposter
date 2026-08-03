@@ -99,8 +99,22 @@ describe('decideEngagementBait', () => {
 describe('baitGuidanceFor', () => {
   it('returns empty for NONE and substantive text for bait modes', () => {
     expect(baitGuidanceFor('NONE')).toBe('');
-    expect(baitGuidanceFor('CLICKBAIT')).toMatch(/CLICKBAIT/);
-    expect(baitGuidanceFor('RAGEBAIT')).toMatch(/RAGEBAIT/);
+    expect(baitGuidanceFor('CLICKBAIT')).toMatch(/curiosity/i);
+    expect(baitGuidanceFor('RAGEBAIT')).toMatch(/friction/i);
     expect(baitGuidanceFor('RAGEBAIT')).toMatch(/NEVER rage about/i);
+  });
+
+  it('uses implicit guidance by default', () => {
+    expect(baitGuidanceFor('CLICKBAIT', { baitStyle: 'implicit' })).toMatch(/mid-conversation/i);
+    expect(baitGuidanceFor('CLICKBAIT', { baitStyle: 'implicit' })).not.toMatch(/Open with a hook that withholds/i);
+  });
+
+  it('supports explicit legacy template guidance', () => {
+    expect(baitGuidanceFor('CLICKBAIT', { baitStyle: 'explicit' })).toMatch(/The part about X/i);
+    expect(baitGuidanceFor('RAGEBAIT', { baitStyle: 'explicit' })).toMatch(/Change my mind/i);
+  });
+
+  it('includes structure guidance when provided', () => {
+    expect(baitGuidanceFor('RAGEBAIT', { structure: 'one_liner' })).toMatch(/ONE-LINER/i);
   });
 });

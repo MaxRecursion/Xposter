@@ -25,13 +25,7 @@ const MAX_REPLY_CHARS = 280;
 const DEVANAGARI_RE = /[ऀ-ॿ]/;
 const MAX_RESEARCH_TOOL_CALLS = 3;
 
-// Phrases from the ANTI-AI-SLOP prompt rules that are distinctive enough to
-// reject mechanically without false positives on normal English.
-const BANNED_PHRASES = [
-  'i totally understand', 'i feel you', 'great point', 'well said', '💯',
-  'must be tough', 'hope it gets better', 'stay strong', 'food for thought',
-  "in today's world", 'as an ai',
-];
+import { findBannedPhrase } from './human_likeness.js';
 
 export type ValidationResult = { ok: true; text: string } | { ok: false; reason: string };
 
@@ -101,8 +95,7 @@ export function makeReplyValidator(
     if (hashtags.length > 1) {
       return { ok: false, reason: `uses ${hashtags.length} hashtags — the limit is one (zero preferred)` };
     }
-    const lower = text.toLowerCase();
-    const banned = BANNED_PHRASES.find((p) => lower.includes(p));
+    const banned = findBannedPhrase(text);
     if (banned) return { ok: false, reason: `contains the banned AI-slop phrase "${banned}" — rewrite without it` };
     if (avoid.size > 0 && avoid.has(normalizeForComparison(text))) {
       return { ok: false, reason: 'nearly identical to a recent reply — take a genuinely different angle' };

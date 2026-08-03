@@ -76,8 +76,13 @@ describe('runPipeline', () => {
         updated_at: Math.floor(Date.now() / 1000),
       }),
     }));
+    const replyText = 'That sounds like a fun watch.';
     vi.doMock('../../src/pipeline/generator.js', () => ({
-      generateReply: vi.fn().mockResolvedValue('That sounds like a fun watch.'),
+      generateReply: vi.fn().mockResolvedValue(replyText),
+      generateReplyWithMeta: vi.fn().mockResolvedValue({
+        text: replyText,
+        contentStructure: 'standard',
+      }),
     }));
     const postReplyMock = vi.fn().mockResolvedValue({ replyTweetId: '9999000011112222' });
     vi.doMock('../../src/browser/posting.js', () => ({
@@ -131,8 +136,13 @@ describe('runPipeline', () => {
     vi.doMock('../../src/pipeline/classifier.js', () => ({
       classifyAccount: vi.fn().mockResolvedValue(null),
     }));
+    const replyText = 'Baner traffic has impeccable timing.';
     vi.doMock('../../src/pipeline/generator.js', () => ({
-      generateReply: vi.fn().mockResolvedValue('Baner traffic has impeccable timing.'),
+      generateReply: vi.fn().mockResolvedValue(replyText),
+      generateReplyWithMeta: vi.fn().mockResolvedValue({
+        text: replyText,
+        contentStructure: 'standard',
+      }),
     }));
     const postReplyMock = vi.fn();
     vi.doMock('../../src/browser/posting.js', () => ({
@@ -180,10 +190,19 @@ describe('runPipeline', () => {
     vi.doMock('../../src/pipeline/classifier.js', () => ({
       classifyAccount: vi.fn().mockResolvedValue(null),
     }));
-    const generateReply = vi.fn()
-      .mockResolvedValueOnce('Pune traffic has impeccable timing.')
-      .mockResolvedValueOnce('Baner rush hour is applying for permanent residency.');
-    vi.doMock('../../src/pipeline/generator.js', () => ({ generateReply }));
+    const generateReplyWithMeta = vi.fn()
+      .mockResolvedValueOnce({
+        text: 'Pune traffic has impeccable timing.',
+        contentStructure: 'standard',
+      })
+      .mockResolvedValueOnce({
+        text: 'Baner rush hour is applying for permanent residency.',
+        contentStructure: 'one_liner',
+      });
+    vi.doMock('../../src/pipeline/generator.js', () => ({
+      generateReply: vi.fn().mockImplementation(async (...args) => (await generateReplyWithMeta(...args)).text),
+      generateReplyWithMeta,
+    }));
     vi.doMock('../../src/browser/posting.js', () => ({
       postReply: vi.fn(),
       deleteReply: vi.fn(),
@@ -214,8 +233,8 @@ describe('runPipeline', () => {
     const post = queries.getPostByTweetId(tweet.tweet_id);
     expect(post?.status).toBe('PENDING_APPROVAL');
     expect(post?.generated_reply).toBe('Baner rush hour is applying for permanent residency.');
-    expect(generateReply).toHaveBeenCalledTimes(2);
-    expect(generateReply.mock.calls[1][2]).toMatchObject({
+    expect(generateReplyWithMeta).toHaveBeenCalledTimes(2);
+    expect(generateReplyWithMeta.mock.calls[1][2]).toMatchObject({
       avoidTexts: expect.arrayContaining(['Pune traffic has impeccable timing.']),
     });
     expect(approvalMock).toHaveBeenCalledTimes(1);

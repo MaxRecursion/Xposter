@@ -75,11 +75,18 @@ async function seedFreshSnapshots(): Promise<void> {
   }
 }
 
-function mockCommon(generateReply: ReturnType<typeof vi.fn>, postReply: ReturnType<typeof vi.fn>) {
+function mockReplyMeta(text: string) {
+  return vi.fn().mockResolvedValue({ text, contentStructure: 'standard' });
+}
+
+function mockCommon(generateReplyWithMeta: ReturnType<typeof vi.fn>, postReply: ReturnType<typeof vi.fn>) {
   vi.doMock('../../src/pipeline/classifier.js', () => ({
     classifyAccount: vi.fn().mockResolvedValue(null),
   }));
-  vi.doMock('../../src/pipeline/generator.js', () => ({ generateReply }));
+  vi.doMock('../../src/pipeline/generator.js', () => ({
+    generateReply: vi.fn().mockImplementation(async (...args) => (await generateReplyWithMeta(...args)).text),
+    generateReplyWithMeta,
+  }));
   vi.doMock('../../src/browser/posting.js', () => ({ postReply, deleteReply: vi.fn() }));
   vi.doMock('../../src/notifications/ntfy.js', () => ({
     sendApprovalNotification: vi.fn().mockResolvedValue({ ok: true }),
@@ -118,7 +125,10 @@ describe('trend-sourced reply pipeline', () => {
       searchTweets,
     }));
     const postReply = vi.fn().mockResolvedValue({ replyTweetId: '9999000011112222' });
-    mockCommon(vi.fn().mockResolvedValue('Worth pricing in the switching cost before calling it a win.'), postReply);
+    mockCommon(
+      mockReplyMeta('Worth pricing in the switching cost before calling it a win.'),
+      postReply,
+    );
 
     const { runReplyPipeline } = await import('../../src/pipeline/reply_pipeline.js');
     const { setSetting } = await import('../../src/storage/settings.js');
@@ -152,8 +162,8 @@ describe('trend-sourced reply pipeline', () => {
         ...filler(5),
       ]),
     }));
-    const generateReply = vi.fn().mockResolvedValue('Worth watching how the rollout actually lands.');
-    mockCommon(generateReply, vi.fn().mockResolvedValue({ replyTweetId: '8888' }));
+    const generateReplyWithMeta = mockReplyMeta('Worth watching how the rollout actually lands.');
+    mockCommon(generateReplyWithMeta, vi.fn().mockResolvedValue({ replyTweetId: '8888' }));
 
     const { runReplyPipeline } = await import('../../src/pipeline/reply_pipeline.js');
     const { setSetting } = await import('../../src/storage/settings.js');
@@ -168,7 +178,7 @@ describe('trend-sourced reply pipeline', () => {
     const post = getPostByTweetId('1823456789012340002');
 
     expect(post?.stance).toBe('ALIGNED');
-    expect(generateReply.mock.calls[0][2]).toMatchObject({ stance: 'ALIGNED' });
+    expect(generateReplyWithMeta.mock.calls[0][2]).toMatchObject({ stance: 'ALIGNED' });
   });
 
   it('drops a candidate whose own text is about a death, even on a safe trend', async () => {
@@ -185,7 +195,7 @@ describe('trend-sourced reply pipeline', () => {
       ]),
     }));
     const postReply = vi.fn();
-    mockCommon(vi.fn().mockResolvedValue('nope'), postReply);
+    mockCommon(mockReplyMeta('nope'), postReply);
 
     const { runReplyPipeline } = await import('../../src/pipeline/reply_pipeline.js');
     await seedTrend({ name: 'formula1', woeid: 1, safety: 'SAFE_FOR_CONTRARIAN' });
@@ -210,7 +220,7 @@ describe('trend-sourced reply pipeline', () => {
       searchTweets: vi.fn().mockResolvedValue([]),
     }));
     const postReply = vi.fn().mockResolvedValue({ replyTweetId: '7777' });
-    mockCommon(vi.fn().mockResolvedValue('Baner drainage doing its annual disappearing act.'), postReply);
+    mockCommon(mockReplyMeta('Baner drainage doing its annual disappearing act.'), postReply);
 
     const { runReplyPipeline } = await import('../../src/pipeline/reply_pipeline.js');
     const { setSetting } = await import('../../src/storage/settings.js');
@@ -232,7 +242,7 @@ describe('trend-sourced reply pipeline', () => {
     const ingestTimeline = vi.fn().mockResolvedValue([]);
     const searchTweets = vi.fn();
     vi.doMock('../../src/browser/ingestion.js', () => ({ ingestTimeline, searchTweets }));
-    mockCommon(vi.fn(), vi.fn());
+    mockCommon(mockReplyMeta('fallback'), vi.fn());
 
     const { runReplyPipeline } = await import('../../src/pipeline/reply_pipeline.js');
     await runReplyPipeline();

@@ -10,7 +10,7 @@ import { delay, randomBetween } from '../utils/delay.js';
 import { classifyAccount } from './classifier.js';
 import { EmptyReplyError } from './errors.js';
 import { DetectedLanguage, filterPost } from './filter.js';
-import { generateReply } from './generator.js';
+import { generateReplyWithMeta } from './generator.js';
 import { rankCandidates, scorePostsWithSignals, ScoredPost } from './scorer.js';
 import { generateDistinct } from './dedup.js';
 import { publishReply } from './reply_publisher.js';
@@ -351,12 +351,12 @@ async function processCandidate(
     const recentReplies = listRecentReplyTexts(25);
     const distinct = await generateDistinct({
       existingTexts: recentReplies,
-      generate: (attempt) => generateReply(
+      generate: (attempt) => generateReplyWithMeta(
         post,
         account,
         attempt > 1 ? { avoidTexts: recentReplies, stance: safeStance } : { stance: safeStance },
       ),
-      getText: (value) => value,
+      getText: (value) => value.text,
       onDuplicate: (_value, attempt) => {
         logEvent('DUPLICATE_REPLY_REJECTED', `attempt=${attempt}`, post.id);
         logger.warn('Generated reply matched recent reply history', { postId: post.id, attempt });
@@ -367,7 +367,8 @@ async function processCandidate(
       logEvent('CANDIDATE_SKIPPED_DUPLICATE', 'two duplicate drafts', post.id);
       return 'skipped';
     }
-    const reply = distinct.value;
+    const generated = distinct.value;
+    const reply = generated.text;
     updateGeneratedReply(post.id, reply);
 
     // Human-in-the-loop mode: stop at PENDING_APPROVAL and ask via ntfy.
@@ -386,7 +387,9 @@ async function processCandidate(
     updatePostStatus(post.id, 'POSTING');
     logEvent('AUTO_POSTING', `score=${candidate.score}`, post.id);
 
-    const publishOutcome = await publishReply(post, reply, account?.classification ?? null);
+    const publishOutcome = await publishReply(post, reply, account?.classification ?? null, {
+      contentStructure: generated.contentStructure,
+    });
     return publishOutcome === 'posted' ? 'posted' : 'error';
   } catch (err) {
     if (err instanceof EmptyReplyError) {

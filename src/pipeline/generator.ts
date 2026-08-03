@@ -11,8 +11,12 @@ import { generateReplyAgentic } from './agentic_generator.js';
 import { generateText } from './llm_runner.js';
 import {
   baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
-  type EngagementMode,
+  pickBaitStructure, type BaitStructure, type EngagementMode,
 } from './engagement_bait.js';
+import {
+  checkHumanLikeness, getBaitCandidateCount, HUMAN_TEXTURE_RULES,
+  humanLikenessScore, pickBestCandidate, type ContentStructure,
+} from './human_likeness.js';
 import { getReplyBaitCountsToday } from '../storage/queries.js';
 
 const MAX_REPLY_CHARS = 280;
@@ -224,15 +228,17 @@ function systemPrompt(
   flavor: Flavor,
   stance: Stance | null = null,
   engagementMode: EngagementMode = 'NONE',
+  baitStructure: BaitStructure | null = null,
 ): string {
   const base = flavor === 'pune' ? SYSTEM_PROMPT_PUNE : SYSTEM_PROMPT_GENERAL;
   const classificationGuidance = classificationGuidanceFor(classification);
   return [
     base,
+    HUMAN_TEXTURE_RULES,
     witInstructions(tier, flavor),
     classificationGuidance,
     stanceGuidanceFor(stance),
-    baitGuidanceFor(engagementMode),
+    baitGuidanceFor(engagementMode, { structure: baitStructure ?? undefined }),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -280,6 +286,11 @@ function classificationGuidanceFor(c: Classification | null): string {
   }
 }
 
+export interface GeneratedReply {
+  text: string;
+  contentStructure: ContentStructure;
+}
+
 export async function generateReply(
   post: Post,
   authorAccount: Account | null = null,
@@ -289,6 +300,19 @@ export async function generateReply(
     engagementMode?: EngagementMode | null;
   } = {},
 ): Promise<string> {
+  const result = await generateReplyWithMeta(post, authorAccount, options);
+  return result.text;
+}
+
+export async function generateReplyWithMeta(
+  post: Post,
+  authorAccount: Account | null = null,
+  options: {
+    avoidTexts?: string[];
+    stance?: Stance | null;
+    engagementMode?: EngagementMode | null;
+  } = {},
+): Promise<GeneratedReply> {
   const { level, tier } = readWitLevel();
   const classification = (authorAccount?.classification as Classification | null) ?? null;
   const flavor = pickFlavor(post.text);
@@ -326,53 +350,121 @@ export async function generateReply(
     engagementMode = 'NONE';
   }
 
+  const baitStructure = engagementMode !== 'NONE' ? pickBaitStructure() : null;
+  const candidateCount = engagementMode !== 'NONE'
+    ? Math.max(1, getBaitCandidateCount())
+    : 1;
+  const avoidTexts = options.avoidTexts ?? [];
+
   const contextBlock = isContextEnabled()
     ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 6, maxTokens: 800 })
     : '';
   const memoryBlock = recallNeuralMemory(post.text, { maxItems: 3, maxChars: 900 });
-  const userPrompt = buildUserPrompt(
-    post,
-    authorAccount,
-    [contextBlock, memoryBlock].filter(Boolean).join('\n\n'),
-    options.avoidTexts,
-  );
 
-  // Slightly higher temperature in WITTY/SHARP tiers / bait modes to encourage variety
-  const temp = engagementMode !== 'NONE'
-    ? 0.95
-    : tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
+  const likenessOpts = {
+    engagementMode,
+    flavor,
+    avoidTexts,
+  };
 
-  const sysPrompt = systemPrompt(tier, classification, flavor, stance, engagementMode);
-  logPromptToConsole(
-    'REPLY',
-    `${post.id} flavor=${flavor} stance=${stance ?? 'none'} bait=${engagementMode}`,
-    sysPrompt,
-    userPrompt,
-  );
+  const generateOne = async (
+    attempt: number,
+    extraAvoid: string[] = [],
+  ): Promise<string> => {
+    const userPrompt = buildUserPrompt(
+      post,
+      authorAccount,
+      [contextBlock, memoryBlock].filter(Boolean).join('\n\n'),
+      [...avoidTexts, ...extraAvoid],
+      attempt > 1 ? 'Your previous draft sounded too generic or engagement-farmy. Rewrite with a more natural, human voice.' : undefined,
+    );
 
-  const rawReply = await generateText({
-    taskName: 'generateReply',
-    systemPrompt: sysPrompt,
-    userPrompt,
-    postId: post.id,
-    groq: { maxTokens: 400, temperature: temp },
-    logContext: { witLevel: level, witTier: tier, flavor, classification: classification ?? 'unknown' },
-    agenticRunner: () => generateReplyAgentic({
-      postId: post.id,
+    const baseTemp = engagementMode !== 'NONE'
+      ? 0.95
+      : tier === 'SHARP' ? 0.95 : tier === 'WITTY' ? 0.9 : 0.8;
+    const temp = candidateCount > 1
+      ? baseTemp + (attempt - 1) * 0.04
+      : baseTemp;
+
+    const sysPrompt = systemPrompt(
+      tier, classification, flavor, stance, engagementMode, baitStructure,
+    );
+    logPromptToConsole(
+      'REPLY',
+      `${post.id} flavor=${flavor} stance=${stance ?? 'none'} bait=${engagementMode} attempt=${attempt}`,
+      sysPrompt,
+      userPrompt,
+    );
+
+    const rawReply = await generateText({
+      taskName: 'generateReply',
       systemPrompt: sysPrompt,
       userPrompt,
-      avoidTexts: options.avoidTexts ?? [],
-      stance,
-    }),
+      postId: post.id,
+      groq: { maxTokens: 400, temperature: Math.min(temp, 0.98) },
+      logContext: {
+        witLevel: level,
+        witTier: tier,
+        flavor,
+        classification: classification ?? 'unknown',
+        attempt,
+        candidateCount,
+      },
+      agenticRunner: attempt === 1
+        ? () => generateReplyAgentic({
+          postId: post.id,
+          systemPrompt: sysPrompt,
+          userPrompt,
+          avoidTexts: [...avoidTexts, ...extraAvoid],
+          stance,
+        })
+        : undefined,
+    });
+
+    let cleaned = cleanModelText(rawReply);
+    cleaned = enforceCharacterLimit(cleaned, MAX_REPLY_CHARS);
+    assertEnglishOnly(cleaned, 'Reply generation');
+    return cleaned;
+  };
+
+  const candidates: string[] = [];
+  for (let i = 1; i <= candidateCount; i++) {
+    candidates.push(await generateOne(i));
+  }
+
+  let picked = pickBestCandidate(candidates, likenessOpts);
+  let humanIssue = checkHumanLikeness(picked.text, likenessOpts);
+
+  if (humanIssue) {
+    logger.warn('Reply failed human-likeness gate; regenerating once', {
+      postId: post.id, reason: humanIssue,
+    });
+    const retry = await generateOne(candidateCount + 1, [picked.text]);
+    const retryPicked = pickBestCandidate([picked.text, retry], likenessOpts);
+    const retryIssue = checkHumanLikeness(retryPicked.text, likenessOpts);
+    if (!retryIssue || humanLikenessScore(retryPicked.text, likenessOpts) > picked.score) {
+      picked = retryPicked;
+      humanIssue = retryIssue;
+    }
+  }
+
+  if (humanIssue) {
+    logger.warn('Reply still marginal after human-likeness retry', {
+      postId: post.id, reason: humanIssue, reply: picked.text,
+    });
+  }
+
+  logger.info('Reply generated', {
+    postId: post.id,
+    reply: picked.text,
+    flavor,
+    engagementMode,
+    contentStructure: picked.structure,
+    humanScore: picked.score,
+    candidates: candidateCount,
   });
 
-  // Sanitize: strip any surrounding quotes the model might add
-  let cleaned = cleanModelText(rawReply);
-  cleaned = enforceCharacterLimit(cleaned, MAX_REPLY_CHARS);
-  assertEnglishOnly(cleaned, 'Reply generation');
-
-  logger.info('Reply generated', { postId: post.id, reply: cleaned, flavor, engagementMode });
-  return cleaned;
+  return { text: picked.text, contentStructure: picked.structure };
 }
 
 function buildUserPrompt(
@@ -380,6 +472,7 @@ function buildUserPrompt(
   account: Account | null,
   contextBlock = '',
   avoidTexts: string[] = [],
+  humanRetryNote?: string,
 ): string {
   const ageMin = Math.round((Date.now() / 1000 - post.timestamp) / 60);
 
@@ -406,6 +499,9 @@ function buildUserPrompt(
       'Use a genuinely different angle, sentence structure, and opening. Do not paraphrase these:',
       ...avoidTexts.slice(0, 8).map((text, i) => `${i + 1}. ${truncateForPrompt(text, 180)}`),
     );
+  }
+  if (humanRetryNote) {
+    lines.push('', humanRetryNote);
   }
   lines.push('', 'Tweet:', post.text);
 

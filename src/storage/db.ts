@@ -349,6 +349,8 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'original_posts', 'quoted_tweet_url', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'quoted_author_handle', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'engagement_mode', 'TEXT');
+  addColumnIfMissing(db, 'interactions', 'content_structure', 'TEXT');
+  addColumnIfMissing(db, 'original_posts', 'content_structure', 'TEXT');
   // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');
 
