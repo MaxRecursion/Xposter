@@ -149,3 +149,111 @@ describe('generateOriginalPost', () => {
     expect(prompt).toContain('Do not include the source URL');
   });
 });
+
+// Over-length farm and quote drafts used to throw on the first attempt, which
+// burned the scheduled slot for the day. They now get a repair prompt, then a
+// trim, and only fail when the draft is far past any salvageable length.
+describe('single-tweet length repair', () => {
+  const overlongFarmDraft =
+    `${'Pune traffic is a policy failure dressed up as bad luck. '.repeat(5)}Who actually pays for it?`;
+  const validFarmDraft =
+    'Pune traffic is a policy failure dressed up as bad luck. Every flyover buys two years of quiet. Who actually pays for it?';
+
+  beforeEach(() => {
+    process.env.GROQ_API_KEY = 'test-key-mock';
+    process.env.GROQ_MODEL = 'llama-3.3-70b-versatile';
+    process.env.LOG_PROMPTS = 'false';
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it('re-prompts an over-length engagement farm draft and takes the shorter rewrite', async () => {
+    expect(Array.from(overlongFarmDraft).length).toBeGreaterThan(280);
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate
+      .mockResolvedValueOnce({ choices: [{ message: { content: overlongFarmDraft } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: validFarmDraft } }] });
+
+    const { generateEngagementFarmPost } = await import('../../src/pipeline/original_post_generator.js');
+    const result = await generateEngagementFarmPost({ engagementMode: 'NONE' });
+
+    expect(result.content).toBe(validFarmDraft);
+    expect(__mockCreate).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = __mockCreate.mock.calls[1][0].messages.find((m: any) => m.role === 'user').content;
+    expect(retryPrompt).toContain('was rejected');
+    expect(retryPrompt).toContain('at most 280 characters');
+  });
+
+  it('trims to fit when every engagement farm attempt overshoots', async () => {
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate.mockResolvedValue({ choices: [{ message: { content: overlongFarmDraft } }] });
+
+    const { generateEngagementFarmPost } = await import('../../src/pipeline/original_post_generator.js');
+    const result = await generateEngagementFarmPost({ engagementMode: 'NONE' });
+
+    expect(Array.from(result.content).length).toBeLessThanOrEqual(280);
+    expect(result.content).toMatch(/[.!?]$/);
+    expect(result.parts).toEqual([result.content]);
+    expect(__mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('still fails a draft too far over budget to trim into a post', async () => {
+    const essay = 'Pune traffic is a policy failure dressed up as bad luck. '.repeat(20);
+    expect(Array.from(essay).length).toBeGreaterThan(280 * 3);
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate.mockResolvedValue({ choices: [{ message: { content: essay } }] });
+
+    const { generateEngagementFarmPost } = await import('../../src/pipeline/original_post_generator.js');
+
+    await expect(generateEngagementFarmPost({ engagementMode: 'NONE' }))
+      .rejects.toThrow(/Engagement farm post failed length check/);
+  });
+
+  it('re-prompts an over-length quote tweet draft', async () => {
+    const overlongCommentary =
+      `${'The real shift is not fewer jobs but a much higher premium on judgment. '.repeat(4)}Who retrains first?`;
+    const validCommentary = 'The real shift is not fewer jobs, but a much higher premium on judgment. Who retrains first?';
+    expect(Array.from(overlongCommentary).length).toBeGreaterThan(250);
+
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate
+      .mockResolvedValueOnce({ choices: [{ message: { content: overlongCommentary } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: validCommentary } }] });
+
+    const { generateQuoteTweetPost } = await import('../../src/pipeline/original_post_generator.js');
+    const now = Math.floor(Date.now() / 1000);
+    const result = await generateQuoteTweetPost({
+      id: 'source-post',
+      tweet_id: '1723456789012347001',
+      author_handle: 'source_author',
+      author_name: 'Source Author',
+      text: 'AI automation is changing hiring across Pune startups.',
+      language: 'english',
+      timestamp: now - 300,
+      likes: 50,
+      replies: 8,
+      retweets: 5,
+      tweet_url: 'https://x.com/source_author/status/1723456789012347001',
+      status: 'INGESTED',
+      score: null,
+      score_breakdown: null,
+      generated_reply: null,
+      final_reply: null,
+      posted_tweet_id: null,
+      deleted_at: null,
+      posting_attempts: 0,
+      retry_after: null,
+      last_error: null,
+      ingested_at: now - 300,
+      updated_at: now - 300,
+    }, { engagementMode: 'NONE' });
+
+    expect(result.content).toBe(validCommentary);
+    expect(Array.from(result.content).length).toBeLessThanOrEqual(250);
+    expect(__mockCreate).toHaveBeenCalledTimes(2);
+  });
+});

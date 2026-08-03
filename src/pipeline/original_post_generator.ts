@@ -6,7 +6,7 @@ import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js'
 import { EmptyReplyError } from './errors.js';
 import { logger } from '../utils/logger.js';
 import { logPromptToConsole } from './prompt_logger.js';
-import { assertEnglishOnly, charLength, cleanModelText } from './text_constraints.js';
+import { assertEnglishOnly, charLength, cleanModelText, fitToCharBudget } from './text_constraints.js';
 import { type ValidationResult } from './agentic_generator.js';
 import {
   baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
@@ -20,6 +20,12 @@ const MAX_THREAD_PARTS = 3;
 const MAX_THREAD_CHARS = MAX_ORIGINAL_CHARS * MAX_THREAD_PARTS;
 const MAX_QUOTE_COMMENTARY_CHARS = 250;
 const MAX_REPAIR_ATTEMPTS = 2;
+/**
+ * A draft this far past its budget means the model answered a different
+ * question — an essay, a preamble, a numbered list. Trimming that produces a
+ * fragment, not a post, so those still fail.
+ */
+const MAX_SALVAGE_RATIO = 3;
 
 export type PostLanguage = 'english';
 
@@ -287,7 +293,7 @@ const ENGAGEMENT_FARM_USER = `Write a single short X (Twitter) post that:
 - Ends with an open question that invites people to reply and debate
 - Write entirely in sharp, polished English. No Marathi, no Hindi, no Devanagari.
 - Include 0-1 relevant hashtags
-- Under 280 characters total
+- Aim for 200-240 characters; 280 is a hard limit that must never be exceeded
 - NO "💯", NO motivational openers like "In today's world", NO "food for thought"
 - Sound like a real Punekar venting, not an AI
 
@@ -300,7 +306,7 @@ const ENGAGEMENT_FARM_STRATEGIC_USER = `Write a single short X (Twitter) post th
 - Ends with an open question that invites people to reply and debate
 - Write entirely in sharp, polished English. No Marathi, no Hindi, no Devanagari.
 - Include zero or one relevant hashtag
-- Under 280 characters total
+- Aim for 200-240 characters; 280 is a hard limit that must never be exceeded
 - NO "💯", NO motivational openers like "In today's world", NO "food for thought"
 - Sound like a real Punekar close to the tech ecosystem, not an AI
 - Never punch on caste, religion, gender, or region-as-insult
@@ -336,6 +342,104 @@ async function generatePostText(opts: {
   });
 }
 
+interface CharBudget {
+  min: number;
+  max: number;
+}
+
+/**
+ * Generates a single-tweet post, re-prompting when the draft misses its
+ * character budget and trimming as a last resort.
+ *
+ * The original-post path has always re-prompted on a failed quality gate, but
+ * farms and quote tweets took the first draft and threw — and an overshoot of
+ * twenty characters burned the scheduled slot for the day (two reschedules,
+ * then ERROR). Both now get told exactly how far over they went, and a draft
+ * that survives the retries is trimmed rather than thrown away.
+ */
+async function generateWithinBudget(opts: {
+  taskName: string;
+  /** Prefixes the thrown error and log lines, e.g. "Engagement farm post". */
+  label: string;
+  system: string;
+  userPrompt: string;
+  budget: CharBudget;
+  groq: GroqCallOptions;
+  logContext?: Record<string, unknown>;
+  onAttempt?: (attempt: number, prompt: string) => void;
+}): Promise<string> {
+  const { budget, label } = opts;
+
+  // Also handed to the agentic runner so it self-corrects before we see the text.
+  const validate = (raw: string): ValidationResult => {
+    const text = cleanModelText(raw);
+    const chars = charLength(text);
+    if (chars === 0) return { ok: false, reason: 'empty text' };
+    if (chars < budget.min) return { ok: false, reason: `too short (${chars} chars, minimum ${budget.min})` };
+    if (chars > budget.max) return { ok: false, reason: `too long (${chars} chars, maximum ${budget.max})` };
+    return { ok: true, text };
+  };
+
+  let lastDraft = '';
+  let lastReason = '';
+
+  for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
+    const prompt = attempt === 1
+      ? opts.userPrompt
+      : [
+        opts.userPrompt,
+        '',
+        `Your previous draft was rejected: ${lastReason}.`,
+        `Rewrite it as ONE post of at most ${budget.max} characters.`,
+        'Keep the angle, the voice, and the closing question — cut the setup and the description, not the hook.',
+      ].join('\n');
+
+    opts.onAttempt?.(attempt, prompt);
+
+    let cleaned: string;
+    try {
+      cleaned = cleanModelText(await generatePostText({
+        taskName: opts.taskName,
+        system: opts.system,
+        userPrompt: prompt,
+        groq: opts.groq,
+        logContext: { ...opts.logContext, attempt },
+        agenticTask: { validate },
+      }));
+    } catch (err) {
+      // An empty provider response is worth one more roll, not an immediate skip.
+      if (!(err instanceof EmptyReplyError)) throw err;
+      lastReason = 'empty response';
+      continue;
+    }
+
+    const verdict = validate(cleaned);
+    if (verdict.ok) return verdict.text;
+
+    lastDraft = cleaned;
+    lastReason = verdict.reason;
+    logger.warn(`${label} draft rejected`, {
+      ...opts.logContext, attempt, reason: verdict.reason, chars: charLength(cleaned),
+    });
+  }
+
+  if (!lastDraft) throw new EmptyReplyError(`${label} returned empty reply`);
+
+  const chars = charLength(lastDraft);
+  if (chars <= budget.max * MAX_SALVAGE_RATIO) {
+    const salvaged = fitToCharBudget(lastDraft, budget.max, budget.min);
+    if (salvaged) {
+      logEvent('POST_LENGTH_SALVAGED', `${label}: ${chars} → ${charLength(salvaged)} chars (max ${budget.max})`);
+      logger.warn(`${label} trimmed to fit after repair attempts`, {
+        ...opts.logContext, from: chars, to: charLength(salvaged), max: budget.max,
+      });
+      return salvaged;
+    }
+  }
+
+  throw new Error(`${label} failed length check: ${chars} chars`);
+}
+
 export async function generateQuoteTweetPost(
   source: Post,
   options: OriginalGenerationOptions = {},
@@ -352,30 +456,30 @@ export async function generateQuoteTweetPost(
     'Source post:',
     source.text,
     '',
-    `Write quote-tweet commentary under ${MAX_QUOTE_COMMENTARY_CHARS} characters.`,
+    `Write quote-tweet commentary of about 180 characters — ${MAX_QUOTE_COMMENTARY_CHARS} is a hard limit, never exceed it.`,
     'Do not include the source URL; X will attach the quoted post automatically.',
   ].join('\n');
   const userPrompt = appendAvoidancePrompt(basePrompt, options.avoidTexts);
 
-  logPromptToConsole('QUOTE_TWEET', `${source.tweet_id} bait=${engagementMode}`, system, userPrompt);
-
-  const raw = await generatePostText({
+  const cleaned = await generateWithinBudget({
     taskName: 'generateQuoteTweetPost',
+    label: 'Quote tweet commentary',
     system,
     userPrompt,
+    budget: { min: 15, max: MAX_QUOTE_COMMENTARY_CHARS },
     groq: {
       maxCompletionTokens: 1000,
       temperature: engagementMode === 'NONE' ? 0.85 : 0.95,
     },
     logContext: { tweetId: source.tweet_id, engagementMode },
+    onAttempt: (attempt, prompt) => logPromptToConsole(
+      'QUOTE_TWEET',
+      `${source.tweet_id} bait=${engagementMode} attempt=${attempt}`,
+      system,
+      prompt,
+    ),
   });
 
-  const cleaned = cleanModelText(raw);
-  const chars = charLength(cleaned);
-  if (chars === 0) throw new EmptyReplyError('Quote tweet returned empty reply');
-  if (chars < 15 || chars > MAX_QUOTE_COMMENTARY_CHARS) {
-    throw new Error(`Quote tweet commentary failed length check: ${chars} chars`);
-  }
   assertEnglishOnly(cleaned, 'Quote tweet');
 
   return {
@@ -404,30 +508,28 @@ export async function generateEngagementFarmPost(
   const userPrompt = appendAvoidancePrompt(baseUserPrompt, options.avoidTexts);
 
   logger.info('Generating engagement farm post', { strategic, engagementMode });
-  logPromptToConsole('ENGAGEMENT_FARM', `${strategic ? 'strategic' : 'hot-take'} bait=${engagementMode}`, system, userPrompt);
 
-  const raw = await generatePostText({
+  const cleaned = await generateWithinBudget({
     taskName: 'generateEngagementFarmPost',
+    label: 'Engagement farm post',
     system,
     userPrompt,
+    budget: { min: 30, max: MAX_ORIGINAL_CHARS },
     groq: { maxCompletionTokens: 6000, temperature: 0.95 },
     logContext: { strategic, engagementMode },
+    onAttempt: (attempt, prompt) => logPromptToConsole(
+      'ENGAGEMENT_FARM',
+      `${strategic ? 'strategic' : 'hot-take'} bait=${engagementMode} attempt=${attempt}`,
+      system,
+      prompt,
+    ),
   });
 
-  const cleaned = cleanModelText(raw);
-  const chars = charLength(cleaned);
-
-  if (chars === 0) {
-    logger.warn('Engagement farm: empty response, skipping this run');
-    throw new EmptyReplyError('Engagement farm returned empty reply');
-  }
   assertEnglishOnly(cleaned, 'Engagement farm');
 
-  if (chars < 30 || chars > 280) {
-    throw new Error(`Engagement farm post failed length check: ${chars} chars`);
-  }
-
-  logger.info('Engagement farm post generated', { chars, preview: cleaned.slice(0, 60), engagementMode });
+  logger.info('Engagement farm post generated', {
+    chars: charLength(cleaned), preview: cleaned.slice(0, 60), engagementMode,
+  });
 
   return {
     content: cleaned,
