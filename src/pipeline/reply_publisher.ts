@@ -14,7 +14,7 @@ export async function publishReply(
   post: Post,
   replyText: string,
   classification: string | null,
-  options: { attemptAlreadyCounted?: boolean } = {},
+  options: { attemptAlreadyCounted?: boolean; contentStructure?: string } = {},
 ): Promise<PublishReplyOutcome> {
   const attempts = options.attemptAlreadyCounted
     ? (getPost(post.id)?.posting_attempts ?? post.posting_attempts)
@@ -51,6 +51,7 @@ export async function publishReply(
   recordInteraction(post.id, post.author_handle, replyText, {
     tweetId: replyTweetId ?? undefined,
     tweetUrl: replyTweetId ? `https://x.com/i/web/status/${replyTweetId}` : undefined,
+    contentStructure: options.contentStructure,
   });
   logEvent('POSTED', `reply_id=${replyTweetId ?? 'unknown'} attempt=${attempts}`, post.id);
 

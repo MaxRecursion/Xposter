@@ -15,6 +15,7 @@ export interface Interaction {
   last_metric_check: number | null;
   success_score: number;
   author_engaged: number;
+  content_structure: string | null;
   notes: string | null;
 }
 
@@ -22,7 +23,7 @@ export function recordInteraction(
   postId: string,
   accountHandle: string,
   replyText: string,
-  posted: { tweetId?: string; tweetUrl?: string } = {},
+  posted: { tweetId?: string; tweetUrl?: string; contentStructure?: string } = {},
 ): number {
   const db = getDb();
 
@@ -39,9 +40,16 @@ export function recordInteraction(
 
   const result = db.prepare(`
     INSERT INTO interactions (
-      post_id, account_handle, our_reply_text, our_tweet_id, our_tweet_url
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(postId, accountHandle, replyText, posted.tweetId ?? null, posted.tweetUrl ?? null);
+      post_id, account_handle, our_reply_text, our_tweet_id, our_tweet_url, content_structure
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    postId,
+    accountHandle,
+    replyText,
+    posted.tweetId ?? null,
+    posted.tweetUrl ?? null,
+    posted.contentStructure ?? null,
+  );
 
   return result.lastInsertRowid as number;
 }

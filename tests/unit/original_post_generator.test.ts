@@ -17,7 +17,10 @@ vi.mock('../../src/storage/queries.js', () => ({
   logEvent: vi.fn(),
   // agentic_generator (imported by the generator) reads the agentic_generation
   // setting; returning the fallback keeps the agentic path disabled in tests.
-  getSetting: (_key: string, fallback: string) => fallback,
+  getSetting: (key: string, fallback: string) => {
+    if (key === 'human_likeness_gate') return 'false';
+    return fallback;
+  },
 }));
 
 vi.mock('../../src/context/enrich.js', () => ({
@@ -57,13 +60,15 @@ describe('generateOriginalPost', () => {
 
   it('turns an over-280 draft into a sentence-boundary thread', async () => {
     expect(Array.from(slightlyLongDraft).length).toBeGreaterThan(280);
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('human_likeness_gate', 'false');
     const { __mockCreate } = await import('groq-sdk') as any;
-    __mockCreate.mockResolvedValueOnce({
+    __mockCreate.mockResolvedValue({
       choices: [{ message: { content: slightlyLongDraft } }],
     });
 
     const { generateOriginalPost } = await import('../../src/pipeline/original_post_generator.js');
-    const result = await generateOriginalPost();
+    const result = await generateOriginalPost({ engagementMode: 'NONE' });
 
     expect(result.content).toBe(slightlyLongDraft);
     expect(result.parts.length).toBeGreaterThanOrEqual(2);

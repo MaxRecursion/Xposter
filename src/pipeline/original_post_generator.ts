@@ -10,8 +10,12 @@ import { assertEnglishOnly, charLength, cleanModelText, fitToCharBudget } from '
 import { type ValidationResult } from './agentic_generator.js';
 import {
   baitGuidanceFor, decideEngagementBait, getEngagementBaitPct, isBlockedForBait,
-  type EngagementMode,
+  pickBaitStructure, type EngagementMode,
 } from './engagement_bait.js';
+import {
+  checkHumanLikeness, getBaitCandidateCount, HUMAN_TEXTURE_RULES,
+  humanLikenessScore, pickBestCandidate, type ContentStructure,
+} from './human_likeness.js';
 import { getOriginalBaitCountsToday } from '../storage/original_posts.js';
 import { generateText, type GroqCallOptions } from './llm_runner.js';
 
@@ -37,6 +41,7 @@ export interface GeneratedOriginalPost {
   category: TopicCategory;
   researchContext: string;
   engagementMode?: EngagementMode;
+  contentStructure?: ContentStructure;
 }
 
 export interface OriginalGenerationOptions {
@@ -116,7 +121,7 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
 
 // ── Quality gate ──────────────────────────────────────────────────────────────
 
-function qualityCheck(content: string): string | null {
+function qualityCheck(content: string, opts: { avoidTexts?: string[] } = {}): string | null {
   const chars = charLength(content);
   if (chars < 20) return `too short (${chars} chars)`;
   if (chars > MAX_THREAD_CHARS) return `too long for a 3-post thread (${chars} chars)`;
@@ -130,6 +135,8 @@ function qualityCheck(content: string): string | null {
   if (parts.some((part) => charLength(part) > MAX_ORIGINAL_CHARS)) {
     return 'contains a thread part over 280 characters';
   }
+  const humanIssue = checkHumanLikeness(content, { avoidTexts: opts.avoidTexts });
+  if (humanIssue) return humanIssue;
   return null;
 }
 
@@ -279,7 +286,66 @@ ${SHARED_RULES}`;
 
 function buildSystemPrompt(category: TopicCategory): string {
   if (category === 'pune-tech-economy') return SYSTEM_BASE_PUNE_TECH_ECONOMY;
-  return category === 'local-pune' ? SYSTEM_BASE_PUNE : SYSTEM_BASE_GENERAL;
+  const base = category === 'local-pune' ? SYSTEM_BASE_PUNE : SYSTEM_BASE_GENERAL;
+  return [base, HUMAN_TEXTURE_RULES].join('\n\n');
+}
+
+async function generateRankedBaitDraft(opts: {
+  taskName: string;
+  label: string;
+  system: string;
+  userPrompt: string;
+  budget: CharBudget;
+  groq: GroqCallOptions;
+  engagementMode: EngagementMode;
+  flavor?: 'pune' | 'general';
+  avoidTexts?: string[];
+  logContext?: Record<string, unknown>;
+  onAttempt?: (attempt: number, prompt: string) => void;
+}): Promise<{ text: string; contentStructure: ContentStructure }> {
+  const candidateCount = opts.engagementMode !== 'NONE'
+    ? Math.max(1, getBaitCandidateCount())
+    : 1;
+  const likenessOpts = {
+    engagementMode: opts.engagementMode,
+    flavor: opts.flavor ?? 'pune',
+    avoidTexts: opts.avoidTexts ?? [],
+  };
+  const candidates: string[] = [];
+
+  for (let i = 0; i < candidateCount; i++) {
+    const temp = (opts.groq.temperature ?? 0.9) + i * 0.04;
+    const text = await generateWithinBudget({
+      ...opts,
+      groq: { ...opts.groq, temperature: Math.min(temp, 0.98) },
+      logContext: { ...opts.logContext, candidate: i + 1, candidateCount },
+    });
+    candidates.push(text);
+  }
+
+  let picked = pickBestCandidate(candidates, likenessOpts);
+  let humanIssue = checkHumanLikeness(picked.text, likenessOpts);
+
+  if (humanIssue) {
+    const retry = await generateWithinBudget({
+      ...opts,
+      userPrompt: [
+        opts.userPrompt,
+        '',
+        `Previous draft failed human-likeness check (${humanIssue}). Rewrite with a more natural voice.`,
+        'Avoid engagement-farm openers and AI-slop phrases.',
+      ].join('\n'),
+      groq: { ...opts.groq, temperature: Math.min((opts.groq.temperature ?? 0.9) + 0.06, 0.98) },
+      logContext: { ...opts.logContext, humanRetry: true },
+    });
+    const retryPicked = pickBestCandidate([picked.text, retry], likenessOpts);
+    if (!checkHumanLikeness(retryPicked.text, likenessOpts)
+      || humanLikenessScore(retryPicked.text, likenessOpts) > picked.score) {
+      picked = retryPicked;
+    }
+  }
+
+  return { text: picked.text, contentStructure: picked.structure };
 }
 
 // ── Engagement farm ───────────────────────────────────────────────────────────
@@ -288,13 +354,13 @@ const ENGAGEMENT_FARM_SYSTEM = `You are a sharp-tongued Punekar with strong opin
 
 const ENGAGEMENT_FARM_USER = `Write a single short X (Twitter) post that:
 - Makes a provocative hot take on ONE safe topic: business/money, Pune civic life, traffic/metro, education/hiring, tech/startup theatre, housing costs
-- Use either a CLICKBAIT curiosity gap ("The part about Hinjewadi salaries nobody says out loud:") OR a RAGEBAIT challenge ("Change my mind: X is the real reason Y is broken")
+- Sound mid-conversation, not like a headline — curiosity or friction should feel organic, not labeled
 - The take can be edgy — controversial but not hateful, not about caste/religion/gender/region-as-insult
-- Ends with an open question that invites people to reply and debate
+- Ends with an open question or blunt statement that invites people to reply
 - Write entirely in sharp, polished English. No Marathi, no Hindi, no Devanagari.
 - Include 0-1 relevant hashtags
 - Aim for 200-240 characters; 280 is a hard limit that must never be exceeded
-- NO "💯", NO motivational openers like "In today's world", NO "food for thought"
+- NO "💯", NO motivational openers like "In today's world", NO "food for thought", NO "Change my mind:", NO "The part about X:"
 - Sound like a real Punekar venting, not an AI
 
 Reply with ONLY the tweet text, nothing else.`;
@@ -302,8 +368,8 @@ Reply with ONLY the tweet text, nothing else.`;
 const ENGAGEMENT_FARM_STRATEGIC_USER = `Write a single short X (Twitter) post that:
 - Makes a provocative but fair hot take about how AI, automation, startup funding, hiring, or macro economy shifts are affecting Pune/Maharashtra
 - Connects the take to a concrete local signal: Hinjewadi, Pune IT services, GCCs, founders, campus placements, salaries, housing, MSMEs, Chakan/MIDC, or Maharashtra policy
-- Frame it as either a curiosity gap or a "change my mind" challenge so people reply
-- Ends with an open question that invites people to reply and debate
+- Frame it as organic curiosity or blunt friction — no colon-title hooks, no "Change my mind:"
+- Ends with an open question or statement that invites people to reply
 - Write entirely in sharp, polished English. No Marathi, no Hindi, no Devanagari.
 - Include zero or one relevant hashtag
 - Aim for 200-240 characters; 280 is a hard limit that must never be exceeded
@@ -448,7 +514,12 @@ export async function generateQuoteTweetPost(
     topicText: source.text,
     forcedMode: options.engagementMode,
   });
-  const system = [QUOTE_TWEET_SYSTEM, baitGuidanceFor(engagementMode)].filter(Boolean).join('\n\n');
+  const baitStructure = engagementMode !== 'NONE' ? pickBaitStructure() : undefined;
+  const system = [
+    QUOTE_TWEET_SYSTEM,
+    HUMAN_TEXTURE_RULES,
+    baitGuidanceFor(engagementMode, { structure: baitStructure }),
+  ].filter(Boolean).join('\n\n');
   const basePrompt = [
     `Source author: @${source.author_handle}`,
     `Source engagement: ${source.likes} likes, ${source.replies} replies, ${source.retweets} reposts`,
@@ -461,7 +532,7 @@ export async function generateQuoteTweetPost(
   ].join('\n');
   const userPrompt = appendAvoidancePrompt(basePrompt, options.avoidTexts);
 
-  const cleaned = await generateWithinBudget({
+  const ranked = await generateRankedBaitDraft({
     taskName: 'generateQuoteTweetPost',
     label: 'Quote tweet commentary',
     system,
@@ -471,6 +542,9 @@ export async function generateQuoteTweetPost(
       maxCompletionTokens: 1000,
       temperature: engagementMode === 'NONE' ? 0.85 : 0.95,
     },
+    engagementMode,
+    flavor: 'general',
+    avoidTexts: options.avoidTexts,
     logContext: { tweetId: source.tweet_id, engagementMode },
     onAttempt: (attempt, prompt) => logPromptToConsole(
       'QUOTE_TWEET',
@@ -479,6 +553,7 @@ export async function generateQuoteTweetPost(
       prompt,
     ),
   });
+  const cleaned = ranked.text;
 
   assertEnglishOnly(cleaned, 'Quote tweet');
 
@@ -490,6 +565,7 @@ export async function generateQuoteTweetPost(
     category: 'observation',
     researchContext: source.text,
     engagementMode,
+    contentStructure: ranked.contentStructure,
   };
 }
 
@@ -502,20 +578,28 @@ export async function generateEngagementFarmPost(
     forceBait: true,
     forcedMode: options.engagementMode,
   });
-  const system = [ENGAGEMENT_FARM_SYSTEM, baitGuidanceFor(engagementMode)].filter(Boolean).join('\n\n');
+  const baitStructure = pickBaitStructure();
+  const system = [
+    ENGAGEMENT_FARM_SYSTEM,
+    HUMAN_TEXTURE_RULES,
+    baitGuidanceFor(engagementMode, { structure: baitStructure }),
+  ].filter(Boolean).join('\n\n');
   const strategic = Math.random() < 0.40;
   const baseUserPrompt = strategic ? ENGAGEMENT_FARM_STRATEGIC_USER : ENGAGEMENT_FARM_USER;
   const userPrompt = appendAvoidancePrompt(baseUserPrompt, options.avoidTexts);
 
   logger.info('Generating engagement farm post', { strategic, engagementMode });
 
-  const cleaned = await generateWithinBudget({
+  const ranked = await generateRankedBaitDraft({
     taskName: 'generateEngagementFarmPost',
     label: 'Engagement farm post',
     system,
     userPrompt,
     budget: { min: 30, max: MAX_ORIGINAL_CHARS },
     groq: { maxCompletionTokens: 6000, temperature: 0.95 },
+    engagementMode,
+    flavor: 'pune',
+    avoidTexts: options.avoidTexts,
     logContext: { strategic, engagementMode },
     onAttempt: (attempt, prompt) => logPromptToConsole(
       'ENGAGEMENT_FARM',
@@ -524,11 +608,13 @@ export async function generateEngagementFarmPost(
       prompt,
     ),
   });
+  const cleaned = ranked.text;
 
   assertEnglishOnly(cleaned, 'Engagement farm');
 
   logger.info('Engagement farm post generated', {
     chars: charLength(cleaned), preview: cleaned.slice(0, 60), engagementMode,
+    contentStructure: ranked.contentStructure,
   });
 
   return {
@@ -539,6 +625,7 @@ export async function generateEngagementFarmPost(
     category: strategic ? 'pune-tech-economy' : 'observation',
     researchContext: '',
     engagementMode,
+    contentStructure: ranked.contentStructure,
   };
 }
 
@@ -554,9 +641,10 @@ export async function generateOriginalPost(
     forcedMode: options.engagementMode,
   });
 
-  const systemPrompt = [
+  const baitStructure = engagementMode !== 'NONE' ? pickBaitStructure() : undefined;
+  const systemPromptText = [
     buildSystemPrompt(category),
-    baitGuidanceFor(engagementMode),
+    baitGuidanceFor(engagementMode, { structure: baitStructure }),
   ].filter(Boolean).join('\n\n');
 
   const userPrompt = appendAvoidancePrompt([
@@ -575,17 +663,26 @@ export async function generateOriginalPost(
 
   logger.info('Generating original post', { topic, category, engagementMode });
 
-  const callModel = async (sysPr: string, userPr: string): Promise<string> => generatePostText({
+  const candidateCount = engagementMode !== 'NONE'
+    ? Math.max(1, getBaitCandidateCount())
+    : 1;
+  const likenessOpts = {
+    engagementMode,
+    flavor: category === 'local-pune' || category === 'pune-tech-economy' ? 'pune' as const : 'general' as const,
+    avoidTexts: options.avoidTexts ?? [],
+  };
+
+  const callModel = async (sysPr: string, userPr: string, temp = 0.85): Promise<string> => generatePostText({
     taskName: 'generateOriginalPost',
     system: sysPr,
     userPrompt: userPr,
-    groq: { maxCompletionTokens: 6000, temperature: 0.85 },
+    groq: { maxCompletionTokens: 6000, temperature: temp },
     logContext: { topic, category },
     agenticTask: {
       validate: (raw: string): ValidationResult => {
         const text = cleanModelText(raw);
         if (charLength(text) === 0) return { ok: false, reason: 'empty text' };
-        const qError = qualityCheck(text);
+        const qError = qualityCheck(text, { avoidTexts: likenessOpts.avoidTexts });
         return qError ? { ok: false, reason: qError } : { ok: true, text };
       },
     },
@@ -593,6 +690,7 @@ export async function generateOriginalPost(
 
   let cleaned = '';
   let lastQualityError: string | null = null;
+  let contentStructure: ContentStructure = 'standard';
 
   for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
     const attemptPrompt = attempt === 1
@@ -604,18 +702,31 @@ export async function generateOriginalPost(
         `Rewrite it as one tweet or a 2-3 tweet thread. Keep every part within ${MAX_ORIGINAL_CHARS} characters and preserve the angle.`,
       ].join('\n');
 
-    logPromptToConsole('ORIGINAL', `topic=${topic} cat=${category} bait=${engagementMode} attempt=${attempt}`, systemPrompt, attemptPrompt);
-    const raw = await callModel(systemPrompt, attemptPrompt);
-    cleaned = cleanModelText(raw);
+    const candidates: string[] = [];
+    for (let c = 0; c < candidateCount; c++) {
+      logPromptToConsole(
+        'ORIGINAL',
+        `topic=${topic} cat=${category} bait=${engagementMode} attempt=${attempt} candidate=${c + 1}`,
+        systemPromptText,
+        attemptPrompt,
+      );
+      const raw = await callModel(systemPromptText, attemptPrompt, 0.85 + c * 0.04);
+      const draft = cleanModelText(raw);
+      if (draft.length > 0) candidates.push(draft);
+    }
 
-    if (cleaned.length === 0) {
+    if (candidates.length === 0) {
       lastQualityError = 'empty response';
       if (attempt < MAX_REPAIR_ATTEMPTS) continue;
       logger.warn('Original post: empty response, skipping this run', { topic, category });
       throw new EmptyReplyError('Original post returned empty reply');
     }
 
-    const qError = qualityCheck(cleaned);
+    const picked = pickBestCandidate(candidates, likenessOpts);
+    cleaned = picked.text;
+    contentStructure = picked.structure;
+
+    const qError = qualityCheck(cleaned, { avoidTexts: likenessOpts.avoidTexts });
     if (!qError) {
       lastQualityError = null;
       break;
@@ -625,7 +736,6 @@ export async function generateOriginalPost(
     logger.warn('Original post draft failed quality check', {
       topic, category, attempt, qualityError: qError, chars: charLength(cleaned),
     });
-
   }
 
   if (lastQualityError) {
@@ -633,14 +743,15 @@ export async function generateOriginalPost(
   }
 
   logger.info('Original post generated', {
-    topic, category, chars: charLength(cleaned), preview: cleaned.slice(0, 60), engagementMode,
+    topic, category, chars: charLength(cleaned), preview: cleaned.slice(0, 60),
+    engagementMode, contentStructure,
   });
 
   assertEnglishOnly(cleaned, 'Original post');
   const parts = splitOriginalPostThread(cleaned);
   return {
     content: cleaned, parts, language: 'english', topic, category,
-    researchContext: context, engagementMode,
+    researchContext: context, engagementMode, contentStructure,
   };
 }
 

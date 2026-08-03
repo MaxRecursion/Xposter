@@ -515,6 +515,9 @@ async function loadSettings() {
     if ($('s-trend-ratio'))         $('s-trend-ratio').value         = s.trend_reply_ratio ?? '70';
     if ($('s-contrarian-pct'))      $('s-contrarian-pct').value      = s.contrarian_reply_pct ?? '33';
     if ($('s-bait-pct'))            $('s-bait-pct').value            = s.engagement_bait_pct ?? '30';
+    if ($('s-bait-style'))          $('s-bait-style').value          = s.bait_style ?? 'implicit';
+    if ($('s-bait-candidates'))     $('s-bait-candidates').value     = s.bait_candidate_count ?? '2';
+    if ($('s-human-gate'))          $('s-human-gate').checked        = s.human_likeness_gate !== 'false';
     if ($('s-image-enabled'))       $('s-image-enabled').checked     = s.image_posts_enabled !== 'false';
     if ($('s-image-per-day'))       $('s-image-per-day').value       = s.image_posts_per_day ?? '1';
     if ($('s-image-qa'))            $('s-image-qa').checked          = s.image_qa_enabled !== 'false';
@@ -1735,6 +1738,9 @@ document.addEventListener('DOMContentLoaded', () => {
           trend_reply_ratio:            $('s-trend-ratio')?.value,
           contrarian_reply_pct:         $('s-contrarian-pct')?.value,
           engagement_bait_pct:          $('s-bait-pct')?.value,
+          bait_style:                   $('s-bait-style')?.value,
+          bait_candidate_count:         $('s-bait-candidates')?.value,
+          human_likeness_gate:          $('s-human-gate')?.checked ? 'true' : 'false',
           image_posts_enabled:          $('s-image-enabled')?.checked ? 'true' : 'false',
           image_posts_per_day:          $('s-image-per-day')?.value,
           image_qa_enabled:             $('s-image-qa')?.checked ? 'true' : 'false',
