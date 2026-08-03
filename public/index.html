@@ -612,6 +612,29 @@
             <input type="number" id="s-bait-pct" min="0" max="100" />
             <span class="settings-field-help">Share of replies and original posts that use a curiosity-gap or debate-bait frame to earn impressions. Blocked on grief, hard news, and identity topics. Engagement-farm slots always count toward this quota.</span>
           </div>
+          <div class="settings-field">
+            <label>Bait style</label>
+            <select id="s-bait-style">
+              <option value="implicit">Implicit (natural hooks)</option>
+              <option value="explicit">Explicit (template hooks)</option>
+            </select>
+            <span class="settings-field-help">Implicit teaches curiosity/friction mechanics without colon-title hooks. Explicit restores the legacy "The part about X" / "Change my mind" frames.</span>
+          </div>
+          <div class="settings-field">
+            <label>Bait candidate drafts</label>
+            <input type="number" id="s-bait-candidates" min="1" max="3" />
+            <span class="settings-field-help">How many drafts to generate for bait slots; the best human-likeness score wins.</span>
+          </div>
+          <div class="settings-field settings-field-toggle">
+            <label for="s-human-gate">
+              <span>Human-likeness gate</span>
+              <span class="settings-field-help">Reject or regenerate drafts with AI-slop phrases, engagement-farm openers, or uniform polished prose.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-human-gate" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
         </div>
 
         <h3 class="section-h">Image Posts</h3>

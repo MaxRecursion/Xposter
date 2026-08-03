@@ -23,6 +23,7 @@ export interface OriginalPost {
   quoted_tweet_url: string | null;
   quoted_author_handle: string | null;
   engagement_mode: string | null;
+  content_structure: string | null;
   posted_at: number | null;
   created_at: number;
   updated_at: number;
@@ -59,6 +60,7 @@ export function insertOriginalPost(data: {
   researchContext?: string;
   threadParts?: string[];
   engagementMode?: string | null;
+  contentStructure?: string | null;
   quotedTweet?: {
     id: string;
     url: string;
@@ -69,9 +71,9 @@ export function insertOriginalPost(data: {
   getDb().prepare(`
     INSERT INTO original_posts (
       id, content, language, topic, post_type, research_context, thread_parts_json,
-      quoted_tweet_id, quoted_tweet_url, quoted_author_handle, engagement_mode
+      quoted_tweet_id, quoted_tweet_url, quoted_author_handle, engagement_mode, content_structure
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.content,
@@ -84,6 +86,7 @@ export function insertOriginalPost(data: {
     data.quotedTweet?.url ?? null,
     data.quotedTweet?.authorHandle ?? null,
     data.engagementMode ?? null,
+    data.contentStructure ?? null,
   );
   return getOriginalPost(id)!;
 }

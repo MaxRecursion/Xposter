@@ -13,7 +13,8 @@ import {
   getBaitTuningSnapshot,
   type TopPerformingPost,
 } from '../storage/engagement_performance.js';
-import { getIntSetting } from '../storage/settings.js';
+import { getIntSetting, getSetting } from '../storage/settings.js';
+import { getBaitStyle, type BaitStyle, type ContentStructure } from './human_likeness.js';
 
 export type EngagementMode = 'NONE' | 'CLICKBAIT' | 'RAGEBAIT';
 
@@ -38,6 +39,15 @@ export interface BaitDecision {
   mode: EngagementMode;
   reason: string;
 }
+
+export type BaitStructure = ContentStructure;
+
+const STRUCTURE_WEIGHTS: Array<{ structure: BaitStructure; weight: number }> = [
+  { structure: 'one_liner', weight: 30 },
+  { structure: 'setup_punch', weight: 30 },
+  { structure: 'rant_fragment', weight: 25 },
+  { structure: 'question_hook', weight: 15 },
+];
 
 /**
  * Heuristic: content that must never get a bait frame.
@@ -123,6 +133,32 @@ function pickBaitSubtype(
   return roll < clickProb ? 'CLICKBAIT' : 'RAGEBAIT';
 }
 
+/** Weighted random structural mode for bait posts/replies. */
+export function pickBaitStructure(rng: () => number = Math.random): BaitStructure {
+  const total = STRUCTURE_WEIGHTS.reduce((sum, row) => sum + row.weight, 0);
+  let roll = rng() * total;
+  for (const row of STRUCTURE_WEIGHTS) {
+    roll -= row.weight;
+    if (roll <= 0) return row.structure;
+  }
+  return 'setup_punch';
+}
+
+function structureGuidance(structure: BaitStructure): string {
+  switch (structure) {
+    case 'one_liner':
+      return 'STRUCTURE: ONE-LINER — single tight line under 140 chars. No preamble.';
+    case 'setup_punch':
+      return 'STRUCTURE: SETUP-PUNCH — two short lines; the second line lands the take.';
+    case 'rant_fragment':
+      return 'STRUCTURE: RANT-FRAGMENT — 2-3 breathless short clauses, slightly fed up, very specific.';
+    case 'question_hook':
+      return 'STRUCTURE: QUESTION-HOOK — build to one genuine question at the end (not a rhetorical pile-on).';
+    default:
+      return '';
+  }
+}
+
 /** Few-shot examples from top bait performers — refreshed each generation. */
 export function baitExamplesBlock(mode: EngagementMode): string {
   if (mode === 'NONE') return '';
@@ -141,7 +177,10 @@ export function baitExamplesBlock(mode: EngagementMode): string {
 function formatExamplesBlock(mode: EngagementMode, picks: TopPerformingPost[]): string {
   const lines = picks.map((p, i) => {
     const snippet = p.text.replace(/\s+/g, ' ').trim().slice(0, 220);
-    return `${i + 1}. [score ${p.score.toFixed(1)} · ${p.kind}] ${snippet}`;
+    const replyRate = p.impressions > 0
+      ? (p.replies / p.impressions * 100).toFixed(1)
+      : '?';
+    return `${i + 1}. [score ${p.score.toFixed(1)} · replyRate ${replyRate}% · ${p.kind}] ${snippet}`;
   });
   return [
     `RECENT HIGH-PERFORMING ${mode} EXAMPLES (match energy and structure, not exact words):`,
@@ -149,16 +188,31 @@ function formatExamplesBlock(mode: EngagementMode, picks: TopPerformingPost[]): 
   ].join('\n');
 }
 
-/**
- * Prompt overlay. Appended to the existing system prompt so anti-slop and
- * hard limits still apply.
- */
-export function baitGuidanceFor(mode: EngagementMode): string {
-  const examples = baitExamplesBlock(mode);
-  const examplesSuffix = examples ? `\n\n${examples}` : '';
+function implicitClickGuidance(examplesSuffix: string): string {
+  return `ENGAGEMENT INTENT: curiosity (this reply/post is in the engagement quota).
+Make the reader need the next line — but sound mid-conversation, not like a headline.
+- State one specific, true partial fact and stop before the full payoff.
+- Withhold one detail the reader wants (who, what changed, the number) without fabricating.
+- Conversational incompleteness beats teaser copy: trailing thought, mid-story entry.
+- No "nobody talks about", no "you won't believe", no colon-title hooks, no "The part about X:".
+- If it reads like a YouTube thumbnail, rewrite it.
+- Still no identity punches (caste/religion/gender/region/class/party). Situation and systems only.
+- Still human — no all-caps spam, no engagement-farm emoji bait.${examplesSuffix}`;
+}
 
-  if (mode === 'CLICKBAIT') {
-    return `ENGAGEMENT MODE: CLICKBAIT (use sparingly — this reply/post is in the engagement quota).
+function implicitRageGuidance(examplesSuffix: string): string {
+  return `ENGAGEMENT INTENT: friction (this reply/post is in the engagement quota).
+Take a confident position against a system, product, or civic failure — never a person or tribe.
+- Lead with a blunt critique, not a labeled debate prompt.
+- One concrete detail that proves you live this (a road, a salary, a delay, a product name).
+- Invite disagreement naturally ("Surely I'm not the only one who…") — no "Change my mind:".
+- NEVER rage about: caste, religion, gender, region-as-insult, disability, appearance, or a named private individual.
+- NEVER celebrate harm, grief, or tragedy. If the topic is sensitive, write a normal take instead.
+- Argue with systems and incentives, not tribes. No "everyone from X is…".${examplesSuffix}`;
+}
+
+function explicitClickGuidance(examplesSuffix: string): string {
+  return `ENGAGEMENT MODE: CLICKBAIT (use sparingly — this reply/post is in the engagement quota).
 Goal: maximize replies and profile clicks with a curiosity gap — not a lie.
 - Open with a hook that withholds the full punchline ("The part about X nobody mentions:", "Wait until you hear what happened after…", "This is why Y keeps failing:").
 - Make one SPECIFIC claim or observation that feels incomplete without a reply.
@@ -166,10 +220,10 @@ Goal: maximize replies and profile clicks with a curiosity gap — not a lie.
 - Never fabricate events, numbers, or quotes. Curiosity ≠ misinformation.
 - Still no identity punches (caste/religion/gender/region/class/party). Situation and systems only.
 - Still human — no "you won't BELIEVE", no all-caps spam, no engagement-farm emoji bait.${examplesSuffix}`;
-  }
+}
 
-  if (mode === 'RAGEBAIT') {
-    return `ENGAGEMENT MODE: RAGEBAIT (use sparingly — this reply/post is in the engagement quota).
+function explicitRageGuidance(examplesSuffix: string): string {
+  return `ENGAGEMENT MODE: RAGEBAIT (use sparingly — this reply/post is in the engagement quota).
 Goal: a sharp, disagreeable take that makes people hit reply — debate the CLAIM, not a person.
 - Take the strongest honest position on a SAFE topic: bureaucracy, product UX, traffic, weather, hiring, funding, metro delays, civic inefficiency, startup theatre.
 - Be specific and confident. Soft takes get scrolled past; a clear "X is the real problem" gets argued with.
@@ -177,9 +231,28 @@ Goal: a sharp, disagreeable take that makes people hit reply — debate the CLAI
 - NEVER rage about: caste, religion, gender, region-as-insult, disability, appearance, or a named private individual.
 - NEVER celebrate harm, grief, or tragedy. If the topic is sensitive, abandon this mode mentally and write a normal take.
 - Argue with systems and incentives, not tribes. No "everyone from X is…".${examplesSuffix}`;
-  }
+}
 
-  return '';
+/**
+ * Prompt overlay. Appended to the existing system prompt so anti-slop and
+ * hard limits still apply.
+ */
+export function baitGuidanceFor(
+  mode: EngagementMode,
+  opts: { structure?: BaitStructure; baitStyle?: BaitStyle } = {},
+): string {
+  if (mode === 'NONE') return '';
+
+  const baitStyle = opts.baitStyle ?? getBaitStyle();
+  const examples = baitExamplesBlock(mode);
+  const examplesSuffix = examples ? `\n\n${examples}` : '';
+  const structureBlock = opts.structure ? structureGuidance(opts.structure) : '';
+
+  const modeBlock = mode === 'CLICKBAIT'
+    ? (baitStyle === 'explicit' ? explicitClickGuidance(examplesSuffix) : implicitClickGuidance(examplesSuffix))
+    : (baitStyle === 'explicit' ? explicitRageGuidance(examplesSuffix) : implicitRageGuidance(examplesSuffix));
+
+  return [modeBlock, structureBlock].filter(Boolean).join('\n\n');
 }
 
 /** Logged after metric sync so the activity feed shows live tuning weights. */
@@ -190,6 +263,7 @@ export function describeBaitTuning(): string {
   const none = snap.mode_performance.find((r) => r.mode === 'NONE');
   const parts = [
     `clickProb=${snap.click_subtype_prob.toFixed(2)}`,
+    `baitStyle=${getSetting('bait_style', 'implicit')}`,
     click ? `CLICK n=${click.count} avg=${click.avg_score}` : 'CLICK n=0',
     rage ? `RAGE n=${rage.count} avg=${rage.avg_score}` : 'RAGE n=0',
     none ? `NONE n=${none.count} avg=${none.avg_score}` : 'NONE n=0',

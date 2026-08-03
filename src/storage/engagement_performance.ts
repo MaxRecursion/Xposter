@@ -288,12 +288,18 @@ function normalizeMode(mode: string): TrackedEngagementMode {
   return 'NONE';
 }
 
+/** Blend raw engagement score with reply-rate so few-shot examples earn arguments, not just views. */
+export function baitExampleRankScore(post: TopPerformingPost): number {
+  const replyRate = post.impressions > 0 ? post.replies / post.impressions : 0;
+  return post.score + replyRate * 500;
+}
+
 function mergeTopPosts(
   replies: TopPerformingReply[],
   originals: TopPerformingOriginal[],
   limit: number,
 ): TopPerformingPost[] {
   return [...replies, ...originals]
-    .sort((a, b) => b.score - a.score || b.posted_at - a.posted_at)
+    .sort((a, b) => baitExampleRankScore(b) - baitExampleRankScore(a) || b.posted_at - a.posted_at)
     .slice(0, limit);
 }
