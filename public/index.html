@@ -4,72 +4,111 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Xposter Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=VT323&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 </head>
 <body>
-  <div class="app">
-    <header>
-      <h1><span>X</span>POSTER</h1>
-      <span class="system-indicator" id="system-indicator"></span>
-      <span id="system-label" style="font-size:12px; color: var(--text2)">loading…</span>
+  <div class="ambient-bg" aria-hidden="true">
+    <div class="ambient-orb orb-1"></div>
+    <div class="ambient-orb orb-2"></div>
+    <div class="ambient-orb orb-3"></div>
+  </div>
 
-      <div class="header-actions">
-        <!-- Theme toggle (iOS-style) -->
-        <label class="toggle-group" title="Toggle light / dark">
+  <div class="app-shell" id="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark">X</div>
+        <div class="brand-copy">
+          <span class="brand-name">Xposter</span>
+          <span class="brand-tag">Command Center</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Dashboard sections">
+        <div class="nav-group">
+          <span class="nav-group-label">Content</span>
+          <button class="nav-item active" data-tab="queue"><span class="nav-icon">📥</span><span class="nav-label">Queue</span><span class="nav-badge" id="nav-badge-queue" hidden>0</span></button>
+          <button class="nav-item" data-tab="history"><span class="nav-icon">📜</span><span class="nav-label">History</span></button>
+          <button class="nav-item" data-tab="originals"><span class="nav-icon">✍️</span><span class="nav-label">Originals</span></button>
+        </div>
+        <div class="nav-group">
+          <span class="nav-group-label">Social</span>
+          <button class="nav-item" data-tab="followers"><span class="nav-icon">👥</span><span class="nav-label">Followers</span></button>
+          <button class="nav-item" data-tab="accounts"><span class="nav-icon">🏷️</span><span class="nav-label">Accounts</span></button>
+          <button class="nav-item" data-tab="audience"><span class="nav-icon">🕐</span><span class="nav-label">Activity</span></button>
+        </div>
+        <div class="nav-group">
+          <span class="nav-group-label">Intelligence</span>
+          <button class="nav-item" data-tab="analytics"><span class="nav-icon">📊</span><span class="nav-label">Analytics</span></button>
+          <button class="nav-item" data-tab="memory"><span class="nav-icon">🧠</span><span class="nav-label">Mind</span></button>
+          <button class="nav-item" data-tab="rag"><span class="nav-icon">📡</span><span class="nav-label">RAG</span></button>
+          <button class="nav-item" data-tab="agent"><span class="nav-icon">🤖</span><span class="nav-label">Agent</span></button>
+          <button class="nav-item" data-tab="console"><span class="nav-icon">💻</span><span class="nav-label">Console</span></button>
+        </div>
+        <div class="nav-group">
+          <span class="nav-group-label">System</span>
+          <button class="nav-item" data-tab="settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <label class="toggle-group sidebar-theme" title="Toggle light / dark">
           <span id="theme-icon">🌙</span>
           <span class="ios-switch">
             <input type="checkbox" id="theme-toggle" />
             <span class="ios-slider"></span>
           </span>
         </label>
-
-        <!-- System start/stop (iOS-style) -->
-        <label class="toggle-group" title="Pause / resume system">
-          <span>System</span>
-          <span class="ios-switch">
-            <input type="checkbox" id="system-toggle" />
-            <span class="ios-slider"></span>
-          </span>
-        </label>
-
-        <button class="btn btn-primary" id="btn-run">RUN NOW</button>
-        <button class="btn btn-ghost" id="btn-refresh" title="Refresh">↻</button>
       </div>
-    </header>
+    </aside>
 
-    <div class="main">
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <div class="main-wrapper">
+      <header class="topbar">
+        <button class="icon-btn sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Toggle navigation">☰</button>
+
+        <div class="topbar-status">
+          <span class="system-indicator" id="system-indicator"></span>
+          <span id="system-label" class="system-label">loading…</span>
+        </div>
+
+        <div class="topbar-actions">
+          <label class="toggle-group compact" title="Pause / resume system">
+            <span>System</span>
+            <span class="ios-switch">
+              <input type="checkbox" id="system-toggle" />
+              <span class="ios-slider"></span>
+            </span>
+          </label>
+          <button class="btn btn-primary btn-glow" id="btn-run" type="button">
+            <span class="btn-icon">▶</span>
+            <span>Run Now</span>
+          </button>
+          <button class="icon-btn" id="btn-refresh" type="button" title="Refresh">↻</button>
+        </div>
+      </header>
+
+      <main class="content-area">
       <!-- Stats -->
-      <div class="stats-bar" id="stats-bar">
-        <div class="stat-card"><div class="value" id="stat-pending">–</div><div class="label">Pending</div></div>
-        <div class="stat-card"><div class="value" id="stat-posted">–</div><div class="label">Posted</div></div>
-        <div class="stat-card"><div class="value" id="stat-skipped">–</div><div class="label">Skipped</div></div>
-        <div class="stat-card"><div class="value" id="stat-total">–</div><div class="label">Total (24h)</div></div>
-        <div class="stat-card"><div class="value" id="stat-followers">–</div><div class="label">New Followers</div></div>
+      <div class="stats-bar stagger-in" id="stats-bar">
+        <div class="stat-card" style="--i:0"><div class="value" id="stat-pending">–</div><div class="label">Pending</div></div>
+        <div class="stat-card" style="--i:1"><div class="value" id="stat-posted">–</div><div class="label">Posted</div></div>
+        <div class="stat-card" style="--i:2"><div class="value" id="stat-skipped">–</div><div class="label">Skipped</div></div>
+        <div class="stat-card" style="--i:3"><div class="value" id="stat-total">–</div><div class="label">Total (24h)</div></div>
+        <div class="stat-card" style="--i:4"><div class="value" id="stat-followers">–</div><div class="label">New Followers</div></div>
       </div>
 
       <!-- Schedule strip -->
-      <div class="schedule-strip" id="schedule-strip" style="display:none;">
-        <span class="schedule-label">Today's runs:</span>
+      <div class="schedule-strip fade-in" id="schedule-strip" style="display:none;">
+        <span class="schedule-label">Today's runs</span>
         <span id="schedule-times">–</span>
       </div>
 
-      <!-- Tabs -->
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="queue">Queue</button>
-        <button class="tab-btn" data-tab="followers">Followers</button>
-        <button class="tab-btn" data-tab="accounts">Accounts</button>
-        <button class="tab-btn" data-tab="originals">Originals</button>
-        <button class="tab-btn" data-tab="analytics">Analytics</button>
-        <button class="tab-btn" data-tab="audience">Activity</button>
-        <button class="tab-btn" data-tab="agent">Agent</button>
-        <button class="tab-btn" data-tab="history">History</button>
-        <button class="tab-btn" data-tab="console">Console</button>
-        <button class="tab-btn" data-tab="memory">Mind</button>
-        <button class="tab-btn" data-tab="rag">RAG</button>
-        <button class="tab-btn" data-tab="settings">Settings</button>
-      </div>
-
+      <!-- Tab panels (sidebar-driven) -->
       <!-- Queue Tab -->
       <div class="tab-content active" id="tab-queue">
         <div id="queue-list"></div>
@@ -662,6 +701,7 @@
           <div class="diag-row"><div class="key">loading…</div><div class="value"></div></div>
         </div>
       </div>
+      </main>
     </div>
   </div>
 

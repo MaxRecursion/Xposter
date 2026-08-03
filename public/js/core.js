@@ -3,12 +3,81 @@ const API_KEY_STORAGE = 'xposter:apiKey';
 
 function $(id) { return document.getElementById(id); }
 
+const TOAST_ICONS = { info: 'ℹ️', success: '✓', error: '✕', warn: '⚠' };
+
 function toast(msg, type = 'info') {
+  const container = $('toast-container');
+  if (!container) return;
+
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.textContent = msg;
-  $('toast-container').appendChild(el);
-  setTimeout(() => el.remove(), 4500);
+  el.innerHTML = `<span class="toast-icon">${TOAST_ICONS[type] ?? TOAST_ICONS.info}</span> ${escHtml(msg)}`;
+  container.appendChild(el);
+
+  const dismiss = () => {
+    if (!el.isConnected) return;
+    el.classList.add('toast-out');
+    setTimeout(() => el.remove(), 320);
+  };
+  setTimeout(dismiss, 4500);
+  el.addEventListener('click', dismiss);
+}
+
+function animateCounter(el, target, duration = 600) {
+  if (!el) return;
+  const end = Number(target) || 0;
+  const start = Number(el.dataset.value) || 0;
+  if (start === end) {
+    el.textContent = String(end);
+    el.dataset.value = String(end);
+    return;
+  }
+  const t0 = performance.now();
+  const step = (now) => {
+    const p = Math.min((now - t0) / duration, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const val = Math.round(start + (end - start) * eased);
+    el.textContent = String(val);
+    if (p < 1) requestAnimationFrame(step);
+    else el.dataset.value = String(end);
+  };
+  requestAnimationFrame(step);
+}
+
+function switchTab(tabId) {
+  document.querySelectorAll('.nav-item, .tab-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === tabId);
+  });
+  document.querySelectorAll('.tab-content').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `tab-${tabId}`);
+  });
+  closeSidebar();
+}
+
+function openSidebar() {
+  $('sidebar')?.classList.add('open');
+  $('sidebar-overlay')?.classList.add('visible');
+}
+function closeSidebar() {
+  $('sidebar')?.classList.remove('open');
+  $('sidebar-overlay')?.classList.remove('visible');
+}
+
+function initShell() {
+  $('sidebar-toggle')?.addEventListener('click', () => {
+    if ($('sidebar')?.classList.contains('open')) closeSidebar();
+    else openSidebar();
+  });
+  $('sidebar-overlay')?.addEventListener('click', closeSidebar);
+
+  const wireNav = (btn) => {
+    btn.addEventListener('click', () => {
+      if (!btn.dataset.tab) return;
+      switchTab(btn.dataset.tab);
+      document.dispatchEvent(new CustomEvent('xposter:tab', { detail: { tab: btn.dataset.tab } }));
+    });
+  };
+  document.querySelectorAll('.nav-item, .tab-btn').forEach(wireNav);
 }
 
 async function apiFetch(path, opts = {}) {

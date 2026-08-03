@@ -16,7 +16,7 @@ function renderPostCard(post, showActions = true) {
   const canEdit = isPending;
 
   return `
-    <div class="post-card" id="card-${post.id}">
+    <div class="post-card" id="card-${post.id}" style="--card-i:${typeof post._cardIndex === 'number' ? post._cardIndex : 0}">
       <div class="post-card-header">
         <div class="post-meta">
           <div class="post-author">${escHtml(post.author_name)}
@@ -138,7 +138,11 @@ async function regenerateReply(postId) {
 }
 
 function removeCard(postId) {
-  $(`card-${postId}`)?.remove();
+  const card = $(`card-${postId}`);
+  if (card) {
+    card.classList.add('card-exit');
+    setTimeout(() => card.remove(), 320);
+  }
   loadStats();
 }
 
@@ -154,11 +158,22 @@ window.updateCharCount = updateCharCount;
 async function loadStats() {
   try {
     const stats = await apiFetch('/api/posts/stats');
-    $('stat-pending').textContent = stats.PENDING_APPROVAL ?? 0;
-    $('stat-posted').textContent  = stats.POSTED ?? 0;
-    $('stat-skipped').textContent = stats.SKIPPED ?? 0;
+    animateCounter($('stat-pending'), stats.PENDING_APPROVAL ?? 0);
+    animateCounter($('stat-posted'), stats.POSTED ?? 0);
+    animateCounter($('stat-skipped'), stats.SKIPPED ?? 0);
     const total = Object.values(stats).reduce((s, v) => s + v, 0);
-    $('stat-total').textContent   = total;
+    animateCounter($('stat-total'), total);
+
+    const pending = stats.PENDING_APPROVAL ?? 0;
+    const badge = $('nav-badge-queue');
+    if (badge) {
+      if (pending > 0) {
+        badge.hidden = false;
+        badge.textContent = pending > 99 ? '99+' : String(pending);
+      } else {
+        badge.hidden = true;
+      }
+    }
   } catch { /* ignore */ }
 }
 
@@ -170,7 +185,7 @@ async function loadQueue() {
       el.innerHTML = `<div class="empty-state"><div class="icon">📭</div><div>No posts pending approval</div></div>`;
       return;
     }
-    el.innerHTML = posts.map((p) => renderPostCard(p, true)).join('');
+    el.innerHTML = posts.map((p, i) => renderPostCard({ ...p, _cardIndex: i }, true)).join('');
   } catch (e) {
     $('queue-list').innerHTML = `<div class="empty-state">Error: ${escHtml(e.message)}</div>`;
   }
@@ -185,7 +200,7 @@ async function loadHistory() {
       el.innerHTML = `<div class="empty-state"><div class="icon">📋</div><div>No history yet</div></div>`;
       return;
     }
-    el.innerHTML = nonPending.map((p) => renderPostCard(p, false)).join('');
+    el.innerHTML = nonPending.map((p, i) => renderPostCard({ ...p, _cardIndex: i }, false)).join('');
   } catch (e) {
     $('history-list').innerHTML = `<div class="empty-state">Error: ${escHtml(e.message)}</div>`;
   }
@@ -1300,7 +1315,7 @@ function safeParse(s) {
 
 async function refresh() {
   await Promise.all([loadStats(), loadSystemStatus(), loadSchedule()]);
-  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  const activeTab = document.querySelector('.nav-item.active, .tab-btn.active')?.dataset.tab;
   if (activeTab === 'queue')     await loadQueue();
   if (activeTab === 'history')   await loadHistory();
   if (activeTab === 'settings')  await loadSettings();
@@ -1316,8 +1331,8 @@ async function refresh() {
 // ── Event Wiring ──────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Theme initialization
   themeEngine.init();
+  initShell();
 
   // Theme toggle
   $('theme-toggle').addEventListener('change', () => {
@@ -1332,24 +1347,15 @@ document.addEventListener('DOMContentLoaded', () => {
       toast('System ' + ($('system-toggle').checked ? 'resumed' : 'paused'));
     } catch (e) {
       toast(`Toggle failed: ${e.message}`, 'error');
-      // revert UI
       await loadSystemStatus();
     }
   });
 
-  // Tabs
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
-      btn.classList.add('active');
-      $(`tab-${btn.dataset.tab}`)?.classList.add('active');
-
-      if (btn.dataset.tab === 'console') {
-        hc.start();
-      }
-      refresh();
-    });
+  // Tab changes (sidebar + legacy)
+  document.addEventListener('xposter:tab', (ev) => {
+    const tab = ev.detail?.tab;
+    if (tab === 'console') hc.start();
+    refresh();
   });
 
   // Header buttons
@@ -1358,7 +1364,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btn-run').addEventListener('click', async () => {
     const btn = $('btn-run');
     btn.disabled = true;
-    btn.textContent = '⏳ Running…';
+    const label = btn.querySelector('span:last-child');
+    if (label) label.textContent = 'Running…';
     try {
       await apiFetch('/api/run', { method: 'POST' });
       toast('Pipeline started!', 'success');
@@ -1366,7 +1373,10 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       toast(`Run failed: ${e.message}`, 'error');
     } finally {
-      setTimeout(() => { btn.disabled = false; btn.textContent = '▶ Run Now'; }, 5000);
+      setTimeout(() => {
+        btn.disabled = false;
+        if (label) label.textContent = 'Run Now';
+      }, 5000);
     }
   });
 
@@ -1595,8 +1605,11 @@ function initMemoryTab() {
   const qInput = document.getElementById('memory-query');
 
   // Load when tab first opened
-  document.querySelector('[data-tab="memory"]').addEventListener('click', () => {
+  document.querySelector('[data-tab="memory"]')?.addEventListener('click', () => {
     if (!memoryLoaded) loadMemory();
+  });
+  document.addEventListener('xposter:tab', (ev) => {
+    if (ev.detail?.tab === 'memory' && !memoryLoaded) loadMemory();
   });
 
   btn.addEventListener('click', () => loadMemory());
@@ -2204,7 +2217,7 @@ async function activateMemoryQuery(query) {
     if (btnRefresh) btnRefresh.addEventListener('click', ragRefresh);
   });
 
-  document.addEventListener('tab:change', e => {
-    if (e?.detail?.tab === 'rag') setTimeout(initRagTab, 50);
+  document.addEventListener('xposter:tab', (ev) => {
+    if (ev.detail?.tab === 'rag') setTimeout(initRagTab, 50);
   });
 })();
