@@ -14,6 +14,7 @@ import { EmptyReplyError } from '../pipeline/errors.js';
 import type { OriginalPostType } from '../storage/original_posts.js';
 import { postQuoteTweet, postTweetThread } from '../browser/compose.js';
 import { scrapeEngagement } from '../browser/impressions.js';
+import { describeBaitTuning } from '../pipeline/engagement_bait.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
@@ -126,6 +127,13 @@ export async function runImpressionSync(): Promise<{ synced: number }> {
   }
 
   logEvent('IMPRESSION_SYNC_COMPLETE', `synced ${synced}/${posts.length}`);
+  if (synced > 0) {
+    try {
+      logEvent('BAIT_TUNING_REFRESH', describeBaitTuning());
+    } catch {
+      // Non-fatal — tuning reads fresh on next generation anyway.
+    }
+  }
   return { synced };
 }
 

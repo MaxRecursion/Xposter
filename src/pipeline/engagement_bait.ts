@@ -9,6 +9,10 @@
  * already shipped today and filling the gap keeps the share honest even when
  * safety forces NONE for a stretch.
  */
+import {
+  getBaitTuningSnapshot,
+  type TopPerformingPost,
+} from '../storage/engagement_performance.js';
 import { getIntSetting } from '../storage/settings.js';
 
 export type EngagementMode = 'NONE' | 'CLICKBAIT' | 'RAGEBAIT';
@@ -26,6 +30,8 @@ export interface DecideBaitOptions {
   counts?: BaitCounts;
   /** Injectable RNG for the CLICKBAIT vs RAGEBAIT split. */
   rng?: () => number;
+  /** Override live performance-based CLICKBAIT probability (tests). */
+  subtypeClickProb?: number;
 }
 
 export interface BaitDecision {
@@ -76,8 +82,11 @@ export function decideEngagementBait(opts: DecideBaitOptions): BaitDecision {
 
   const target = Math.min(100, Math.max(0, opts.targetPct));
   if (target <= 0) return { mode: 'NONE', reason: 'bait disabled' };
+  const clickProb = opts.subtypeClickProb ?? getLiveClickSubtypeProb();
+
   if (target >= 100) {
-    return { mode: pickBaitSubtype(opts.rng), reason: 'bait forced' };
+    const mode = pickBaitSubtype(opts.rng, clickProb);
+    return { mode, reason: `bait forced (clickProb=${clickProb.toFixed(2)})` };
   }
 
   const counts = opts.counts ?? { bait: 0, normal: 0 };
@@ -85,10 +94,10 @@ export function decideEngagementBait(opts: DecideBaitOptions): BaitDecision {
   const shareIfSkipped = counts.bait / (total + 1);
 
   if (shareIfSkipped < target / 100) {
-    const mode = pickBaitSubtype(opts.rng);
+    const mode = pickBaitSubtype(opts.rng, clickProb);
     return {
       mode,
-      reason: `deficit ${(shareIfSkipped * 100).toFixed(0)}% < ${target}% → ${mode}`,
+      reason: `deficit ${(shareIfSkipped * 100).toFixed(0)}% < ${target}% → ${mode} (clickProb=${clickProb.toFixed(2)})`,
     };
   }
 
@@ -98,9 +107,46 @@ export function decideEngagementBait(opts: DecideBaitOptions): BaitDecision {
   };
 }
 
-function pickBaitSubtype(rng: (() => number) | undefined): EngagementMode {
+function getLiveClickSubtypeProb(): number {
+  try {
+    return getBaitTuningSnapshot().click_subtype_prob;
+  } catch {
+    return 0.5;
+  }
+}
+
+function pickBaitSubtype(
+  rng: (() => number) | undefined,
+  clickProb = 0.5,
+): EngagementMode {
   const roll = (rng ?? Math.random)();
-  return roll < 0.5 ? 'CLICKBAIT' : 'RAGEBAIT';
+  return roll < clickProb ? 'CLICKBAIT' : 'RAGEBAIT';
+}
+
+/** Few-shot examples from top bait performers — refreshed each generation. */
+export function baitExamplesBlock(mode: EngagementMode): string {
+  if (mode === 'NONE') return '';
+  try {
+    const snapshot = getBaitTuningSnapshot();
+    const sameMode = snapshot.top_bait_posts.filter((p) => p.mode === mode);
+    const fallback = snapshot.top_overall_posts.filter((p) => p.score > 0);
+    const picks = (sameMode.length > 0 ? sameMode : fallback).slice(0, 3);
+    if (picks.length === 0) return '';
+    return formatExamplesBlock(mode, picks);
+  } catch {
+    return '';
+  }
+}
+
+function formatExamplesBlock(mode: EngagementMode, picks: TopPerformingPost[]): string {
+  const lines = picks.map((p, i) => {
+    const snippet = p.text.replace(/\s+/g, ' ').trim().slice(0, 220);
+    return `${i + 1}. [score ${p.score.toFixed(1)} · ${p.kind}] ${snippet}`;
+  });
+  return [
+    `RECENT HIGH-PERFORMING ${mode} EXAMPLES (match energy and structure, not exact words):`,
+    ...lines,
+  ].join('\n');
 }
 
 /**
@@ -108,6 +154,9 @@ function pickBaitSubtype(rng: (() => number) | undefined): EngagementMode {
  * hard limits still apply.
  */
 export function baitGuidanceFor(mode: EngagementMode): string {
+  const examples = baitExamplesBlock(mode);
+  const examplesSuffix = examples ? `\n\n${examples}` : '';
+
   if (mode === 'CLICKBAIT') {
     return `ENGAGEMENT MODE: CLICKBAIT (use sparingly — this reply/post is in the engagement quota).
 Goal: maximize replies and profile clicks with a curiosity gap — not a lie.
@@ -116,7 +165,7 @@ Goal: maximize replies and profile clicks with a curiosity gap — not a lie.
 - End with a question or unfinished implication that begs a response.
 - Never fabricate events, numbers, or quotes. Curiosity ≠ misinformation.
 - Still no identity punches (caste/religion/gender/region/class/party). Situation and systems only.
-- Still human — no "you won't BELIEVE", no all-caps spam, no engagement-farm emoji bait.`;
+- Still human — no "you won't BELIEVE", no all-caps spam, no engagement-farm emoji bait.${examplesSuffix}`;
   }
 
   if (mode === 'RAGEBAIT') {
@@ -127,8 +176,26 @@ Goal: a sharp, disagreeable take that makes people hit reply — debate the CLAI
 - Invite disagreement with an open question or a challenge ("Change my mind:", "What am I missing?").
 - NEVER rage about: caste, religion, gender, region-as-insult, disability, appearance, or a named private individual.
 - NEVER celebrate harm, grief, or tragedy. If the topic is sensitive, abandon this mode mentally and write a normal take.
-- Argue with systems and incentives, not tribes. No "everyone from X is…".`;
+- Argue with systems and incentives, not tribes. No "everyone from X is…".${examplesSuffix}`;
   }
 
   return '';
+}
+
+/** Logged after metric sync so the activity feed shows live tuning weights. */
+export function describeBaitTuning(): string {
+  const snap = getBaitTuningSnapshot();
+  const click = snap.mode_performance.find((r) => r.mode === 'CLICKBAIT');
+  const rage = snap.mode_performance.find((r) => r.mode === 'RAGEBAIT');
+  const none = snap.mode_performance.find((r) => r.mode === 'NONE');
+  const parts = [
+    `clickProb=${snap.click_subtype_prob.toFixed(2)}`,
+    click ? `CLICK n=${click.count} avg=${click.avg_score}` : 'CLICK n=0',
+    rage ? `RAGE n=${rage.count} avg=${rage.avg_score}` : 'RAGE n=0',
+    none ? `NONE n=${none.count} avg=${none.avg_score}` : 'NONE n=0',
+  ];
+  if (snap.top_bait_posts[0]) {
+    parts.push(`topBaitScore=${snap.top_bait_posts[0].score.toFixed(1)}`);
+  }
+  return parts.join(' ');
 }

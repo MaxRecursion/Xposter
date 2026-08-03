@@ -2,6 +2,7 @@ import {
   getInteractionsNeedingMetricSync, refreshAccountReplyStats, updateInteractionMetrics,
 } from '../storage/interactions.js';
 import { scrapeEngagement } from '../browser/impressions.js';
+import { describeBaitTuning } from '../pipeline/engagement_bait.js';
 import { getBooleanSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
@@ -80,6 +81,13 @@ export async function runReplyMetricsSync(
     }
 
     logEvent('REPLY_METRICS_SYNC_COMPLETE', `synced ${synced}/${due.length}`);
+    if (synced > 0) {
+      try {
+        logEvent('BAIT_TUNING_REFRESH', describeBaitTuning());
+      } catch {
+        // Non-fatal.
+      }
+    }
     logger.info('Reply metrics sync complete', { synced, due: due.length });
     return { synced, due: due.length };
   } finally {

@@ -745,7 +745,10 @@ function renderOriginalPost(post) {
 async function loadAnalytics() {
   const empty = $('analytics-empty');
   try {
-    const data = await apiFetch('/api/analytics/overview?days=30');
+    const [data, bait] = await Promise.all([
+      apiFetch('/api/analytics/overview?days=30'),
+      apiFetch('/api/analytics/bait-tuning?days=14'),
+    ]);
     const summary = data.summary || {};
     $('analytics-summary').innerHTML = [
       ['Follower delta', formatSigned(summary.follower_delta || 0)],
@@ -769,6 +772,7 @@ async function loadAnalytics() {
     renderReplyClassPerformance(data.reply_by_classification || []);
     renderTopicTrends(data.topic_trends || []);
     renderPostingHours(data.posting_hours || []);
+    renderBaitTuning(bait);
   } catch (e) {
     empty.style.display = 'block';
     empty.textContent = `Analytics failed to load: ${e.message}`;
@@ -778,6 +782,40 @@ async function loadAnalytics() {
 function formatSigned(value) {
   const n = Number(value) || 0;
   return n > 0 ? `+${n}` : String(n);
+}
+
+function renderBaitTuning(data) {
+  const el = $('analytics-bait-tuning');
+  if (!el) return;
+  const modes = data.mode_performance || [];
+  const prob = Number(data.click_subtype_prob || 0.5);
+  const top = data.top_bait_posts || [];
+  const modeRows = modes.length
+    ? modes.map((row) => `
+      <div class="analytics-bar-row">
+        <div class="analytics-bar-label">${escHtml(row.mode)}</div>
+        <div class="analytics-bar-track">
+          <div class="analytics-bar-fill" style="width:${Math.max(4, (row.avg_score / Math.max(...modes.map((m) => m.avg_score), 1)) * 100)}%"></div>
+        </div>
+        <div class="analytics-bar-value">n=${row.count} · avg ${row.avg_score}</div>
+      </div>`).join('')
+    : '<div class="analytics-no-data">No bait performance data yet — ships after posts get metric syncs.</div>';
+  const topHtml = top.length
+    ? `<div class="analytics-card-title" style="margin-top:12px">Top bait performers</div>
+      ${top.map((p) => `
+        <div class="analytics-bar-row" style="align-items:flex-start">
+          <div class="analytics-bar-label">${escHtml(p.mode)} · ${p.kind}</div>
+          <div class="analytics-bar-value" style="flex:1">${escHtml(p.text.slice(0, 140))}${p.text.length > 140 ? '…' : ''}</div>
+          <div class="analytics-bar-value">score ${Number(p.score).toFixed(1)}</div>
+        </div>`).join('')}`
+    : '';
+  el.innerHTML = `
+    <div class="analytics-no-data" style="margin-bottom:8px">
+      Clickbait pick weight: <strong>${(prob * 100).toFixed(0)}%</strong>
+      · ragebait ${((1 - prob) * 100).toFixed(0)}% · max daily bait quota from settings
+    </div>
+    ${modeRows}
+    ${topHtml}`;
 }
 
 function analyticsSvg(id, height = 230) {

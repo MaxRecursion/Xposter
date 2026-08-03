@@ -38,7 +38,7 @@
     "@opentelemetry/sdk-metrics": "^2.10.0",
     "@opentelemetry/sdk-node": "^0.200.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "axios": "^1.7.9",
+    "axios": "^1.8.2",
     "better-sqlite3": "^9.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
