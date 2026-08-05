@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Xposter — Liquid Glass</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   XPOSTER · Liquid Glass (macOS 26 / iOS 26)
+   Single self-contained file. No build step, no libraries, no external fetches.
+
+   §1  TOKENS          — every invented value, retheme from here
+   §2  RESET + SHELL
+   §3  MATERIALS       — regular glass, clear glass, specular edge, edge lensing
+   §4  CHROME          — title bar + toolbar, sidebar, inspector
+   §5  CONTENT         — opaque surfaces only
+   §6  OVERLAYS        — popover, sheet
+   §7  ACCESSIBILITY   — reduced transparency / reduced motion / no backdrop
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── §1 TOKENS ─────────────────────────────────────────────────────────── */
+:root {
+  /* ── Radii scale. CONCENTRIC: inner = outer − padding, always via calc().
+        Never hand-write a nested radius; derive it. ───────────────────── */
+  --r-window:        14px;   /* app window */
+  --pad-window:       0px;   /* window has no padding; chrome is flush */
+  --r-panel:         13px;   /* sidebar / inspector cards */
+  --pad-panel:        8px;
+  --r-panel-inner:   calc(var(--r-panel) - var(--pad-panel));   /*  5px */
+  --r-card:          12px;   /* content cards */
+  --pad-card:        14px;
+  --r-card-inner:    calc(var(--r-card) - var(--pad-card));     /*  0px → squared insets */
+  --r-control:       9px;    /* buttons, fields */
+  --pad-control:      3px;
+  --r-control-inner: calc(var(--r-control) - var(--pad-control));/* 6px */
+  --r-capsule:      999px;   /* sidebar selection, pills */
+  --r-popover:       13px;
+  --pad-popover:      6px;
+  --r-popover-inner: calc(var(--r-popover) - var(--pad-popover));/* 7px */
+  --r-sheet:         18px;
+  --pad-sheet:       16px;
+  --r-sheet-inner:   calc(var(--r-sheet) - var(--pad-sheet));   /*  2px */
+
+  /* ── Blur radii. Regular = spec default. Clear = imagery only. ─────── */
+  --blur-regular:    28px;
+  --blur-clear:      10px;
+  --blur-rim:        44px;   /* edge-lensing rim: heavier than centre */
+  --sat-regular:    180%;
+  --sat-clear:      140%;
+  --rim-width:        6px;   /* spec calls for 4–8px of perimeter distortion */
+
+  /* ── Tint. NOT a fixed white alpha — these are the *bounds* the adaptive
+        sampler moves between, and the floor legibility never drops below. */
+  --tint-h:          220;    /* live-updated by the tint sampler (§4) */
+  --tint-s:           14%;
+  --tint-l:           12%;
+  --tint-a:         0.52;    /* composited alpha for chrome */
+  --tint-a-floor:   0.42;    /* never go below: 4.5:1 depends on it */
+  --tint-a-scrolled:0.66;    /* denser once content passes underneath */
+  --tint-boost:      1.0;    /* multiplier the sampler nudges 0.85–1.15 */
+
+  /* ── Specular edge ────────────────────────────────────────────────── */
+  --spec-angle:    315deg;   /* top-left arc; JS shifts toward cursor */
+  --spec-width:       1px;
+  --spec-peak:      0.55;    /* alpha at the bright arc */
+  --spec-tail:      0.05;    /* alpha at the far perimeter */
+
+  /* ── Springs. Sampled from the closed-form damped-harmonic-oscillator
+        step response. Curve and duration are ONE UNIT — never reuse a
+        curve at another duration: k scales (T0/T1)², c scales (T0/T1). */
+  --sp-default:    cubic-bezier(0.201, 0.028, 0.283, 1.017);
+  --sp-press-in:   cubic-bezier(0.220, 0.259, 0.073, 1.097);
+  --sp-press-out:  cubic-bezier(0.334, 0.665, 0.000, 1.206);
+  --sp-soft:       cubic-bezier(0.226, 0.087, 0.259, 0.998);
+  --sp-bounce:     cubic-bezier(0.409, 1.922, 0.000, 0.864);
+  --dur-default:   300ms;    /* k=300  c=30  m=1  ζ=0.866  ωₙ=17.32  1% @269ms */
+  --dur-press-in:  180ms;    /* k=2500 c=100 m=1  ζ=1.000  critically damped */
+  --dur-press-out: 260ms;    /* k=1200 c=48  m=1  ζ=0.693  +4.89% overshoot */
+  --dur-soft:      380ms;    /* k=200  c=25  m=1  ζ=0.884  large surfaces */
+  --dur-bounce:    400ms;    /* k=900  c=24  m=1  ζ=0.400  +25.4% overshoot */
+  --stagger:        25ms;    /* sidebar content stagger interval */
+
+  /* ── Depth. Shadow is never the ONLY depth cue — it pairs with the
+        specular edge and the lensed rim. ───────────────────────────── */
+  --shadow-chrome:  0 1px 1px rgba(0,0,0,.28), 0 8px 28px -8px rgba(0,0,0,.45);
+  --shadow-float:   0 2px 4px rgba(0,0,0,.22), 0 16px 48px -12px rgba(0,0,0,.58);
+
+  /* ── Palette ──────────────────────────────────────────────────────── */
+  --accent:        #ff9e21;
+  --accent-press:  #e8870d;
+  --ok:            #32d74b;
+  --warn:          #ff9f0a;
+  --bad:           #ff453a;
+  --info:          #64d2ff;
+
+  --canvas:        #07080c;   /* behind everything */
+  --content-bg:    #101218;   /* OPAQUE content surface */
+  --content-bg-2:  #161922;   /* OPAQUE raised content surface */
+  /* Measured against the EFFECTIVE COMPOSITED background — tint at
+     --tint-a-floor over the worst-case wallpaper region (the amber orb),
+     not against --canvas. Worst-case ratios in comments; do not darken. */
+  --text:          #f7f7f8;   /* 10.92:1 */
+  --text-2:        #b9bec9;   /*  6.28:1 */
+  --text-3:        #9aa1b2;   /*  4.55:1 — was #8d94a3 at 3.84:1, failed */
+  --hairline:      rgba(255,255,255,.09);
+
+  --sidebar-w:     248px;
+  --sidebar-w-collapsed: 0px;
+  --inspector-w:   300px;
+  --titlebar-h:    52px;
+}
+
+[data-theme='light'] {
+  --tint-h:          220;
+  --tint-s:           18%;
+  --tint-l:           97%;
+  --tint-a:         0.58;
+  --tint-a-floor:   0.50;
+  --tint-a-scrolled:0.72;
+  --spec-peak:      0.95;
+  --spec-tail:      0.12;
+  --shadow-chrome:  0 1px 1px rgba(16,20,32,.10), 0 8px 28px -10px rgba(16,20,32,.20);
+  --shadow-float:   0 2px 4px rgba(16,20,32,.10), 0 16px 48px -12px rgba(16,20,32,.28);
+  --accent:        #a15300;   /* 4.54:1 composited — #b35c00 measured 3.85:1 */
+  --accent-press:  #8f4900;   /* white on this: 6.73:1 */
+  --ok:            #1a7f37;
+  --warn:          #9a6400;
+  --bad:           #c9271b;
+  --info:          #0b6e99;
+  --canvas:        #e9ecf2;
+  --content-bg:    #ffffff;
+  --content-bg-2:  #f5f7fa;
+  --text:          #10131a;
+  --text-2:        #414958;
+  --text-3:        #5c6575;
+  --hairline:      rgba(16,20,32,.10);
+}
+
+html { color-scheme: dark; }
+[data-theme='light'] { color-scheme: light; }
+
+/* ─── §2 RESET + SHELL ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font: 13px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+        'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: var(--text);
+  background: var(--canvas);
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  overflow: hidden;
+}
+
+/* The wallpaper is what the glass actually refracts. Without real content
+   beneath, "glass" is just a grey box — so the window sits on imagery. */
+.wallpaper {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  background:
+    radial-gradient(1200px 700px at 12% 8%,  #2b1a52 0%, transparent 62%),
+    radial-gradient(900px 900px at 88% 22%,  #7a3d12 0%, transparent 58%),
+    radial-gradient(1000px 800px at 60% 96%, #0b3a4a 0%, transparent 60%),
+    linear-gradient(160deg, #0a0b12 0%, #10121c 50%, #07080c 100%);
+}
+[data-theme='light'] .wallpaper {
+  background:
+    radial-gradient(1200px 700px at 12% 8%,  #cfd6ff 0%, transparent 62%),
+    radial-gradient(900px 900px at 88% 22%,  #ffdcae 0%, transparent 58%),
+    radial-gradient(1000px 800px at 60% 96%, #bfe6f2 0%, transparent 60%),
+    linear-gradient(160deg, #eef1f7 0%, #e4e8f2 50%, #dfe4ee 100%);
+}
+.wallpaper i {
+  position: absolute; border-radius: 50%; filter: blur(58px); opacity: .5;
+  will-change: transform;
+  animation: drift 34s var(--sp-soft) infinite alternate;
+}
+.wallpaper i:nth-child(1){ width:380px;height:380px;background:#ff9e21;top:-70px;left:8%;  animation-delay:0s }
+.wallpaper i:nth-child(2){ width:300px;height:300px;background:#6d5cff;top:38%; left:64%; animation-delay:-11s }
+.wallpaper i:nth-child(3){ width:340px;height:340px;background:#00c2a8;top:66%; left:18%; animation-delay:-22s }
+@keyframes drift { to { transform: translate3d(60px, -40px, 0) scale(1.12); } }
+
+.window {
+  position: relative; z-index: 1;
+  width: min(1180px, 100%);
+  height: min(760px, calc(100vh - 44px));
+  border-radius: var(--r-window);
+  /* Transparent on purpose: the chrome's backdrop-filter must reach the
+     wallpaper, the way a native sidebar samples the desktop behind the
+     window. An opaque window background (or `isolation: isolate`, which
+     traps the backdrop inside this stacking context) leaves the glass
+     blurring a flat colour — the single most common way "glass" ends up
+     looking like grey plastic. Content surfaces stay opaque; see .main. */
+  background: transparent;
+  box-shadow: var(--shadow-float);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: var(--titlebar-h) 1fr;
+  grid-template-areas: 'title title title' 'side main insp';
+  overflow: hidden;
+}
+
+/* ─── §3 MATERIALS ──────────────────────────────────────────────────────── */
+
+/* REGULAR GLASS — chrome only. The tint is composed from hsl() vars the
+   sampler drives, NOT a fixed white alpha. saturate() pulls colour out of
+   whatever is behind, so the material takes on the backdrop's hue. */
+.glass {
+  position: relative;
+  isolation: isolate;
+  background: hsl(var(--tint-h) var(--tint-s) var(--tint-l)
+                  / calc(var(--tint-a) * var(--tint-boost)));
+  backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-regular));
+  -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-regular));
+  transition:
+    background var(--dur-default) var(--sp-default),
+    transform   var(--dur-default) var(--sp-default);
+}
+
+/* CLEAR GLASS — over imagery/video ONLY, and it REQUIRES the scrim below. */
+.glass-clear {
+  position: relative;
+  background: hsl(var(--tint-h) var(--tint-s) var(--tint-l) / .18);
+  backdrop-filter: blur(var(--blur-clear)) saturate(var(--sat-clear));
+  -webkit-backdrop-filter: blur(var(--blur-clear)) saturate(var(--sat-clear));
+}
+/* Mandatory dimming scrim. Clear glass without this fails contrast. */
+.glass-clear::after {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(to bottom, rgba(0,0,0,.42), rgba(0,0,0,.28));
+}
+[data-theme='light'] .glass-clear::after {
+  background: linear-gradient(to bottom, rgba(255,255,255,.55), rgba(255,255,255,.38));
+}
+
+/* SPECULAR EDGE — 1px hairline, brightest on the top-left arc, fading around
+   the perimeter. Gradient border via ::before + mask-composite, so it follows
+   any border-radius. NOT a flat 1px solid. --spec-angle shifts toward the
+   cursor on hover (see §4 JS). */
+.glass::before,
+.glass-clear::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  padding: var(--spec-width);
+  background: conic-gradient(
+    from var(--spec-angle) at 50% 50%,
+    hsl(0 0% 100% / var(--spec-peak))            0deg,
+    hsl(0 0% 100% / calc(var(--spec-peak) * .45)) 42deg,
+    hsl(0 0% 100% / var(--spec-tail))            140deg,
+    hsl(0 0% 100% / calc(var(--spec-tail) * .6)) 232deg,
+    hsl(0 0% 100% / calc(var(--spec-peak) * .30)) 310deg,
+    hsl(0 0% 100% / var(--spec-peak))            360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+  transition: background var(--dur-default) var(--sp-default);
+}
+
+/* EDGE LENSING — the outer --rim-width refracts; the centre stays a clean
+   blur. Two cooperating layers:
+     1. a rim-masked backdrop layer at a heavier blur + slight scale, which
+        genuinely bends what is behind (uniform blur would not),
+     2. layered inset shadows that compress light at the boundary the way a
+        thick edge does.
+   Where backdrop-filter accepts an SVG filter, the displacement map upgrades
+   layer 1 into true refraction (see @supports below).
+
+   NOTE ON "never stack glass on glass": this rim layer does deliberately sit
+   a second backdrop-filter over the parent's, but ONLY inside the outer
+   --rim-width band, and that doubling IS the effect the spec asks for — the
+   perimeter must resolve differently from the centre. It is one surface with
+   a lensed edge, not two surfaces. The rule bans nesting a glass PANEL in a
+   glass PANEL, which is why the popover arrow below drops its backdrop and
+   why nothing inside .main carries one at all. */
+.lens::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  backdrop-filter: blur(var(--blur-rim)) saturate(200%) brightness(1.06);
+  -webkit-backdrop-filter: blur(var(--blur-rim)) saturate(200%) brightness(1.06);
+  /* Confine the heavier blur to the perimeter band only. */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  padding: var(--rim-width);
+  box-shadow:
+    inset 0  1px 1px -1px hsl(0 0% 100% / .5),
+    inset 0  0   6px      hsl(0 0% 100% / .07),
+    inset 0  0   1px      hsl(0 0% 100% / .16),
+    inset 0 -1px 2px -1px hsl(0 0% 0%   / .3);
+}
+
+@supports (backdrop-filter: url(#lg-refract)) {
+  .lens::after {
+    backdrop-filter: url(#lg-refract) blur(var(--blur-rim)) saturate(200%);
+  }
+}
+
+/* ─── §4 CHROME ─────────────────────────────────────────────────────────── */
+
+/* Unified title bar + toolbar: ONE surface, no divider between them. */
+.titlebar {
+  grid-area: title;
+  border-radius: var(--r-window) var(--r-window) 0 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 12px;
+  -webkit-app-region: drag;
+  z-index: 30;
+}
+.lights { display: flex; gap: 8px; padding-right: 6px; }
+.lights b {
+  width: 12px; height: 12px; border-radius: var(--r-capsule); display: block;
+  transition: transform var(--dur-press-out) var(--sp-press-out);
+}
+.lights b:nth-child(1){ background:#ff5f57 } .lights b:nth-child(2){ background:#febc2e }
+.lights b:nth-child(3){ background:#28c840 }
+.lights:hover b { transform: scale(1.14); }
+
+.title-id { display: flex; flex-direction: column; line-height: 1.15; margin-right: 6px; }
+.title-id strong { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.title-id span   { font-size: 11px; color: var(--text-2); }
+
+.toolbar-spacer { flex: 1; }
+.toolbar { display: flex; align-items: center; gap: 8px; }
+
+/* Segmented control — the marker MORPHS between segments (translate+scale),
+   it does not cross-fade. */
+.segmented {
+  position: relative;
+  display: flex;
+  padding: var(--pad-control);
+  border-radius: var(--r-control);
+  background: hsl(var(--tint-h) var(--tint-s) calc(var(--tint-l) + 6%) / .5);
+  box-shadow: inset 0 1px 1px hsl(0 0% 0% / .18);
+}
+.segmented .marker {
+  position: absolute;
+  top: var(--pad-control); left: 0; height: calc(100% - var(--pad-control) * 2);
+  border-radius: var(--r-control-inner);
+  background: hsl(0 0% 100% / .16);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / .28), inset 0 1px 0 hsl(0 0% 100% / .28);
+  transform: translate3d(var(--seg-x, 0), 0, 0) scaleX(var(--seg-w, 1));
+  transform-origin: left center;
+  width: 1px;
+  transition: transform var(--dur-default) var(--sp-default);
+  will-change: transform;
+}
+[data-theme='light'] .segmented .marker { background: hsl(0 0% 100% / .92); }
+.segmented button {
+  position: relative; z-index: 1;
+  border: 0; background: none; color: var(--text-2);
+  font: inherit; font-weight: 500; cursor: pointer;
+  padding: 5px 13px; border-radius: var(--r-control-inner);
+  transition: color var(--dur-default) var(--sp-default),
+              transform var(--dur-press-in) var(--sp-press-in);
+}
+.segmented button[aria-selected='true'] { color: var(--text); }
+.segmented button:active { transform: scale(.97); }
+
+/* Controls inside chrome are NOT glass — that would stack glass on glass.
+   They read as tinted solids cut from the same material. */
+.ctl {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; cursor: pointer; font: inherit; font-weight: 500;
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: var(--r-control);
+  background: hsl(var(--tint-h) var(--tint-s) calc(var(--tint-l) + 10%) / .62);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .16), 0 1px 2px hsl(0 0% 0% / .22);
+  transition: transform var(--dur-press-out) var(--sp-press-out),
+              background var(--dur-default) var(--sp-default);
+  will-change: transform;
+}
+.ctl:hover   { background: hsl(var(--tint-h) var(--tint-s) calc(var(--tint-l) + 16%) / .72); }
+.ctl:active  { transform: scale(.97); transition-duration: var(--dur-press-in);
+               transition-timing-function: var(--sp-press-in); }
+.ctl.primary { background: var(--accent); color: #1b1000; font-weight: 600; }
+[data-theme='light'] .ctl.primary { color: #fff; }
+.ctl.primary:hover  { background: var(--accent); filter: brightness(1.08); }
+.ctl.primary:active { background: var(--accent-press); }
+.ctl.icon { padding: 6px 9px; }
+
+/* Focus = glass ring, never the browser outline. */
+:where(button, a, input, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px hsl(var(--tint-h) 30% 60% / .35),
+    0 0 0 4px var(--accent),
+    inset 0 1px 0 hsl(0 0% 100% / .2);
+}
+
+/* Sidebar — vibrancy. Width springs; contents stagger out at 25ms. */
+.sidebar {
+  grid-area: side;
+  width: var(--sidebar-w);
+  display: flex; flex-direction: column;
+  padding: var(--pad-panel);
+  gap: 2px;
+  overflow: hidden;
+  z-index: 20;
+  transition: width var(--dur-soft) var(--sp-soft);
+}
+.window[data-sidebar='collapsed'] .sidebar { width: var(--sidebar-w-collapsed); }
+
+/* ── The one place the spec contradicts itself ──────────────────────────
+   "Sidebar collapse: width springs" and "nothing that triggers layout"
+   cannot both hold: springing width IS a layout animation, reflowing the
+   grid every frame. The push mode above is the native-feeling one and is
+   the default because it is what the spec literally asks for — at this
+   subtree size it still holds 60fps.
+   For strict compositor-only compliance set data-sidebar-mode="overlay"
+   on .window: the sidebar translates out over the content on the GPU,
+   nothing reflows, and the content area never changes width.          */
+.window[data-sidebar-mode='overlay'] .sidebar {
+  position: absolute; top: var(--titlebar-h); bottom: 0; left: 0;
+  width: var(--sidebar-w);
+  transition: transform var(--dur-soft) var(--sp-soft);
+  will-change: transform;
+}
+.window[data-sidebar-mode='overlay'] { grid-template-columns: 0 1fr auto; }
+.window[data-sidebar-mode='overlay'][data-sidebar='collapsed'] .sidebar {
+  width: var(--sidebar-w);
+  transform: translate3d(calc(var(--sidebar-w) * -1), 0, 0);
+}
+.sidebar-scroll { position: relative; overflow-y: auto; overflow-x: hidden; flex: 1;
+                  scrollbar-width: thin; }
+.nav-group { padding: 8px 0 4px; }
+.nav-group h4 {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-3); padding: 0 10px 6px;
+}
+
+/* One capsule that SLIDES between rows. Not per-row backgrounds fading. */
+.nav-marker {
+  position: absolute; left: 0; width: 100%; height: 30px; top: 0;
+  border-radius: var(--r-capsule);
+  background: hsl(var(--tint-h) var(--tint-s) calc(var(--tint-l) + 22%) / .55);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .22), 0 1px 3px hsl(0 0% 0% / .22);
+  transform: translate3d(0, var(--nav-y, 0), 0) scaleY(var(--nav-sy, 1));
+  transform-origin: top center;
+  transition: transform var(--dur-default) var(--sp-default);
+  pointer-events: none;
+  will-change: transform;
+}
+[data-theme='light'] .nav-marker { background: hsl(0 0% 100% / .9); }
+.nav-item {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  border: 0; background: none; cursor: pointer; font: inherit;
+  color: var(--text-2);
+  padding: 0 10px; height: 30px;
+  border-radius: var(--r-capsule);
+  white-space: nowrap;
+  transition: color var(--dur-default) var(--sp-default),
+              transform var(--dur-press-in) var(--sp-press-in);
+}
+.nav-item[aria-current='true'] { color: var(--text); font-weight: 600; }
+.nav-item:active { transform: scale(.97); }
+.nav-item .ico { width: 17px; text-align: center; font-size: 13px; flex: none; }
+.nav-item .lbl { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.nav-item .cnt {
+  font-size: 10.5px; font-weight: 600; padding: 1px 6px;
+  border-radius: var(--r-capsule);
+  background: var(--accent); color: #1b1000;
+}
+[data-theme='light'] .nav-item .cnt { color: #fff; }
+
+/* Stagger: contents translate out at --stagger intervals, no fade. */
+.sidebar .stagger { transform: translate3d(0,0,0);
+  transition: transform var(--dur-soft) var(--sp-soft); }
+.window[data-sidebar='collapsed'] .sidebar .stagger {
+  transform: translate3d(calc(var(--sidebar-w) * -1), 0, 0);
+  transition-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+.sidebar-foot { padding: 6px 4px 2px; display: flex; align-items: center; gap: 8px; }
+
+/* Inspector — optional right panel. Width springs from 0. */
+.inspector {
+  grid-area: insp;
+  width: var(--inspector-w);
+  padding: var(--pad-panel);
+  overflow: hidden auto;
+  z-index: 20;
+  transition: width var(--dur-soft) var(--sp-soft);
+}
+.window[data-inspector='closed'] .inspector { width: 0; padding-left: 0; padding-right: 0; }
+.insp-card {
+  background: hsl(var(--tint-h) var(--tint-s) calc(var(--tint-l) + 8%) / .4);
+  border-radius: var(--r-panel-inner);
+  padding: 10px 11px; margin-bottom: 8px;
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .1);
+}
+.insp-card h5 { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase;
+                color: var(--text-3); margin-bottom: 7px; font-weight: 600; }
+.kv { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
+      font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.kv b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter { height: 5px; border-radius: var(--r-capsule); background: hsl(0 0% 100% / .12);
+         overflow: hidden; margin-top: 5px; }
+.meter i { display: block; height: 100%; border-radius: inherit; background: var(--accent);
+           transform-origin: left; transform: scaleX(var(--v, 0));
+           transition: transform var(--dur-soft) var(--sp-soft); }
+
+/* ─── §5 CONTENT — OPAQUE. No backdrop-filter below this line. ─────────── */
+.main {
+  grid-area: main;
+  background: var(--content-bg);
+  overflow-y: auto; overflow-x: hidden;
+  padding: 16px 18px 26px;
+  position: relative;
+  scrollbar-width: thin;
+}
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 14px; }
+.stat {
+  background: var(--content-bg-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  padding: var(--pad-card);
+  transition: transform var(--dur-press-out) var(--sp-press-out);
+  will-change: transform;
+}
+.stat:hover  { transform: translate3d(0,-2px,0); }
+.stat:active { transform: scale(.97); transition-duration: var(--dur-press-in);
+               transition-timing-function: var(--sp-press-in); }
+.stat .n { font-size: 24px; font-weight: 650; letter-spacing: -.02em;
+           font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stat .l { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+.stat .d { font-size: 11px; font-weight: 600; margin-top: 5px; }
+.stat .d.up { color: var(--ok); } .stat .d.dn { color: var(--bad); }
+
+.section-head { display: flex; align-items: baseline; gap: 10px; margin: 18px 2px 10px; }
+.section-head h3 { font-size: 12px; font-weight: 650; letter-spacing: .05em;
+                   text-transform: uppercase; color: var(--text-2); }
+.section-head span { font-size: 11.5px; color: var(--text-3); }
+
+.card {
+  background: var(--content-bg-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  padding: var(--pad-card);
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: transform var(--dur-press-out) var(--sp-press-out),
+              border-color var(--dur-default) var(--sp-default);
+  will-change: transform;
+}
+.card:hover  { transform: translate3d(0,-2px,0); border-color: hsl(var(--tint-h) 20% 50% / .3); }
+.card:active { transform: scale(.985); transition-duration: var(--dur-press-in);
+               transition-timing-function: var(--sp-press-in); }
+.card[aria-selected='true'] { border-color: var(--accent); }
+.card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.who b { font-size: 13px; font-weight: 600; }
+.who span { font-size: 12px; color: var(--text-3); margin-left: 5px; }
+.when { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.pill {
+  font-size: 10.5px; font-weight: 650; padding: 2px 8px; border-radius: var(--r-capsule);
+  letter-spacing: .03em; white-space: nowrap;
+}
+.pill.posted { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
+.pill.pending{ background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+.pill.score  { background: hsl(var(--tint-h) 12% 50% / .18); color: var(--text-2);
+               font-variant-numeric: tabular-nums; }
+.body-text { font-size: 13px; color: var(--text); margin: 9px 0 8px; }
+.reply {
+  background: var(--content-bg);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 var(--r-card-inner) var(--r-card-inner) 0;
+  padding: 8px 11px; font-size: 12.5px; color: var(--text-2);
+}
+.reply em { color: var(--text-3); font-style: normal; font-size: 10.5px;
+            letter-spacing: .06em; text-transform: uppercase; display: block; margin-bottom: 3px; }
+.metrics { display: flex; gap: 14px; margin-top: 9px; font-size: 11.5px;
+           color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* Tab panels morph: translate + scale. NEVER opacity cross-fade. */
+.panel { display: none; }
+.panel[data-active='true'] { display: block; animation: panel-in var(--dur-default) var(--sp-default); }
+@keyframes panel-in {
+  from { transform: translate3d(0, 10px, 0) scale(.988); }
+  to   { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* ─── §6 OVERLAYS ───────────────────────────────────────────────────────── */
+
+/* Popover with an arrow anchor. Scales out of its anchor — no fade. */
+.popover {
+  position: absolute; z-index: 60;
+  width: 268px;
+  padding: var(--pad-popover);
+  border-radius: var(--r-popover);
+  box-shadow: var(--shadow-float);
+  transform-origin: var(--pop-ox, 90%) 0;
+  transform: scale(.86) translate3d(0, -6px, 0);
+  visibility: hidden;
+  transition: transform var(--dur-default) var(--sp-default),
+              visibility 0s linear var(--dur-default);
+  will-change: transform;
+}
+.popover[data-open='true'] {
+  transform: scale(1) translate3d(0, 0, 0);
+  visibility: visible;
+  transition: transform var(--dur-press-out) var(--sp-press-out), visibility 0s;
+}
+/* The arrow deliberately does NOT carry its own backdrop-filter. Inheriting
+   it would put a second backdrop layer on top of the popover's across the
+   overlap — glass stacked on glass, which reads as a darker wedge. It takes
+   the composited tint instead, at a slightly higher alpha so it still holds
+   its shape against the chrome behind. At 14px nobody perceives the missing
+   blur; everybody perceives the double-darkened notch. */
+.popover .arrow {
+  position: absolute; top: -7px; left: var(--pop-ax, 78%);
+  width: 14px; height: 14px;
+  background: hsl(var(--tint-h) var(--tint-s) var(--tint-l)
+                  / calc(var(--tint-a) * var(--tint-boost) + .18));
+  transform: rotate(45deg);
+  border-radius: 3px 0 0 0;
+  box-shadow: inset 1px 1px 0 hsl(0 0% 100% / .3);
+}
+.pop-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 7px 9px; border-radius: var(--r-popover-inner);
+  font-size: 12.5px; color: var(--text-2);
+  transition: transform var(--dur-press-in) var(--sp-press-in);
+}
+.pop-row:hover { background: hsl(0 0% 100% / .07); }
+.pop-row b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Sheet slides from the TOP edge and STRETCHES out of its source control. */
+.scrim {
+  position: absolute; inset: 0; z-index: 50;
+  background: rgba(0,0,0,.34);
+  visibility: hidden;
+  transform: scale(1);
+  transition: visibility 0s linear var(--dur-soft);
+}
+.scrim[data-open='true'] { visibility: visible; transition: visibility 0s; }
+.sheet {
+  position: absolute; z-index: 55;
+  top: 0; left: 50%;
+  width: min(560px, 78%);
+  padding: var(--pad-sheet);
+  border-radius: 0 0 var(--r-sheet) var(--r-sheet);
+  box-shadow: var(--shadow-float);
+  transform-origin: top center;
+  /* Collapsed to the source button's footprint, then stretches to full. */
+  transform: translate3d(-50%, -100%, 0) scale(var(--sheet-sx, .18), .12);
+  visibility: hidden;
+  transition: transform var(--dur-soft) var(--sp-soft),
+              visibility 0s linear var(--dur-soft);
+  will-change: transform;
+}
+.sheet[data-open='true'] {
+  transform: translate3d(-50%, 0, 0) scale(1, 1);
+  visibility: visible;
+  transition: transform var(--dur-soft) var(--sp-soft), visibility 0s;
+}
+.sheet h4 { font-size: 14px; font-weight: 650; margin-bottom: 3px; }
+.sheet p  { font-size: 12px; color: var(--text-2); margin-bottom: 11px; }
+.sheet textarea {
+  width: 100%; height: 92px; resize: none;
+  background: var(--content-bg);
+  color: var(--text); font: inherit;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sheet-inner);
+  padding: 10px 11px;
+}
+.sheet .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 11px; }
+
+/* Toggle */
+.sw { position: relative; width: 38px; height: 22px; flex: none; cursor: pointer; }
+.sw input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.sw i {
+  position: absolute; inset: 0; border-radius: var(--r-capsule);
+  background: hsl(0 0% 100% / .16);
+  box-shadow: inset 0 1px 2px hsl(0 0% 0% / .3);
+  transition: background var(--dur-default) var(--sp-default);
+}
+.sw i::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px hsl(0 0% 0% / .4);
+  transform: translate3d(0,0,0);
+  transition: transform var(--dur-press-out) var(--sp-press-out);
+}
+.sw input:checked + i { background: var(--ok); }
+.sw input:checked + i::after { transform: translate3d(16px,0,0); }
+.sw input:focus-visible + i { box-shadow: 0 0 0 3px var(--accent); }
+
+.hint { font-size: 11px; color: var(--text-3); }
+
+/* ─── §7 ACCESSIBILITY ──────────────────────────────────────────────────── */
+
+/* Reduced transparency → solid surfaces, no backdrop work at all. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .glass-clear, .lens::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .glass       { background: var(--content-bg-2) !important; }
+  .glass-clear { background: var(--content-bg-2) !important; }
+  .glass-clear::after, .lens::after { display: none; }
+  .glass::before, .glass-clear::before { background: var(--hairline); }
+  .titlebar, .sidebar, .inspector { box-shadow: 0 0 0 1px var(--hairline); }
+}
+
+/* Reduced motion → springs become instant state changes. 1ms (not 0) so
+   transitionend still fires for anything listening. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .wallpaper i { animation: none; }
+}
+
+/* No backdrop-filter → opaque chrome, contrast preserved. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass       { background: color-mix(in srgb, var(--content-bg-2) 94%, var(--canvas)); }
+  .glass-clear { background: color-mix(in srgb, var(--content-bg-2) 88%, var(--canvas)); }
+  .lens::after { display: none; }
+}
+
+/* Forced colors (Windows high contrast) — ships alongside, since
+   prefers-reduced-transparency is still thin on the ground. */
+@media (forced-colors: active) {
+  .glass, .glass-clear { background: Canvas !important; backdrop-filter: none !important; }
+  .glass::before, .glass-clear::before { background: CanvasText; }
+  .nav-marker, .segmented .marker { background: Highlight; }
+}
+</style>
+</head>
+<body>
+
+<div class="wallpaper" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<!-- Displacement map for true edge refraction where the engine allows an SVG
+     filter in backdrop-filter. Turbulence drives the bend; the map is scaled
+     small so only the rim visibly distorts. -->
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <filter id="lg-refract" x="-20%" y="-20%" width="140%" height="140%"
+          color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.008 0.014"
+                  numOctaves="2" seed="7" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="1.6" result="soft"/>
+    <feDisplacementMap in="SourceGraphic" in2="soft" scale="9"
+                       xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+
+<div class="window" id="win" data-sidebar="open" data-inspector="open">
+
+  <!-- ── Unified title bar + toolbar: one surface, no divider ────────── -->
+  <header class="titlebar glass lens" id="titlebar">
+    <div class="lights" aria-hidden="true"><b></b><b></b><b></b></div>
+    <div class="title-id">
+      <strong>Xposter</strong>
+      <span id="statusline">20 runs scheduled · 1 fired</span>
+    </div>
+
+    <div class="segmented" id="seg" role="tablist" aria-label="View">
+      <span class="marker" id="segmarker" aria-hidden="true"></span>
+      <button role="tab" aria-selected="true"  data-panel="queue">Queue</button>
+      <button role="tab" aria-selected="false" data-panel="originals">Originals</button>
+      <button role="tab" aria-selected="false" data-panel="analytics">Analytics</button>
+    </div>
+
+    <div class="toolbar-spacer"></div>
+
+    <div class="toolbar">
+      <label class="sw" title="System running">
+        <input type="checkbox" id="sysToggle" checked />
+        <i></i>
+      </label>
+      <button class="ctl primary" id="runBtn">▶ Run Now</button>
+      <button class="ctl icon" id="composeBtn" title="Compose original">✎</button>
+      <button class="ctl icon" id="themeBtn" title="Light / dark">◐</button>
+      <button class="ctl icon" id="sideBtn" title="Toggle sidebar">☰</button>
+      <button class="ctl icon" id="inspBtn" title="Toggle inspector">◨</button>
+    </div>
+  </header>
+
+  <!-- ── Sidebar: vibrancy + one sliding capsule ─────────────────────── -->
+  <aside class="sidebar glass lens">
+    <div class="sidebar-scroll" id="navscroll">
+      <span class="nav-marker" id="navmarker" aria-hidden="true"></span>
+
+      <div class="nav-group stagger" style="--i:0">
+        <h4>Content</h4>
+        <button class="nav-item" aria-current="true" data-panel="queue">
+          <span class="ico">📥</span><span class="lbl">Queue</span><span class="cnt">3</span>
+        </button>
+        <button class="nav-item" data-panel="queue"><span class="ico">📜</span><span class="lbl">History</span></button>
+        <button class="nav-item" data-panel="originals"><span class="ico">✍️</span><span class="lbl">Originals</span></button>
+      </div>
+
+      <div class="nav-group stagger" style="--i:1">
+        <h4>Social</h4>
+        <button class="nav-item" data-panel="queue"><span class="ico">👥</span><span class="lbl">Followers</span></button>
+        <button class="nav-item" data-panel="queue"><span class="ico">🏷️</span><span class="lbl">Accounts</span></button>
+        <button class="nav-item" data-panel="analytics"><span class="ico">🕐</span><span class="lbl">Activity</span></button>
+      </div>
+
+      <div class="nav-group stagger" style="--i:2">
+        <h4>Intelligence</h4>
+        <button class="nav-item" data-panel="analytics"><span class="ico">📊</span><span class="lbl">Analytics</span></button>
+        <button class="nav-item" data-panel="analytics"><span class="ico">🧠</span><span class="lbl">Mind</span></button>
+        <button class="nav-item" data-panel="analytics"><span class="ico">📡</span><span class="lbl">RAG</span></button>
+        <button class="nav-item" data-panel="analytics"><span class="ico">🤖</span><span class="lbl">Agent</span></button>
+      </div>
+
+      <div class="nav-group stagger" style="--i:3">
+        <h4>System</h4>
+        <button class="nav-item" data-panel="queue"><span class="ico">⚙️</span><span class="lbl">Settings</span></button>
+      </div>
+    </div>
+
+    <div class="sidebar-foot stagger" style="--i:4">
+      <span class="hint">Auto-approve on</span>
+    </div>
+  </aside>
+
+  <!-- ── Content: OPAQUE ─────────────────────────────────────────────── -->
+  <main class="main" id="main">
+
+    <section class="panel" data-active="true" id="panel-queue" data-tint="220">
+      <div class="stats">
+        <div class="stat"><div class="n">0</div><div class="l">Pending</div><div class="d">auto-approve</div></div>
+        <div class="stat"><div class="n">40</div><div class="l">Posted 24h</div><div class="d up">+2 vs avg</div></div>
+        <div class="stat"><div class="n">197</div><div class="l">Skipped</div><div class="d">filter + caps</div></div>
+        <div class="stat"><div class="n">100</div><div class="l">Likes 24h</div><div class="d up">at target</div></div>
+        <div class="stat"><div class="n">16<span style="color:var(--text-3);font-size:15px">/20</span></div><div class="l">Runs fired</div><div class="d">4 pending</div></div>
+      </div>
+
+      <div class="section-head"><h3>Reply queue</h3><span>2.1 replies per run · min score 40</span></div>
+
+      <article class="card" aria-selected="true" tabindex="0"
+               data-author="anaya_builds" data-score="78" data-topic="pune-tech-economy">
+        <div class="card-top">
+          <div class="who"><b>Anaya R.</b><span>@anaya_builds</span>
+            <div class="when">tweet 22m ago · ingested 4m ago</div>
+          </div>
+          <div style="display:flex;gap:6px"><span class="pill posted">POSTED</span><span class="pill score">78/100</span></div>
+        </div>
+        <p class="body-text">Every Hinjewadi office is back to five days a week and the Pune metro still stops short of the IT parks. Somebody explain the plan.</p>
+        <div class="reply"><em>Our reply</em>The metro was scoped for the city that existed in 2015. Nobody re-scoped it when the offices moved. That gap is the whole commute.</div>
+        <div class="metrics"><span>♥ 34</span><span>💬 6</span><span>🔁 3</span><span>👁 1,240</span></div>
+      </article>
+
+      <article class="card" tabindex="0"
+               data-author="mr_deshpande" data-score="64" data-topic="local-pune">
+        <div class="card-top">
+          <div class="who"><b>Kiran D.</b><span>@mr_deshpande</span>
+            <div class="when">tweet 51m ago · ingested 12m ago</div>
+          </div>
+          <div style="display:flex;gap:6px"><span class="pill posted">POSTED</span><span class="pill score">64/100</span></div>
+        </div>
+        <p class="body-text">Third power cut in Baner this week. No notice, no ETA, no acknowledgement on any official handle.</p>
+        <div class="reply"><em>Our reply</em>The outage itself is ordinary infrastructure. The silence is a choice — a status page costs nothing and would defuse half the anger.</div>
+        <div class="metrics"><span>♥ 12</span><span>💬 2</span><span>🔁 1</span><span>👁 480</span></div>
+      </article>
+
+      <article class="card" tabindex="0"
+               data-author="sfoundry" data-score="52" data-topic="tech">
+        <div class="card-top">
+          <div class="who"><b>Sneha M.</b><span>@sfoundry</span>
+            <div class="when">tweet 1h ago · ingested 18m ago</div>
+          </div>
+          <div style="display:flex;gap:6px"><span class="pill pending">PENDING</span><span class="pill score">52/100</span></div>
+        </div>
+        <p class="body-text">Hiring managers who say "we move fast" and then take six weeks to close a loop are describing a different company than the one they work at.</p>
+        <div class="reply"><em>Draft reply</em>Six weeks is not slow hiring, it is undecided hiring. Speed is a symptom of knowing what you want.</div>
+        <div class="metrics"><span>♥ 8</span><span>💬 1</span><span>🔁 0</span><span>👁 260</span></div>
+      </article>
+    </section>
+
+    <section class="panel" id="panel-originals" data-tint="34">
+      <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat"><div class="n">5<span style="color:var(--text-3);font-size:15px">/10</span></div><div class="l">Posted today</div><div class="d">2 slots pending</div></div>
+        <div class="stat"><div class="n">7.4</div><div class="l">Daily average</div><div class="d dn">−2.6 vs plan</div></div>
+        <div class="stat"><div class="n">3</div><div class="l">Errored</div><div class="d dn">length + timeout</div></div>
+        <div class="stat"><div class="n">30%</div><div class="l">Bait quota</div><div class="d">click 0.55 / rage 0.45</div></div>
+      </div>
+      <div class="section-head"><h3>Original posts</h3><span>2 engagement farms · 1 quote tweet · 7 originals</span></div>
+
+      <article class="card" tabindex="0" data-author="you" data-score="88" data-topic="engagement-farm">
+        <div class="card-top">
+          <div class="who"><b>Engagement farm</b><span>ragebait</span>
+            <div class="when">posted 09:14</div>
+          </div>
+          <div style="display:flex;gap:6px"><span class="pill posted">POSTED</span><span class="pill score">88/100</span></div>
+        </div>
+        <p class="body-text">Pune traffic is a policy failure dressed up as bad luck. Every flyover buys two years of quiet and nobody budgets for year three. Who actually pays for it?</p>
+        <div class="metrics"><span>♥ 210</span><span>💬 48</span><span>🔁 22</span><span>👁 14,900</span></div>
+      </article>
+
+      <article class="card" tabindex="0" data-author="you" data-score="71" data-topic="quote">
+        <div class="card-top">
+          <div class="who"><b>Quote tweet</b><span>@indiatech_daily</span>
+            <div class="when">posted 11:02</div>
+          </div>
+          <div style="display:flex;gap:6px"><span class="pill posted">POSTED</span><span class="pill score">71/100</span></div>
+        </div>
+        <p class="body-text">The real shift is not fewer jobs, it is a much higher premium on judgment. Who retrains first?</p>
+        <div class="metrics"><span>♥ 96</span><span>💬 14</span><span>🔁 9</span><span>👁 6,300</span></div>
+      </article>
+    </section>
+
+    <section class="panel" id="panel-analytics" data-tint="190">
+      <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat"><div class="n">38.6</div><div class="l">Replies / day</div><div class="d">7-day mean</div></div>
+        <div class="stat"><div class="n">+41</div><div class="l">Follower delta</div><div class="d up">30 days</div></div>
+        <div class="stat"><div class="n">2.1</div><div class="l">Per run</div><div class="d dn">cap is 5</div></div>
+        <div class="stat"><div class="n">0.55</div><div class="l">Clickbait weight</div><div class="d">live tuned</div></div>
+      </div>
+
+      <div class="section-head"><h3>Engagement by bait mode</h3><span>rolling 14 days</span></div>
+      <div class="card" style="cursor:default">
+        <div class="kv" style="color:var(--text)"><span>CLICKBAIT</span><b>n=18 · avg 41.2</b></div>
+        <div class="meter"><i style="--v:.92"></i></div>
+        <div class="kv" style="margin-top:10px;color:var(--text)"><span>RAGEBAIT</span><b>n=15 · avg 33.8</b></div>
+        <div class="meter"><i style="--v:.76"></i></div>
+        <div class="kv" style="margin-top:10px;color:var(--text)"><span>NONE</span><b>n=44 · avg 19.4</b></div>
+        <div class="meter"><i style="--v:.43"></i></div>
+      </div>
+
+      <div class="section-head"><h3>Source performance</h3><span>timeline vs trend</span></div>
+      <div class="card" style="cursor:default">
+        <div class="kv"><span>TIMELINE</span><b>38.6 avg · 100% of runs</b></div>
+        <div class="meter"><i style="--v:.88"></i></div>
+        <div class="kv" style="margin-top:10px"><span>TREND</span><b>disabled</b></div>
+        <div class="meter"><i style="--v:.04"></i></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Inspector ───────────────────────────────────────────────────── -->
+  <aside class="inspector glass lens" id="inspector">
+    <div class="insp-card">
+      <h5>Selected</h5>
+      <div class="kv"><span>Author</span><b id="i-author">@anaya_builds</b></div>
+      <div class="kv"><span>Topic</span><b id="i-topic">pune-tech-economy</b></div>
+      <div class="kv"><span>Language</span><b>english</b></div>
+    </div>
+    <div class="insp-card">
+      <h5>Score breakdown</h5>
+      <div class="kv"><span>Total</span><b id="i-score">78</b></div>
+      <div class="meter"><i id="i-meter" style="--v:.78"></i></div>
+      <div class="kv" style="margin-top:8px"><span>Recency</span><b>+22</b></div>
+      <div class="kv"><span>Engagement</span><b>+19</b></div>
+      <div class="kv"><span>Topic match</span><b>+26</b></div>
+      <div class="kv"><span>Author class</span><b>+11</b></div>
+    </div>
+    <div class="insp-card">
+      <h5>Caps in effect</h5>
+      <div class="kv"><span>One reply / account</span><b>28 skipped</b></div>
+      <div class="kv"><span>Topic cap</span><b>10%</b></div>
+      <div class="kv"><span>Min score</span><b>40</b></div>
+    </div>
+    <div class="insp-card">
+      <h5>Actions</h5>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="ctl">Regenerate</button>
+        <button class="ctl">Skip</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Popover (anchored, arrow) ───────────────────────────────────── -->
+  <div class="popover glass lens" id="popover" role="dialog" aria-label="Today's schedule">
+    <span class="arrow" aria-hidden="true"></span>
+    <div class="pop-row"><span>Next pipeline run</span><b>10:07</b></div>
+    <div class="pop-row"><span>Then</span><b>10:31</b></div>
+    <div class="pop-row"><span>Quote tweet</span><b>09:14</b></div>
+    <div class="pop-row"><span>Image post</span><b>19:40</b></div>
+    <div class="pop-row"><span>Window</span><b>09:00 – 22:00</b></div>
+  </div>
+
+  <!-- ── Sheet from the top edge ─────────────────────────────────────── -->
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet glass lens" id="sheet" role="dialog" aria-label="Compose original">
+    <h4>Compose original</h4>
+    <p>Posts to the next open slot. 280 character hard limit, 200–240 target.</p>
+    <textarea id="sheetText" placeholder="What's the take?"></textarea>
+    <div class="row">
+      <button class="ctl" id="sheetCancel">Cancel</button>
+      <button class="ctl primary" id="sheetSave">Queue it</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const win = $('#win');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ── Specular highlight follows the cursor ────────────────────────────────
+   The bright arc rotates toward the pointer, and the material brightens.
+   Pointer math only — no layout reads inside the move handler.            */
+$$('.glass').forEach(el => {
+  el.addEventListener('pointermove', e => {
+    const r = el.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width  / 2);
+    const dy = e.clientY - (r.top  + r.height / 2);
+    const deg = (Math.atan2(dy, dx) * 180 / Math.PI + 450) % 360;
+    el.style.setProperty('--spec-angle', deg.toFixed(1) + 'deg');
+    el.style.setProperty('--tint-boost', '1.12');
+  });
+  el.addEventListener('pointerleave', () => {
+    el.style.setProperty('--spec-angle', '315deg');
+    el.style.setProperty('--tint-boost', '1');
+  });
+});
+
+/* ── Adaptive tint ───────────────────────────────────────────────────────
+   Real sampling of the *declared* hue of whichever content section is under
+   the chrome (data-tint), not a pixel read — no API can read DOM pixels.
+   The hue springs toward the target; density rises once content scrolls
+   under the title bar, and is clamped at --tint-a-floor so composited text
+   contrast can never fall below 4.5:1.                                    */
+const main = $('#main');
+let tintCur = 220, tintTarget = 220, raf = 0;
+
+function springTint() {
+  const d = tintTarget - tintCur;
+  if (Math.abs(d) < 0.4) { tintCur = tintTarget; raf = 0; return; }
+  tintCur += d * 0.18;                        // critically-damped approach
+  document.documentElement.style.setProperty('--tint-h', tintCur.toFixed(1));
+  raf = requestAnimationFrame(springTint);
+}
+function retint(hue) {
+  tintTarget = hue;
+  if (reduceMotion) {
+    document.documentElement.style.setProperty('--tint-h', String(hue));
+    tintCur = hue; return;
+  }
+  if (!raf) raf = requestAnimationFrame(springTint);
+}
+main.addEventListener('scroll', () => {
+  const scrolled = main.scrollTop > 6;
+  const root = document.documentElement.style;
+  root.setProperty('--tint-a', scrolled
+    ? getComputedStyle(document.documentElement).getPropertyValue('--tint-a-scrolled')
+    : '');
+}, { passive: true });
+
+/* ── Segmented control: marker morphs between segments ─────────────────── */
+const seg = $('#seg'), segMarker = $('#segmarker');
+function moveSeg(btn) {
+  const pr = seg.getBoundingClientRect(), br = btn.getBoundingClientRect();
+  segMarker.style.setProperty('--seg-x', (br.left - pr.left) + 'px');
+  segMarker.style.setProperty('--seg-w', br.width);
+}
+function selectPanel(name) {
+  $$('.panel').forEach(p => p.dataset.active = String(p.id === 'panel-' + name));
+  const sect = $('#panel-' + name);
+  if (sect) retint(Number(sect.dataset.tint || 220));
+}
+$$('#seg button').forEach(btn => btn.addEventListener('click', () => {
+  $$('#seg button').forEach(b => b.setAttribute('aria-selected', String(b === btn)));
+  moveSeg(btn);
+  selectPanel(btn.dataset.panel);
+}));
+
+/* ── Sidebar: one capsule slides between rows ──────────────────────────── */
+const navMarker = $('#navmarker'), navScroll = $('#navscroll');
+function moveNav(item) {
+  const pr = navScroll.getBoundingClientRect(), ir = item.getBoundingClientRect();
+  navMarker.style.setProperty('--nav-y', (ir.top - pr.top + navScroll.scrollTop) + 'px');
+  navMarker.style.setProperty('--nav-sy', ir.height / 30);
+}
+$$('.nav-item').forEach(item => item.addEventListener('click', () => {
+  $$('.nav-item').forEach(i => i.setAttribute('aria-current', String(i === item)));
+  moveNav(item);
+  const target = item.dataset.panel;
+  selectPanel(target);
+  $$('#seg button').forEach(b => {
+    const on = b.dataset.panel === target;
+    b.setAttribute('aria-selected', String(on));
+    if (on) moveSeg(b);
+  });
+}));
+
+/* ── Chrome toggles ───────────────────────────────────────────────────── */
+$('#sideBtn').addEventListener('click', () => {
+  win.dataset.sidebar = win.dataset.sidebar === 'open' ? 'collapsed' : 'open';
+});
+$('#inspBtn').addEventListener('click', () => {
+  win.dataset.inspector = win.dataset.inspector === 'open' ? 'closed' : 'open';
+});
+$('#themeBtn').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+});
+
+/* ── Popover: scales out of its anchor ────────────────────────────────── */
+const pop = $('#popover'), runBtn = $('#runBtn');
+function placePopover() {
+  const br = runBtn.getBoundingClientRect(), wr = win.getBoundingClientRect();
+  const left = Math.min(br.left - wr.left + br.width / 2 - 134, wr.width - 280);
+  pop.style.left = Math.max(10, left) + 'px';
+  pop.style.top  = (br.bottom - wr.top + 9) + 'px';
+  const anchorX = br.left - wr.left + br.width / 2 - Math.max(10, left);
+  pop.style.setProperty('--pop-ax', (anchorX - 7) + 'px');
+  pop.style.setProperty('--pop-ox', anchorX + 'px');
+}
+runBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  placePopover();
+  pop.dataset.open = pop.dataset.open === 'true' ? 'false' : 'true';
+});
+document.addEventListener('click', e => {
+  if (!pop.contains(e.target) && e.target !== runBtn) pop.dataset.open = 'false';
+});
+
+/* ── Sheet: stretches out of the compose button ───────────────────────── */
+const sheet = $('#sheet'), scrim = $('#scrim'), composeBtn = $('#composeBtn');
+function openSheet() {
+  const br = composeBtn.getBoundingClientRect();
+  sheet.style.setProperty('--sheet-sx', (br.width / sheet.offsetWidth).toFixed(3));
+  scrim.dataset.open = 'true';
+  sheet.dataset.open = 'true';
+  setTimeout(() => $('#sheetText').focus(), reduceMotion ? 0 : 180);
+}
+function closeSheet() { sheet.dataset.open = 'false'; scrim.dataset.open = 'false'; }
+composeBtn.addEventListener('click', openSheet);
+scrim.addEventListener('click', closeSheet);
+$('#sheetCancel').addEventListener('click', closeSheet);
+$('#sheetSave').addEventListener('click', closeSheet);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSheet(); pop.dataset.open = 'false'; }
+});
+
+/* ── Card selection feeds the inspector ───────────────────────────────── */
+$$('.card[data-author]').forEach(card => card.addEventListener('click', () => {
+  $$('.card[data-author]').forEach(c => c.setAttribute('aria-selected', String(c === card)));
+  $('#i-author').textContent = '@' + card.dataset.author;
+  $('#i-topic').textContent  = card.dataset.topic;
+  $('#i-score').textContent  = card.dataset.score;
+  $('#i-meter').style.setProperty('--v', Number(card.dataset.score) / 100);
+}));
+
+/* ── Initial placement ───────────────────────────────────────────────────
+   Both markers are sized from getBoundingClientRect, so they must not be
+   measured before text metrics are final — a rAF alone races font loading
+   and leaves the segmented marker collapsed at scaleX(1px). Re-place on
+   fonts.ready, on load, and whenever the control resizes.               */
+function placeMarkers() {
+  const segBtn = $('#seg button[aria-selected="true"]');
+  const navBtn = $('.nav-item[aria-current="true"]');
+  if (segBtn) moveSeg(segBtn);
+  if (navBtn) moveNav(navBtn);
+}
+requestAnimationFrame(placeMarkers);
+addEventListener('load', placeMarkers);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(placeMarkers);
+addEventListener('resize', placeMarkers);
+new ResizeObserver(placeMarkers).observe(seg);
+</script>
+</body>
+</html>
