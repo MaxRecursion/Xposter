@@ -1,0 +1,34 @@
+{
+  "policyVersion": "1.0",
+  "defaults": {
+    "hotRetentionMonths": 24,
+    "warmRetentionMonths": 60,
+    "coldRequiresServer": true
+  },
+  "tiers": [
+    {
+      "kind": "Hot",
+      "description": "Full detail for recent periods — synced to client OPFS as Parquet/CSV partitions.",
+      "retentionMonths": 24,
+      "granularity": "FullDetail",
+      "syncToClient": true,
+      "entityIds": ["transactions", "funds"]
+    },
+    {
+      "kind": "Warm",
+      "description": "Monthly aggregates for older periods — smaller Parquet files on client.",
+      "retentionMonths": 60,
+      "granularity": "MonthlyAggregate",
+      "syncToClient": true,
+      "entityIds": ["transactions"]
+    },
+    {
+      "kind": "Cold",
+      "description": "Historical detail beyond warm window — server-side SAP export on demand only.",
+      "granularity": "OnDemand",
+      "syncToClient": false,
+      "serverEndpoint": "/api/sap/export-request",
+      "entityIds": ["transactions"]
+    }
+  ]
+}

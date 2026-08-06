@@ -1,0 +1,119 @@
+@page "/assessment"
+@using Benchmark.Core
+@using Benchmark.Core.Query
+@using Benchmark.Core.Timing
+@using WasmNativePin.Components
+@using WasmNativePin.Services
+@inject NativePinQueryEngine QueryEngine
+@inject BenchmarkSuite Suite
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Assessment — V2 Native P/Invoke</PageTitle>
+
+<div class="assessment">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">@ApproachMetadata.GetDisplayName(ApproachKind.WasmNativePin)</p>
+            <h1>Native DuckDB P/Invoke</h1>
+            <p class="subtitle">@ApproachMetadata.GetRecommendation(ApproachKind.WasmNativePin)</p>
+        </div>
+        <div class="actions">
+            <button class="btn primary" disabled="@_running" @onclick="RunSuiteAsync">Run Full Benchmark Suite</button>
+            <button class="btn" disabled="@(_result is null)" @onclick="ExportJsonAsync">Export Timing JSON</button>
+        </div>
+    </header>
+
+    <div class="alert">
+        <strong>Native path (no duckdb-wasm fallback):</strong>
+        <ul>
+            <li>DuckDB amalgamation compiled with .NET’s pinned <code>Emscripten 3.1.56</code> (<code>-fwasm-exceptions</code>, <code>DUCKDB_NO_THREADS</code>).</li>
+            <li>Linked into the Blazor WASM module via <code>NativeFileReference</code> + P/Invoke (<code>libduckdb_native.a</code>).</li>
+            <li>CSV loaded through MEMFS (<code>read_csv_auto</code>); catalog is in-memory.</li>
+            <li>Link diagnostic: <code>@QueryEngine.LinkDiagnostic</code></li>
+        </ul>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_status))
+    {
+        <div class="status">@_status</div>
+    }
+
+    @if (_result is not null)
+    {
+        <TimingWaterfall Result="_result" />
+    }
+
+    <div class="panels">
+        <section class="panel">
+            <h2>Query Results <span class="muted">(native DuckDB)</span></h2>
+            <ResultGrid Columns="_gridColumns" Rows="_gridRows" />
+        </section>
+        <section class="panel">
+            <h2>Chart — Monthly Totals</h2>
+            <SimpleBarChart Labels="_chartLabels" Values="_chartValues" />
+        </section>
+    </div>
+</div>
+
+@code {
+    private bool _running;
+    private string _status = "Ready.";
+    private BenchmarkRunResult? _result;
+    private IReadOnlyList<string> _gridColumns = [];
+    private IReadOnlyList<IReadOnlyList<object?>> _gridRows = [];
+    private IReadOnlyList<string> _chartLabels = [];
+    private IReadOnlyList<double> _chartValues = [];
+
+    private async Task RunSuiteAsync()
+    {
+        _running = true;
+        _status = "Running suite on native DuckDB (P/Invoke)…";
+        StateHasChanged();
+
+        try
+        {
+            _result = await Suite.RunAsync(
+                QueryEngine,
+                BindGridAsync,
+                BindChartAsync);
+
+            _status = $"Completed in {_result.TotalMs:F0} ms (native queries: {_result.QueryMs:F0} ms). {QueryEngine.StatusMessage}";
+        }
+        catch (Exception ex)
+        {
+            _status = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private Task BindGridAsync(QueryResultSet data)
+    {
+        _gridColumns = data.Columns;
+        _gridRows = data.Rows.Take(BenchmarkQueries.DisplayRowCap).ToList();
+        return Task.CompletedTask;
+    }
+
+    private Task BindChartAsync(QueryResultSet data)
+    {
+        var periodIdx = data.Columns.ToList().FindIndex(c => c.Equals("period", StringComparison.OrdinalIgnoreCase));
+        var amountIdx = data.Columns.ToList().FindIndex(c => c.Contains("amount", StringComparison.OrdinalIgnoreCase));
+        if (periodIdx < 0) periodIdx = 0;
+        if (amountIdx < 0) amountIdx = Math.Min(1, data.Columns.Count - 1);
+
+        _chartLabels = data.Rows.Select(r => r[periodIdx]?.ToString() ?? "").Take(36).ToList();
+        _chartValues = data.Rows.Select(r => Convert.ToDouble(r[amountIdx] ?? 0)).Take(36).ToList();
+        return Task.CompletedTask;
+    }
+
+    private async Task ExportJsonAsync()
+    {
+        if (_result is null) return;
+        await JS.InvokeVoidAsync("BenchmarkBridge.downloadJson", "v2-native-pin-timing.json", _result.ToExportJson());
+    }
+
+    public ValueTask DisposeAsync() => QueryEngine.DisposeAsync();
+}

@@ -1,0 +1,24 @@
+@inject IJSRuntime JS
+
+<div class="chart-host">
+    <canvas @ref="_canvas" width="640" height="240"></canvas>
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<string> Labels { get; set; } = [];
+    [Parameter] public IReadOnlyList<double> Values { get; set; } = [];
+
+    private ElementReference _canvas;
+    private IJSObjectReference? _gateway;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            _gateway = await JS.InvokeAsync<IJSObjectReference>("import", "./js/worker-gateway.js");
+
+        if (_gateway is not null && Labels.Count > 0 && Values.Count > 0)
+        {
+            await _gateway.InvokeVoidAsync("renderBarChart", _canvas, Labels.ToArray(), Values.ToArray());
+        }
+    }
+}

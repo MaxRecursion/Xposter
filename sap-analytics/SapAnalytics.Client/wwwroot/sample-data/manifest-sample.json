@@ -1,0 +1,53 @@
+{
+  "version": "sample-v1",
+  "schemaVersion": "1.0",
+  "exportedAt": "2026-08-05T00:00:00Z",
+  "breakingSchemaChange": false,
+  "tables": [
+    {
+      "entityId": "companies",
+      "fileName": "companies.csv",
+      "downloadUrl": "local://sample-data/companies.csv",
+      "byteSize": 11699,
+      "rowCount": 500,
+      "checksumSha256": "3b7bb40cd95a4a671b1a84cd4346fb49d9fdfbe77e63240a060f3e0f8660ef87",
+      "format": "csv",
+      "compression": "none"
+    },
+    {
+      "entityId": "funds",
+      "fileName": "funds.csv",
+      "downloadUrl": "local://sample-data/funds.csv",
+      "byteSize": 344,
+      "rowCount": 20,
+      "checksumSha256": "87235d626383c4c43e4c38f02d77181493344c2842a15717e325fc247c556979",
+      "format": "csv",
+      "compression": "none"
+    },
+    {
+      "entityId": "users",
+      "fileName": "users.csv",
+      "downloadUrl": "local://sample-data/users.csv",
+      "byteSize": 22268,
+      "rowCount": 1000,
+      "checksumSha256": "16b69ce59a460865e93cec1b0ce35b5a235f1623d5591b678f53b77a53d88354",
+      "format": "csv",
+      "compression": "none"
+    },
+    {
+      "entityId": "transactions",
+      "fileName": "transactions.csv",
+      "downloadUrl": "local://sample-data/transactions.csv",
+      "byteSize": 1995415,
+      "rowCount": 50000,
+      "checksumSha256": "d6bbf69c5f697e3e53ee1bc55a175a6a9d1065bca4f22658ea4ac9a00271687f",
+      "format": "csv",
+      "compression": "none"
+    }
+  ],
+  "snapshotCacheSpecs": [
+    "kpi_total_transactions",
+    "chart_monthly_amount",
+    "table_top_companies"
+  ]
+}

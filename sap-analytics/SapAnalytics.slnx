@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="SapAnalytics.Client/SapAnalytics.Client.csproj" />
+  <Project Path="SapAnalytics.Core/SapAnalytics.Core.csproj" />
+  <Project Path="SapAnalytics.Data/SapAnalytics.Data.csproj" />
+  <Project Path="SapAnalytics.Host/SapAnalytics.Host.csproj" />
+  <Project Path="SapAnalytics.Query/SapAnalytics.Query.csproj" />
+  <Project Path="SapAnalytics.Tests/SapAnalytics.Tests.csproj" />
+</Solution>

@@ -1,0 +1,24 @@
+{
+  "id": "transaction-explorer",
+  "displayName": "Transaction Explorer",
+  "description": "Ad hoc Tier 3 query with filters for dynamic exploration.",
+  "isPredefined": true,
+  "baseEntityId": "transactions",
+  "joins": [
+    { "relationshipId": "transaction_company" },
+    { "relationshipId": "transaction_fund" }
+  ],
+  "columns": [
+    { "fieldId": "transaction_id", "visible": true },
+    { "fieldId": "company_name", "visible": true },
+    { "fieldId": "fund_name", "visible": true },
+    { "fieldId": "transaction_amount", "visible": true },
+    { "fieldId": "transaction_period", "visible": true },
+    { "fieldId": "transaction_date", "visible": true }
+  ],
+  "filters": [],
+  "sort": [
+    { "fieldId": "transaction_date", "descending": true }
+  ],
+  "previewLimit": 200
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sap-analytics.local/schemas/manifest-schema.json",
+  "title": "SAP Snapshot Manifest",
+  "description": "Contract for SAP full periodic snapshot exports consumed by the client sync pipeline.",
+  "type": "object",
+  "required": ["version", "schemaVersion", "exportedAt", "tables"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Unique snapshot version identifier (e.g. 2026-08-05T00:00:00Z or build id)"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "description": "Entity catalog / column schema version"
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "breakingSchemaChange": {
+      "type": "boolean",
+      "default": false
+    },
+    "previousVersion": {
+      "type": "string"
+    },
+    "tables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["entityId", "fileName", "downloadUrl", "byteSize", "rowCount", "checksumSha256"],
+        "properties": {
+          "entityId": { "type": "string" },
+          "fileName": { "type": "string" },
+          "downloadUrl": { "type": "string", "format": "uri" },
+          "byteSize": { "type": "integer", "minimum": 0 },
+          "rowCount": { "type": "integer", "minimum": 0 },
+          "checksumSha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "partitionKey": { "type": "string" },
+          "format": { "type": "string", "enum": ["parquet", "csv"], "default": "parquet" },
+          "compression": { "type": "string", "enum": ["zstd", "snappy", "gzip", "none"], "default": "zstd" }
+        }
+      }
+    },
+    "snapshotCacheSpecs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

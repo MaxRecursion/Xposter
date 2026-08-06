@@ -1,0 +1,59 @@
+@page "/retention"
+@using SapAnalytics.Client.Services
+@using SapAnalytics.Core.Retention
+@inject EntityCatalogService CatalogService
+
+<PageTitle>Data Retention</PageTitle>
+
+<h1>Hot / Warm / Cold Retention</h1>
+<p class="text-muted">Tiered retention model for scaling beyond client-local full snapshots toward billions of rows.</p>
+
+@if (_policy is null)
+{
+    <p>Loading policy...</p>
+}
+else
+{
+    <div class="row g-3">
+        @foreach (var tier in _policy.Tiers)
+        {
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header">@tier.Kind</div>
+                    <div class="card-body">
+                        <p>@tier.Description</p>
+                        <ul class="small mb-0">
+                            <li>Granularity: @tier.Granularity</li>
+                            <li>Sync to client: @tier.SyncToClient</li>
+                            @if (tier.RetentionMonths is not null)
+                            {
+                                <li>Retention: @tier.RetentionMonths months</li>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(tier.ServerEndpoint))
+                            {
+                                <li>Server: @tier.ServerEndpoint</li>
+                            }
+                            <li>Entities: @string.Join(", ", tier.EntityIds)</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="alert alert-info mt-4">
+        <strong>Defaults:</strong>
+        Hot @(_policy.Defaults.HotRetentionMonths) months ·
+        Warm @(_policy.Defaults.WarmRetentionMonths) months ·
+        Cold server required: @_policy.Defaults.ColdRequiresServer
+    </div>
+}
+
+@code {
+    private RetentionPolicy? _policy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _policy = await CatalogService.GetRetentionPolicyAsync();
+    }
+}

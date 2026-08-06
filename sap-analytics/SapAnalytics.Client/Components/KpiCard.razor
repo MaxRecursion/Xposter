@@ -1,0 +1,18 @@
+@namespace SapAnalytics.Client.Components
+
+<div class="card kpi-card">
+    <div class="card-body">
+        <div class="kpi-label">@Label</div>
+        <div class="kpi-value">@Value</div>
+        @if (!string.IsNullOrWhiteSpace(Subtitle))
+        {
+            <div class="kpi-subtitle">@Subtitle</div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public string? Subtitle { get; set; }
+}

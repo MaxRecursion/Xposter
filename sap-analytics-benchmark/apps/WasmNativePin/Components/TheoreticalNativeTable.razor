@@ -1,0 +1,37 @@
+@using Benchmark.Core.Timing
+
+<table class="theoretical-table">
+    <thead>
+        <tr>
+            <th>Query</th>
+            <th class="num">Wasm (measured)</th>
+            <th class="num">Native (theoretical)</th>
+            <th>Verdict</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var step in WasmSteps.Where(s => s.Step is BenchmarkStepKind.Q1ScanAgg or BenchmarkStepKind.Q2TimeSeries or BenchmarkStepKind.Q3JoinFilter or BenchmarkStepKind.Q4ForkJoin && !s.IsTheoretical))
+        {
+            var theoretical = WasmSteps.FirstOrDefault(t => t.Step == step.Step && t.IsTheoretical);
+            <tr>
+                <td>@step.Label</td>
+                <td class="num">@step.ElapsedMs.ToString("F0") ms</td>
+                <td class="num">@(theoretical?.ElapsedMs.ToString("F0") ?? "—") ms</td>
+                <td>@(step.Step == BenchmarkStepKind.Q3JoinFilter ? "Still &gt;200ms gate at 1M rows" : "Pass vs WebI minutes")</td>
+            </tr>
+        }
+        <tr class="total">
+            <td colspan="4"><strong>Native path not buildable</strong> — separate wasm module (V1/V3) is architecturally superior.</td>
+        </tr>
+    </tbody>
+</table>
+
+<style>
+    .theoretical-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .theoretical-table th, .theoretical-table td { border-bottom: 1px solid var(--border); padding: .45rem .5rem; }
+    .theoretical-table .num { text-align: right; }
+</style>
+
+@code {
+    [Parameter] public IReadOnlyList<BenchmarkStepResult> WasmSteps { get; set; } = [];
+}

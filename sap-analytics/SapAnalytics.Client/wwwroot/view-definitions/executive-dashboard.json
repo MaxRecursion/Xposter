@@ -1,0 +1,9 @@
+{
+  "id": "executive-dashboard",
+  "displayName": "Executive Dashboard",
+  "description": "Tier 1 cached KPIs and charts for senior management.",
+  "isPredefined": true,
+  "tier1CacheKey": "kpi_total_transactions",
+  "baseEntityId": "transactions",
+  "previewLimit": 50
+}

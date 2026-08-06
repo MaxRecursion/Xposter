@@ -1,0 +1,132 @@
+@page "/designer"
+@using SapAnalytics.Client.Services
+@using SapAnalytics.Core.Metadata
+@using SapAnalytics.Core.Views
+@using SapAnalytics.Query
+@inject EntityCatalogService CatalogService
+@inject TieredQueryService QueryService
+
+<PageTitle>View Designer</PageTitle>
+
+<h1>Dynamic View Designer</h1>
+<p class="text-muted">Build safe parameterized views from the entity catalog — no raw SQL from users.</p>
+
+@if (_catalog is null)
+{
+    <p>Loading catalog...</p>
+}
+else
+{
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Base entity</label>
+            <select class="form-select" @bind="_baseEntityId">
+                @foreach (var entity in _catalog.Entities)
+                {
+                    <option value="@entity.Id">@entity.DisplayName</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Filter field</label>
+            <select class="form-select" @bind="_filterFieldId">
+                <option value="">None</option>
+                @foreach (var field in GetFields(_baseEntityId))
+                {
+                    <option value="@field.Id">@field.DisplayName</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Filter value</label>
+            <input class="form-control" @bind="_filterValue" />
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-primary" @onclick="PreviewView">Preview</button>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Columns</label>
+        <div class="d-flex flex-wrap gap-2">
+            @foreach (var field in GetFields(_baseEntityId))
+            {
+                <label class="form-check me-3">
+                    <input class="form-check-input" type="checkbox" checked="@_selectedColumns.Contains(field.Id)"
+                           @onchange="e => ToggleColumn(field.Id, (bool)e.Value!)" />
+                    <span class="form-check-label">@field.DisplayName</span>
+                </label>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_generatedSql))
+    {
+        <div class="alert alert-secondary">
+            <strong>Generated SQL</strong>
+            <pre class="mb-0 mt-2">@_generatedSql</pre>
+        </div>
+    }
+
+    @if (_result is not null)
+    {
+        <DataGrid Result="_result" />
+    }
+}
+
+@code {
+    private EntityCatalog? _catalog;
+    private string _baseEntityId = "transactions";
+    private string _filterFieldId = "";
+    private string _filterValue = "";
+    private HashSet<string> _selectedColumns = new(StringComparer.Ordinal)
+    {
+        "transaction_id", "transaction_amount", "transaction_period"
+    };
+    private string? _generatedSql;
+    private SapAnalytics.Core.Query.QueryResult? _result;
+    private readonly SqlGenerator _generator = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _catalog = await CatalogService.GetCatalogAsync();
+    }
+
+    private IEnumerable<FieldDefinition> GetFields(string entityId) =>
+        _catalog?.Entities.FirstOrDefault(e => e.Id == entityId)?.Fields ?? [];
+
+    private void ToggleColumn(string fieldId, bool selected)
+    {
+        if (selected) _selectedColumns.Add(fieldId);
+        else _selectedColumns.Remove(fieldId);
+    }
+
+    private async Task PreviewView()
+    {
+        if (_catalog is null) return;
+
+        var filters = new List<ViewFilter>();
+        if (!string.IsNullOrWhiteSpace(_filterFieldId) && !string.IsNullOrWhiteSpace(_filterValue))
+        {
+            filters.Add(new ViewFilter
+            {
+                FieldId = _filterFieldId,
+                Operator = FilterOperator.Equals,
+                Value = _filterValue
+            });
+        }
+
+        var view = new ViewDefinition
+        {
+            Id = "dynamic-preview",
+            DisplayName = "Dynamic Preview",
+            BaseEntityId = _baseEntityId,
+            Columns = _selectedColumns.Select(c => new ViewColumn { FieldId = c, Visible = true }).ToList(),
+            Filters = filters,
+            PreviewLimit = 200
+        };
+
+        _generatedSql = _generator.Generate(view, _catalog);
+        _result = await QueryService.ExecuteViewAsync(view, forceSql: true);
+    }
+}

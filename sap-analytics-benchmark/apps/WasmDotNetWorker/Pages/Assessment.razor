@@ -1,0 +1,120 @@
+@page "/assessment"
+@using Benchmark.Core
+@using Benchmark.Core.Query
+@using Benchmark.Core.Timing
+@using WasmDotNetWorker.Components
+@using WasmDotNetWorker.Services
+@inject WorkerQueryEngineProxy QueryEngine
+@inject BenchmarkSuite Suite
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Assessment — V3 Web Worker</PageTitle>
+
+<div class="assessment">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">@ApproachMetadata.GetDisplayName(ApproachKind.WasmDotNetWorker)</p>
+            <h1>.NET Web Worker Gateway</h1>
+            <p class="subtitle">@ApproachMetadata.GetRecommendation(ApproachKind.WasmDotNetWorker) — C# IQueryEngine on main thread, duckdb-wasm in dedicated worker (.NET 11 blazorwebworker evolution).</p>
+        </div>
+        <div class="actions">
+            <button class="btn primary" disabled="@_running" @onclick="RunSuiteAsync">Run Full Benchmark Suite</button>
+            <button class="btn" disabled="@(_result is null)" @onclick="ExportJsonAsync">Export Timing JSON</button>
+        </div>
+    </header>
+
+    <div class="alert warn">
+        <strong>V3 topology:</strong> Main-thread Blazor calls <code>IQueryEngine</code> → JS gateway → dedicated query worker hosting duckdb-wasm (separate 4 GiB heap).
+        Full <code>blazorwebworker</code> / <code>WebWorkerClient</code> with C# inside the worker is the .NET 11 target; this spike uses the worker boundary with measurable round-trip overhead.
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_status))
+    {
+        <div class="status">@_status</div>
+    }
+
+    @if (_result is not null)
+    {
+        <TimingWaterfall Result="_result" />
+    }
+
+    <div class="panels">
+        <section class="panel">
+            <h2>Query Results</h2>
+            <ResultGrid Columns="_gridColumns" Rows="_gridRows" />
+        </section>
+        <section class="panel">
+            <h2>Chart — Monthly Totals</h2>
+            <SimpleBarChart Labels="_chartLabels" Values="_chartValues" />
+        </section>
+    </div>
+</div>
+
+@code {
+    private bool _running;
+    private string _status = "Ready.";
+    private BenchmarkRunResult? _result;
+    private IReadOnlyList<string> _gridColumns = [];
+    private IReadOnlyList<IReadOnlyList<object?>> _gridRows = [];
+    private IReadOnlyList<string> _chartLabels = [];
+    private IReadOnlyList<double> _chartValues = [];
+    private IJSObjectReference? _gateway;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            _gateway = await JS.InvokeAsync<IJSObjectReference>("import", "./js/worker-gateway.js");
+    }
+
+    private async Task RunSuiteAsync()
+    {
+        _running = true;
+        _status = "Running suite via worker gateway…";
+        StateHasChanged();
+
+        try
+        {
+            _result = await Suite.RunAsync(QueryEngine, BindGridAsync, BindChartAsync);
+            _status = $"Completed in {_result.TotalMs:F0} ms (queries: {_result.QueryMs:F0} ms). Worker: {QueryEngine.StatusMessage}";
+        }
+        catch (Exception ex)
+        {
+            _status = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private Task BindGridAsync(QueryResultSet data)
+    {
+        _gridColumns = data.Columns;
+        _gridRows = data.Rows.Take(BenchmarkQueries.DisplayRowCap).ToList();
+        return Task.CompletedTask;
+    }
+
+    private Task BindChartAsync(QueryResultSet data)
+    {
+        var periodIdx = data.Columns.ToList().FindIndex(c => c.Equals("period", StringComparison.OrdinalIgnoreCase));
+        var amountIdx = data.Columns.ToList().FindIndex(c => c.Contains("amount", StringComparison.OrdinalIgnoreCase));
+        if (periodIdx < 0) periodIdx = 0;
+        if (amountIdx < 0) amountIdx = Math.Min(1, data.Columns.Count - 1);
+        _chartLabels = data.Rows.Select(r => r[periodIdx]?.ToString() ?? "").Take(36).ToList();
+        _chartValues = data.Rows.Select(r => Convert.ToDouble(r[amountIdx] ?? 0)).Take(36).ToList();
+        return Task.CompletedTask;
+    }
+
+    private async Task ExportJsonAsync()
+    {
+        if (_result is null || _gateway is null) return;
+        await _gateway.InvokeVoidAsync("downloadJson", "v3-webworker-timing.json", _result.ToExportJson());
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await QueryEngine.DisposeAsync();
+        if (_gateway is not null) await _gateway.DisposeAsync();
+    }
+}

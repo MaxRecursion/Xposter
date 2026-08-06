@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "1.0",
+  "entities": [
+    {
+      "id": "companies",
+      "displayName": "Companies",
+      "duckTableName": "companies",
+      "kind": "Dimension",
+      "fields": [
+        { "id": "company_id", "columnName": "company_id", "displayName": "Company ID", "dataType": "Integer", "isPrimaryKey": true, "allowAggregate": false },
+        { "id": "company_name", "columnName": "name", "displayName": "Company Name", "dataType": "String", "allowGroup": true },
+        { "id": "company_region", "columnName": "region", "displayName": "Region", "dataType": "String", "allowGroup": true },
+        { "id": "company_group_id", "columnName": "group_id", "displayName": "Group ID", "dataType": "Integer", "allowGroup": true }
+      ]
+    },
+    {
+      "id": "transactions",
+      "displayName": "Transactions",
+      "duckTableName": "transactions",
+      "kind": "Fact",
+      "partitionKeys": ["period"],
+      "fields": [
+        { "id": "transaction_id", "columnName": "transaction_id", "displayName": "Transaction ID", "dataType": "Integer", "isPrimaryKey": true, "allowAggregate": true },
+        { "id": "transaction_company_id", "columnName": "company_id", "displayName": "Company ID", "dataType": "Integer", "isForeignKey": true, "foreignEntityId": "companies", "foreignColumn": "company_id" },
+        { "id": "transaction_fund_id", "columnName": "fund_id", "displayName": "Fund ID", "dataType": "Integer", "isForeignKey": true, "foreignEntityId": "funds", "foreignColumn": "fund_id" },
+        { "id": "transaction_amount", "columnName": "amount", "displayName": "Amount", "dataType": "Decimal", "allowAggregate": true },
+        { "id": "transaction_period", "columnName": "period", "displayName": "Period", "dataType": "String", "allowGroup": true },
+        { "id": "transaction_date", "columnName": "transaction_date", "displayName": "Transaction Date", "dataType": "Date", "allowGroup": true }
+      ]
+    },
+    {
+      "id": "funds",
+      "displayName": "Funds",
+      "duckTableName": "funds",
+      "kind": "Dimension",
+      "fields": [
+        { "id": "fund_id", "columnName": "fund_id", "displayName": "Fund ID", "dataType": "Integer", "isPrimaryKey": true },
+        { "id": "fund_name", "columnName": "name", "displayName": "Fund Name", "dataType": "String", "allowGroup": true },
+        { "id": "fund_category", "columnName": "category", "displayName": "Category", "dataType": "String", "allowGroup": true }
+      ]
+    },
+    {
+      "id": "users",
+      "displayName": "Users",
+      "duckTableName": "users",
+      "kind": "Dimension",
+      "fields": [
+        { "id": "user_id", "columnName": "user_id", "displayName": "User ID", "dataType": "Integer", "isPrimaryKey": true },
+        { "id": "user_name", "columnName": "name", "displayName": "User Name", "dataType": "String", "allowGroup": true },
+        { "id": "user_region", "columnName": "region", "displayName": "Region", "dataType": "String", "allowGroup": true },
+        { "id": "user_company_id", "columnName": "company_id", "displayName": "Company ID", "dataType": "Integer", "isForeignKey": true, "foreignEntityId": "companies", "foreignColumn": "company_id" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "transaction_company",
+      "fromEntityId": "transactions",
+      "fromColumn": "company_id",
+      "toEntityId": "companies",
+      "toColumn": "company_id",
+      "joinType": "Left"
+    },
+    {
+      "id": "transaction_fund",
+      "fromEntityId": "transactions",
+      "fromColumn": "fund_id",
+      "toEntityId": "funds",
+      "toColumn": "fund_id",
+      "joinType": "Left"
+    },
+    {
+      "id": "user_company",
+      "fromEntityId": "users",
+      "fromColumn": "company_id",
+      "toEntityId": "companies",
+      "toColumn": "company_id",
+      "joinType": "Left"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+@page "/"
+@using SapAnalytics.Client.Services
+@using SapAnalytics.Core.Cache
+@inject TieredQueryService QueryService
+@inject SnapshotSyncClientService SyncService
+
+<PageTitle>Executive Dashboard</PageTitle>
+
+<h1>Executive Dashboard</h1>
+<p class="text-muted">Tier 1 precomputed snapshots — instant bind without SQL on navigation.</p>
+
+@if (_loading)
+{
+    <p>Loading dashboard...</p>
+}
+else if (_cache is null)
+{
+    <div class="alert alert-warning">
+        No snapshot cache available.
+        <button class="btn btn-sm btn-primary ms-2" @onclick="RunSampleSync">Load sample data</button>
+    </div>
+}
+else
+{
+    <p class="small text-muted">Data as of @_cache.GeneratedAt.ToLocalTime().ToString("g") · Snapshot @_cache.SnapshotVersion</p>
+
+    <div class="row g-3 mb-4">
+        @if (_cache.Entries.TryGetValue("kpi_total_transactions", out var kpiTx) && kpiTx.Kpi is not null)
+        {
+            <div class="col-md-4">
+                <KpiCard Label="@kpiTx.Kpi.Label" Value="@kpiTx.Kpi.Value" Subtitle="@kpiTx.Kpi.Subtitle" />
+            </div>
+        }
+        @if (_cache.Entries.TryGetValue("kpi_total_amount", out var kpiAmt) && kpiAmt.Kpi is not null)
+        {
+            <div class="col-md-4">
+                <KpiCard Label="@kpiAmt.Kpi.Label" Value="@kpiAmt.Kpi.Value" Subtitle="@kpiAmt.Kpi.Subtitle" />
+            </div>
+        }
+        @if (_cache.Entries.TryGetValue("kpi_company_count", out var kpiCo) && kpiCo.Kpi is not null)
+        {
+            <div class="col-md-4">
+                <KpiCard Label="@kpiCo.Kpi.Label" Value="@kpiCo.Kpi.Value" Subtitle="@kpiCo.Kpi.Subtitle" />
+            </div>
+        }
+    </div>
+
+  <div class="row g-3">
+        <div class="col-lg-6">
+            @if (_cache.Entries.TryGetValue("chart_monthly_amount", out var chart) && chart.Chart is not null)
+            {
+                <ChartPanel Chart="chart.Chart" />
+            }
+        </div>
+        <div class="col-lg-6">
+            @if (_cache.Entries.TryGetValue("table_top_companies", out var table) && table.Table is not null)
+            {
+                <div class="card">
+                    <div class="card-header">Top Companies</div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    @foreach (var h in table.Table.Headers)
+                                    {
+                                        <th>@h</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in table.Table.Rows)
+                                {
+                                    <tr>
+                                        @foreach (var cell in row)
+                                        {
+                                            <td>@cell</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private Tier1SnapshotBundle? _cache;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCache();
+    }
+
+    private async Task LoadCache()
+    {
+        _loading = true;
+        _cache = await QueryService.GetTier1CacheAsync();
+        _loading = false;
+    }
+
+    private async Task RunSampleSync()
+    {
+        _loading = true;
+        try
+        {
+            await SyncService.SyncFromManifestUrlAsync("sample-data/manifest-sample.json");
+            QueryService.InvalidateTier1Cache();
+            await LoadCache();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -1,0 +1,26 @@
+{
+  "id": "company-summary",
+  "displayName": "Company Summary",
+  "description": "Tier 2 materialized view of company transaction totals.",
+  "isPredefined": true,
+  "materializedViewName": "mv_company_transaction_summary",
+  "baseEntityId": "transactions",
+  "joins": [
+    { "relationshipId": "transaction_company" }
+  ],
+  "columns": [
+    { "fieldId": "company_name", "visible": true },
+    { "fieldId": "transaction_amount", "visible": false }
+  ],
+  "aggregations": [
+    { "fieldId": "transaction_amount", "function": "Sum", "alias": "total_amount" },
+    { "fieldId": "transaction_id", "function": "Count", "alias": "tx_count" }
+  ],
+  "groupings": [
+    { "fieldId": "company_name" }
+  ],
+  "sort": [
+    { "fieldId": "transaction_amount", "descending": true }
+  ],
+  "previewLimit": 100
+}

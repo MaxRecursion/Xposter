@@ -1,0 +1,36 @@
+@namespace SapAnalytics.Client.Components
+@using SapAnalytics.Core.Cache
+
+@if (Chart is null)
+{
+    <p class="text-muted">No chart data.</p>
+}
+else
+{
+    <div class="card">
+        <div class="card-header">@Chart.Title</div>
+        <div class="card-body">
+            @foreach (var series in Chart.Series)
+            {
+                <div class="mb-3">
+                    <strong>@series.Name</strong>
+                    <div class="chart-bars">
+                        @for (var i = 0; i < Chart.Labels.Count && i < series.Values.Count; i++)
+                        {
+                            var pct = series.Values.Max() > 0 ? (series.Values[i] / series.Values.Max() * 100) : 0;
+                            <div class="chart-row">
+                                <span class="chart-label">@Chart.Labels[i]</span>
+                                <div class="chart-bar" style="width: @(pct)%"></div>
+                                <span class="chart-value">@series.Values[i]</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public SnapshotChartSeries? Chart { get; set; }
+}

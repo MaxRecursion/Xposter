@@ -1,0 +1,49 @@
+@if (Columns.Count == 0)
+{
+    <p class="muted">No rows to display.</p>
+}
+else
+{
+    <div class="grid-wrap">
+        <table class="result-grid">
+            <thead>
+                <tr>
+                    @foreach (var col in Columns)
+                    {
+                        <th>@col</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                <Virtualize TItem="IReadOnlyList<object?>" Items="@_rowList" Context="row" ItemSize="28">
+                    <tr>
+                        @foreach (var cell in row)
+                        {
+                            <td>@FormatCell(cell)</td>
+                        }
+                    </tr>
+                </Virtualize>
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<string> Columns { get; set; } = [];
+    [Parameter] public IReadOnlyList<IReadOnlyList<object?>> Rows { get; set; } = [];
+
+    private List<IReadOnlyList<object?>> _rowList = [];
+
+    protected override void OnParametersSet()
+    {
+        _rowList = Rows.ToList();
+    }
+
+    private static string FormatCell(object? value) => value switch
+    {
+        null => "",
+        double d => d.ToString("N2"),
+        decimal m => m.ToString("N2"),
+        _ => value.ToString() ?? ""
+    };
+}

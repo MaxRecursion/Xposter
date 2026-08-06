@@ -1,0 +1,55 @@
+@page "/reports"
+@using SapAnalytics.Client.Services
+@using SapAnalytics.Core.Views
+@inject EntityCatalogService CatalogService
+@inject TieredQueryService QueryService
+
+<PageTitle>Reports</PageTitle>
+
+<h1>Predefined Reports</h1>
+<p class="text-muted">Tier 1 / Tier 2 / Tier 3 read path with automatic fallback.</p>
+
+<div class="row mb-3">
+    <div class="col-md-4">
+        <label class="form-label">Report</label>
+        <select class="form-select" @bind="_selectedViewId">
+            @foreach (var view in _views)
+            {
+                <option value="@view.Id">@view.DisplayName</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-4 d-flex align-items-end">
+        <button class="btn btn-primary me-2" @onclick="RunReport">Run</button>
+        <button class="btn btn-outline-secondary" @onclick="RunForceSql">Force Tier 3 SQL</button>
+    </div>
+</div>
+
+@if (_result is not null)
+{
+    <DataGrid Result="_result" />
+}
+
+@code {
+    private List<ViewDefinition> _views = [];
+    private string _selectedViewId = "";
+    private SapAnalytics.Core.Query.QueryResult? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _views = (await CatalogService.GetPredefinedViewsAsync()).ToList();
+        _selectedViewId = _views.FirstOrDefault()?.Id ?? "";
+    }
+
+    private async Task RunReport()
+    {
+        var view = _views.First(v => v.Id == _selectedViewId);
+        _result = await QueryService.ExecuteViewAsync(view);
+    }
+
+    private async Task RunForceSql()
+    {
+        var view = _views.First(v => v.Id == _selectedViewId);
+        _result = await QueryService.ExecuteViewAsync(view, forceSql: true);
+    }
+}

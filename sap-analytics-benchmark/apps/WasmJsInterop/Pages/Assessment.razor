@@ -1,0 +1,117 @@
+@page "/assessment"
+@using Benchmark.Core
+@using Benchmark.Core.Query
+@using Benchmark.Core.Timing
+@using WasmJsInterop.Components
+@using WasmJsInterop.Services
+@inject IQueryEngine QueryEngine
+@inject BenchmarkSuite Suite
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Assessment — V1 JS Interop</PageTitle>
+
+<div class="assessment">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">@ApproachMetadata.GetDisplayName(ApproachKind.WasmJsInterop)</p>
+            <h1>DuckDB-WASM Benchmark Assessment</h1>
+            <p class="subtitle">@ApproachMetadata.GetRecommendation(ApproachKind.WasmJsInterop) — 1M heterogeneous rows, eh bundle, local assets.</p>
+        </div>
+        <div class="actions">
+            <button class="btn primary" disabled="@_running" @onclick="RunSuiteAsync">Run Full Benchmark Suite</button>
+            <button class="btn" disabled="@(_result is null)" @onclick="ExportJsonAsync">Export Timing JSON</button>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_status))
+    {
+        <div class="status">@_status</div>
+    }
+
+    @if (_result?.Error is not null)
+    {
+        <div class="alert error">@_result.Error</div>
+    }
+
+    @if (_result is not null)
+    {
+        <TimingWaterfall Result="_result" />
+    }
+
+    <div class="panels">
+        <section class="panel">
+            <h2>Query Results <span class="muted">(max @BenchmarkQueries.DisplayRowCap rows)</span></h2>
+            <ResultGrid Columns="_gridColumns" Rows="_gridRows" />
+        </section>
+        <section class="panel">
+            <h2>Chart — Monthly Totals</h2>
+            <SimpleBarChart Labels="_chartLabels" Values="_chartValues" />
+        </section>
+    </div>
+</div>
+
+@code {
+    private bool _running;
+    private string _status = "Ready.";
+    private BenchmarkRunResult? _result;
+    private IReadOnlyList<string> _gridColumns = [];
+    private IReadOnlyList<IReadOnlyList<object?>> _gridRows = [];
+    private IReadOnlyList<string> _chartLabels = [];
+    private IReadOnlyList<double> _chartValues = [];
+
+    private async Task RunSuiteAsync()
+    {
+        _running = true;
+        _status = "Running benchmark suite…";
+        StateHasChanged();
+
+        try
+        {
+            _result = await Suite.RunAsync(
+                QueryEngine,
+                BindGridAsync,
+                BindChartAsync);
+
+            _status = $"Completed in {_result.TotalMs:F0} ms (queries: {_result.QueryMs:F0} ms).";
+        }
+        catch (Exception ex)
+        {
+            _status = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private Task BindGridAsync(QueryResultSet data)
+    {
+        _gridColumns = data.Columns;
+        _gridRows = data.Rows.Take(BenchmarkQueries.DisplayRowCap).ToList();
+        return Task.CompletedTask;
+    }
+
+    private Task BindChartAsync(QueryResultSet data)
+    {
+        var periodIdx = data.Columns.ToList().FindIndex(c => c.Equals("period", StringComparison.OrdinalIgnoreCase));
+        var amountIdx = data.Columns.ToList().FindIndex(c => c.Contains("amount", StringComparison.OrdinalIgnoreCase));
+        if (periodIdx < 0) periodIdx = 0;
+        if (amountIdx < 0) amountIdx = Math.Min(1, data.Columns.Count - 1);
+
+        _chartLabels = data.Rows.Select(r => r[periodIdx]?.ToString() ?? "").Take(36).ToList();
+        _chartValues = data.Rows
+            .Select(r => Convert.ToDouble(r[amountIdx] ?? 0))
+            .Take(36)
+            .ToList();
+        return Task.CompletedTask;
+    }
+
+    private async Task ExportJsonAsync()
+    {
+        if (_result is null) return;
+        await JS.InvokeVoidAsync("BenchmarkBridge.downloadJson", "v1-timing.json", _result.ToExportJson());
+    }
+
+    public ValueTask DisposeAsync() => QueryEngine.DisposeAsync();
+}

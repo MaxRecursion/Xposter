@@ -1,0 +1,12 @@
+bin/
+obj/
+spikes/data/out/
+apps/*/wwwroot/data/*.csv
+apps/WasmNativePin/native-src/build/
+apps/WasmNativePin/native-src/duckdb-src/
+apps/WasmNativePin/native-src/duckdb.cpp
+apps/WasmNativePin/native-src/duckdb.hpp
+apps/WasmNativePin/native-src/duckdb.h
+apps/WasmNativePin/native-src/duckdb_extension.h
+*.user
+.DS_Store

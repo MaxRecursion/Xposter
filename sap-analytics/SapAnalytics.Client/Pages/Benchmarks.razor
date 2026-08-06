@@ -1,0 +1,72 @@
+@page "/benchmarks"
+@using SapAnalytics.Client.Services
+@inject BenchmarkService BenchmarkService
+
+<PageTitle>Benchmarks</PageTitle>
+
+<h1>Performance Benchmarks</h1>
+<p class="text-muted">Query p50/p95 on local dataset (50k sample rows; scale via scripts/generate-large-dataset.mjs).</p>
+
+<button class="btn btn-primary mb-3" @onclick="RunBenchmarks" disabled="@_running">Run suite</button>
+
+@if (_result is not null)
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <p>Run at @_result.RunAt.ToLocalTime().ToString("g")</p>
+            @if (_result.Memory is not null)
+            {
+                <p class="small">
+                    JS heap: @FormatMb(_result.Memory.JsHeapUsedBytes)
+                    · OPFS: @FormatMb(_result.Memory.OpfsUsageBytes) / @FormatMb(_result.Memory.OpfsQuotaBytes)
+                </p>
+            }
+        </div>
+    </div>
+    <table class="table table-sm table-striped">
+        <thead>
+            <tr>
+                <th>Query</th>
+                <th>p50 (ms)</th>
+                <th>p95 (ms)</th>
+                <th>min</th>
+                <th>max</th>
+                <th>rows</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var q in _result.Queries)
+            {
+                <tr>
+                    <td>@q.Name</td>
+                    <td>@q.P50Ms</td>
+                    <td>@q.P95Ms</td>
+                    <td>@q.MinMs</td>
+                    <td>@q.MaxMs</td>
+                    <td>@q.RowCount</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private SapAnalytics.Core.Benchmark.BenchmarkSuiteResult? _result;
+    private bool _running;
+
+    private async Task RunBenchmarks()
+    {
+        _running = true;
+        try
+        {
+            _result = await BenchmarkService.RunSuiteAsync();
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private static string FormatMb(long? bytes) =>
+        bytes is null ? "—" : $"{bytes.Value / (1024.0 * 1024.0):N1} MB";
+}

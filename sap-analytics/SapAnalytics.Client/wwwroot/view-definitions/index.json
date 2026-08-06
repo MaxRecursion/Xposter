@@ -1,0 +1,7 @@
+{
+  "views": [
+    "executive-dashboard",
+    "company-summary",
+    "transaction-explorer"
+  ]
+}

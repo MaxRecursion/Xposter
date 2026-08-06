@@ -1,0 +1,81 @@
+@page "/sync"
+@using SapAnalytics.Client.Services
+@using SapAnalytics.Core.Sync
+@inject SnapshotSyncClientService SyncService
+@inject IOpfsStorage Opfs
+@implements IDisposable
+
+<PageTitle>Data Sync</PageTitle>
+
+<h1>Snapshot Sync</h1>
+<p class="text-muted">Full periodic snapshot download, verify, atomic flip, and retention of N-1 generation.</p>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <p><strong>Phase:</strong> @_state.Phase</p>
+        <p><strong>Active version:</strong> @_state.ActiveVersion ?? "—"</p>
+        <p><strong>Last successful sync:</strong> @(_state.LastSuccessfulSync?.ToLocalTime().ToString("g") ?? "—")</p>
+        @if (_state.ErrorMessage is not null)
+        {
+            <div class="alert alert-danger">@_state.ErrorMessage</div>
+        }
+        @if (_state.Progress is not null)
+        {
+            <p>Files: @_state.Progress.FilesCompleted / @_state.Progress.FilesTotal</p>
+            @if (!string.IsNullOrWhiteSpace(_state.Progress.CurrentFile))
+            {
+                <p class="small text-muted">Current: @_state.Progress.CurrentFile</p>
+            }
+        }
+        @if (_estimate is not null)
+        {
+            <p class="small text-muted">
+                OPFS: @FormatBytes(_estimate.UsageBytes) / @FormatBytes(_estimate.QuotaBytes)
+            </p>
+        }
+        <button class="btn btn-primary me-2" @onclick="RunSampleSync" disabled="@_busy">Sync sample snapshot</button>
+        <button class="btn btn-outline-secondary" @onclick="RefreshEstimate" disabled="@_busy">Refresh storage</button>
+    </div>
+</div>
+
+@code {
+    private SyncState _state = new();
+    private SapAnalytics.Data.Sync.StorageEstimate? _estimate;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _state = SyncService.CurrentState;
+        SyncService.StateChanged += OnStateChanged;
+        await RefreshEstimate();
+    }
+
+    private void OnStateChanged(SyncState state)
+    {
+        _state = state;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RunSampleSync()
+    {
+        _busy = true;
+        try
+        {
+            await SyncService.SyncFromManifestUrlAsync("sample-data/manifest-sample.json");
+            await RefreshEstimate();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RefreshEstimate()
+    {
+        _estimate = await Opfs.GetEstimateAsync();
+    }
+
+    private static string FormatBytes(long bytes) => $"{bytes / (1024.0 * 1024.0):N1} MB";
+
+    public void Dispose() => SyncService.StateChanged -= OnStateChanged;
+}

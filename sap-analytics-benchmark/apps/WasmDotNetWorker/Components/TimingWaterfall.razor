@@ -1,0 +1,39 @@
+@using Benchmark.Core.Timing
+
+@if (Result is null)
+{
+    <p class="muted">No timing data yet.</p>
+}
+else
+{
+    <div class="waterfall">
+        <table>
+            <thead>
+                <tr>
+                    <th>Step</th>
+                    <th class="num">ms</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var step in Result.Steps)
+                {
+                    <tr class="@(step.IsTheoretical ? "theoretical" : "")">
+                        <td>@step.Label</td>
+                        <td class="num">@step.ElapsedMs.ToString("F1")</td>
+                        <td>@(step.Notes ?? "")@(step.IsTheoretical ? " (theoretical)" : "")</td>
+                    </tr>
+                }
+                <tr class="total">
+                    <td><strong>Total</strong></td>
+                    <td class="num"><strong>@Result.TotalMs.ToString("F1")</strong></td>
+                    <td>Query subtotal: @Result.QueryMs.ToString("F1") ms</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public BenchmarkRunResult? Result { get; set; }
+}

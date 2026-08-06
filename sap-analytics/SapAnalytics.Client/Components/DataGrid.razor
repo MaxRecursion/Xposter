@@ -1,0 +1,39 @@
+@namespace SapAnalytics.Client.Components
+@using SapAnalytics.Core.Query
+
+@if (Result is null)
+{
+    <p class="text-muted">No data.</p>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+            <thead>
+                <tr>
+                    @foreach (var col in Result.Columns)
+                    {
+                        <th>@col.Name</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Result.Rows.Take(MaxRows))
+                {
+                    <tr>
+                        @foreach (var cell in row.Values)
+                        {
+                            <td>@cell</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <small class="text-muted">Showing @(Math.Min(Result.Rows.Count, MaxRows)) of @Result.Rows.Count rows · @Result.SourceTier · @Result.ElapsedMs ms</small>
+}
+
+@code {
+    [Parameter] public QueryResult? Result { get; set; }
+    [Parameter] public int MaxRows { get; set; } = 200;
+}

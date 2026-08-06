@@ -1,0 +1,34 @@
+{
+  "profiles": {
+    "V1-JsInterop": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "https://localhost:7151;http://localhost:5151",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "BENCHMARK_VARIANT": "WasmJsInterop"
+      }
+    },
+    "V2-NativePin": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "https://localhost:7152;http://localhost:5152",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "BENCHMARK_VARIANT": "WasmNativePin"
+      }
+    },
+    "V3-WebWorker": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "https://localhost:7153;http://localhost:5153",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "BENCHMARK_VARIANT": "WasmDotNetWorker"
+      }
+    }
+  }
+}
