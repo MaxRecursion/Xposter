@@ -28,7 +28,7 @@
         <strong>Native path (no duckdb-wasm fallback):</strong>
         <ul>
             <li>DuckDB amalgamation compiled with .NET’s pinned <code>Emscripten 3.1.56</code> (<code>-fwasm-exceptions</code>, <code>DUCKDB_NO_THREADS</code>).</li>
-            <li>Linked into the Blazor WASM module via <code>NativeFileReference</code> + P/Invoke (<code>libduckdb_native.a</code>).</li>
+            <li>Linked into the Blazor WASM module via <code>NativeFileReference</code> + P/Invoke (<code>duckdb_native.o</code>).</li>
             <li>CSV loaded through MEMFS (<code>read_csv_auto</code>); catalog is in-memory.</li>
             <li>Link diagnostic: <code>@QueryEngine.LinkDiagnostic</code></li>
         </ul>
@@ -37,6 +37,11 @@
     @if (!string.IsNullOrWhiteSpace(_status))
     {
         <div class="status">@_status</div>
+    }
+
+    @if (_result?.Error is not null)
+    {
+        <div class="alert error">@_result.Error</div>
     }
 
     @if (_result is not null)
@@ -78,7 +83,10 @@
                 BindGridAsync,
                 BindChartAsync);
 
-            _status = $"Completed in {_result.TotalMs:F0} ms (native queries: {_result.QueryMs:F0} ms). {QueryEngine.StatusMessage}";
+            if (_result.Error is not null)
+                _status = $"Failed: {_result.Error}";
+            else
+                _status = $"Completed in {_result.TotalMs:F0} ms (native queries: {_result.QueryMs:F0} ms). {QueryEngine.StatusMessage}";
         }
         catch (Exception ex)
         {

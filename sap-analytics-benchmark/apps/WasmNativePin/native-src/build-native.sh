@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT_DIR="$ROOT/../Native"
 SRC="$ROOT/duckdb-src"
 BUILD_DIR="$ROOT/build/cmake"
-mkdir -p "$OUT_DIR" "$BUILD_DIR"
+mkdir -p "$OUT_DIR" "$BUILD_DIR" "$ROOT/build"
 
 EMSDK_VER="${EMSDK_VER:-10.0.10}"
 DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
@@ -61,35 +61,51 @@ emcmake cmake -S "$SRC" -B "$BUILD_DIR" \
 
 echo "Building libduckdb_static (jobs=$JOBS)…"
 cmake --build "$BUILD_DIR" --target duckdb_static -j"$JOBS"
-
-# Locate static archive (name varies by cmake version)
-LIB_CANDIDATE=""
-for cand in \
-  "$BUILD_DIR/src/libduckdb_static.a" \
-  "$BUILD_DIR/libduckdb_static.a" \
-  "$BUILD_DIR/src/libduckdb.a"
-do
-  if [[ -f "$cand" ]]; then
-    LIB_CANDIDATE="$cand"
-    break
-  fi
-done
-if [[ -z "$LIB_CANDIDATE" ]]; then
-  echo "Could not find libduckdb_static.a under $BUILD_DIR" >&2
-  find "$BUILD_DIR" -name '*.a' | head -40
-  exit 1
-fi
+cmake --build "$BUILD_DIR" --target core_functions_extension -j"$JOBS" || true
 
 echo "Compiling duckdb_bridge.c…"
 emcc $C_FLAGS -I"$ROOT" -I"$SRC/src/include" -c "$ROOT/duckdb_bridge.c" -o "$ROOT/build/duckdb_bridge.o"
 
-echo "Merging into libduckdb_native.a…"
-rm -f "$OUT_DIR/libduckdb_native.a"
-cp "$LIB_CANDIDATE" "$OUT_DIR/libduckdb_native.a"
-llvm-ar r "$OUT_DIR/libduckdb_native.a" "$ROOT/build/duckdb_bridge.o"
-llvm-ranlib "$OUT_DIR/libduckdb_native.a"
+# Companion archives required by libduckdb_static (not folded into it).
+LIBS=(
+  "$BUILD_DIR/src/libduckdb_static.a"
+  "$BUILD_DIR/extension/core_functions/libcore_functions_extension.a"
+  "$BUILD_DIR/third_party/re2/libduckdb_re2.a"
+  "$BUILD_DIR/third_party/libpg_query/libduckdb_pg_query.a"
+  "$BUILD_DIR/third_party/utf8proc/libduckdb_utf8proc.a"
+  "$BUILD_DIR/third_party/yyjson/libduckdb_yyjson.a"
+  "$BUILD_DIR/third_party/fmt/libduckdb_fmt.a"
+  "$BUILD_DIR/third_party/fsst/libduckdb_fsst.a"
+  "$BUILD_DIR/third_party/hyperloglog/libduckdb_hyperloglog.a"
+  "$BUILD_DIR/third_party/fastpforlib/libduckdb_fastpforlib.a"
+  "$BUILD_DIR/third_party/mbedtls/libduckdb_mbedtls.a"
+  "$BUILD_DIR/third_party/miniz/libduckdb_miniz.a"
+  "$BUILD_DIR/third_party/skiplist/libduckdb_skiplistlib.a"
+  "$BUILD_DIR/third_party/zstd/libduckdb_zstd.a"
+)
+
+for lib in "${LIBS[@]}"; do
+  if [[ ! -f "$lib" ]]; then
+    echo "Missing required archive: $lib" >&2
+    exit 1
+  fi
+done
+
+# FileName must be duckdb_native (no lib prefix) so DllImport("duckdb_native") matches
+# the Blazor PInvoke module name. Whole-archive into one .o so wasm-ld keeps all members.
+echo "Creating duckdb_native.o (whole-archive of DuckDB + deps + bridge)…"
+rm -f "$OUT_DIR/duckdb_native.o" "$OUT_DIR/duckdb_native.a" "$OUT_DIR/libduckdb_native.a"
+llvm-ar rcs "$OUT_DIR/duckdb_native.a" "$ROOT/build/duckdb_bridge.o"
+
+ARGS=()
+for lib in "${LIBS[@]}"; do
+  ARGS+=(-Wl,--whole-archive "$lib" -Wl,--no-whole-archive)
+done
+ARGS+=(-Wl,--whole-archive "$OUT_DIR/duckdb_native.a" -Wl,--no-whole-archive)
+
+emcc -r -o "$OUT_DIR/duckdb_native.o" "${ARGS[@]}"
 
 cp "$SRC/src/include/duckdb.h" "$OUT_DIR/duckdb.h" 2>/dev/null || cp "$ROOT/duckdb.h" "$OUT_DIR/duckdb.h"
 
-ls -lh "$OUT_DIR/libduckdb_native.a"
+ls -lh "$OUT_DIR/duckdb_native.o"
 echo "Done."

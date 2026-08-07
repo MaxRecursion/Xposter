@@ -62,7 +62,7 @@ DOTNET_ROOT=~/.dotnet PATH=~/.dotnet:$PATH \
   dotnet run --project apps/WasmNativePin/WasmNativePin.csproj --urls http://localhost:5102
 ```
 
-Queries run through P/Invoke against `libduckdb_native.a` (no duckdb-wasm fallback). CSV is loaded via MEMFS + `read_csv_auto`.
+Queries run through P/Invoke against `duckdb_native.o` (no duckdb-wasm fallback). CSV is loaded via MEMFS + `read_csv_auto`.
 
 ### V3 — .NET Web Worker gateway (.NET 11)
 

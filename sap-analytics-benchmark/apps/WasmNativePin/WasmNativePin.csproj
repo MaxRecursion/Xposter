@@ -20,13 +20,14 @@
     <ProjectReference Include="..\..\Benchmark.Core\Benchmark.Core.csproj" />
   </ItemGroup>
 
-  <!-- DuckDB amalgamation + C bridge built with matching Emscripten 3.1.56 (see native-src/build-native.sh) -->
+  <!-- Single relocatable object (whole-archive of DuckDB) so wasm-ld keeps all members.
+       FileName must be duckdb_native so it matches DllImport("duckdb_native"). -->
   <ItemGroup>
-    <NativeFileReference Include="Native\libduckdb_native.a" Condition="Exists('Native\libduckdb_native.a')" />
+    <NativeFileReference Include="Native\duckdb_native.o" Condition="Exists('Native\duckdb_native.o')" />
   </ItemGroup>
 
-  <Target Name="EnsureNativeDuckDb" BeforeTargets="ResolveWasmProjectReference;NativeBuild;WasmBuildApp" Condition="!Exists('Native\libduckdb_native.a')">
-    <Warning Text="Native\libduckdb_native.a missing. Run: apps/WasmNativePin/native-src/build-native.sh" />
+  <Target Name="EnsureNativeDuckDb" BeforeTargets="ResolveWasmProjectReference;NativeBuild;WasmBuildApp" Condition="!Exists('Native\duckdb_native.o')">
+    <Warning Text="Native\duckdb_native.o missing. Run: apps/WasmNativePin/native-src/build-native.sh" />
   </Target>
 
 </Project>

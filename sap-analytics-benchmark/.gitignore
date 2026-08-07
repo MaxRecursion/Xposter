@@ -2,6 +2,10 @@ bin/
 obj/
 spikes/data/out/
 apps/*/wwwroot/data/*.csv
+apps/WasmNativePin/Native/duckdb_native.a
+apps/WasmNativePin/Native/libduckdb_native.a
+# Large native object (~66MB) — rebuild via native-src/build-native.sh; optional to commit
+# apps/WasmNativePin/Native/duckdb_native.o
 apps/WasmNativePin/native-src/build/
 apps/WasmNativePin/native-src/duckdb-src/
 apps/WasmNativePin/native-src/duckdb.cpp
