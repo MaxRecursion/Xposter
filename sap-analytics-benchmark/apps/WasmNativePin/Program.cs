@@ -11,7 +11,9 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 
 builder.Services.AddScoped(sp => new HttpClient
 {
-    BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
+    BaseAddress = new Uri(builder.HostEnvironment.BaseAddress),
+    // 1M-row transactions.csv is ~41MB; browser default (~100s) is too tight under load.
+    Timeout = TimeSpan.FromMinutes(10)
 });
 builder.Services.AddScoped<NativePinQueryEngine>();
 builder.Services.AddScoped<IQueryEngine>(sp => sp.GetRequiredService<NativePinQueryEngine>());
