@@ -28,9 +28,18 @@ export interface VelocityConfig {
   minLikesPerMin: number;
 }
 
+/** A later re-sighting of the same tweet, used to measure a real like-rate. */
+export interface Observation {
+  likes: number;
+  /** Unix seconds of the re-sighting. */
+  at: number;
+}
+
 export interface VelocityRead {
-  /** Likes per minute since the tweet was posted. */
+  /** Likes per minute. Measured across two sightings when we have them. */
   lpm: number;
+  /** Whether `lpm` is a measured rate or the since-posted proxy. */
+  lpmSource: 'observed' | 'proxy';
   ageMinutes: number;
   /** 0–1: reply-window credit for the tweet's age. */
   freshness: number;
@@ -50,6 +59,8 @@ const REACH_FLOOR = 0.15;
 const REACH_CEIL = 1.4;
 /** Heat saturates at 10^3.5 ≈ 3.2k likes/hour, matching the trend profile. */
 const HEAT_LOG_CAP = 3.5;
+/** Shortest gap between two sightings that yields a usable measured rate. */
+const MIN_OBSERVATION_MIN = 1;
 /** A reply is buried once this many others are ahead of it. */
 const CROWDING_FULL = 150;
 /** How heat and window trade off inside the multiplier. Must sum to 1. */
@@ -137,15 +148,37 @@ export function crowdingFactor(replies: number): number {
 }
 
 /** Full velocity read for a candidate tweet. */
+export function observedLikesPerMinute(
+  firstLikes: number,
+  firstSeenSec: number,
+  obs: Observation | null | undefined,
+): number | null {
+  if (!obs) return null;
+  const gapMinutes = (obs.at - firstSeenSec) / 60;
+  if (!Number.isFinite(gapMinutes) || gapMinutes < MIN_OBSERVATION_MIN) return null;
+  const gained = obs.likes - firstLikes;
+  if (!Number.isFinite(gained) || gained < 0) return null;
+  return gained / gapMinutes;
+}
+
 export function readVelocity(
   likes: number,
   tweetTimestampSec: number,
   nowSec: number,
   cfg: VelocityConfig,
   replies = 0,
+  observation?: { firstSeenSec: number; obs: Observation | null } | null,
 ): VelocityRead {
   const ageMinutes = Math.max((nowSec - tweetTimestampSec) / 60, 0);
-  const lpm = likesPerMinute(likes, ageMinutes);
+
+  // A measured rate beats the proxy whenever we have one: a tweet posted three
+  // hours ago that is only now catching fire looks dead to `likes / age` and
+  // obviously alive across two sightings.
+  const measured = observation
+    ? observedLikesPerMinute(likes, observation.firstSeenSec, observation.obs)
+    : null;
+  const lpmSource: 'observed' | 'proxy' = measured === null ? 'proxy' : 'observed';
+  const lpm = measured ?? likesPerMinute(likes, ageMinutes);
   const heat = heatFactor(lpm, cfg.minLikesPerMin);
   const window = windowFactor(ageMinutes, cfg.strikeWindowMin);
   const crowding = crowdingFactor(replies);
@@ -157,6 +190,7 @@ export function readVelocity(
 
   return {
     lpm,
+    lpmSource,
     ageMinutes,
     freshness: window,
     heat,

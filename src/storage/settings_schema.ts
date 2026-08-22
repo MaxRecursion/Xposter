@@ -73,6 +73,8 @@ export const SETTINGS_SCHEMA: SettingSpec[] = [
   { key: 'velocity_targeting_enabled', type: 'bool', default: 'true', writable: true },
   { key: 'velocity_strike_window_min', type: 'int', default: '25', min: 5, max: 180, writable: true },
   { key: 'velocity_min_likes_per_min', type: 'float', default: '0.3', min: 0, max: 100, writable: true },
+  { key: 'velocity_pool_enabled', type: 'bool', default: 'true', writable: true },
+  { key: 'velocity_pool_max_age_min', type: 'int', default: '45', min: 5, max: 360, writable: true },
   { key: 'trend_refresh_minutes', type: 'int', default: '30', min: 10, max: 240, writable: true },
   { key: 'trend_max_replies_per_day', type: 'int', default: '2', min: 1, max: 10, writable: true },
   { key: 'trend_cooldown_hours', type: 'int', default: '12', min: 1, max: 72, writable: true },

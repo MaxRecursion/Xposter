@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  crowdingFactor, heatFactor, likesPerMinute, readVelocity, roundVelocityRead, windowFactor,
+  crowdingFactor, heatFactor, likesPerMinute, observedLikesPerMinute, readVelocity,
+  roundVelocityRead, windowFactor,
   type VelocityConfig,
 } from '../../src/pipeline/velocity.js';
 import { scorePost } from '../../src/pipeline/scorer.js';
@@ -249,5 +250,64 @@ describe('starvation safety', () => {
       expect(Number.isFinite(p.reachScore)).toBe(true);
       expect(p.reachScore).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe('observedLikesPerMinute', () => {
+  const t0 = 1_700_000_000;
+
+  it('returns null without a second sighting, so callers fall back to the proxy', () => {
+    expect(observedLikesPerMinute(10, t0, null)).toBeNull();
+    expect(observedLikesPerMinute(10, t0, undefined)).toBeNull();
+  });
+
+  it('measures likes gained across the observation gap', () => {
+    // 10 → 130 likes over 10 minutes = 12/min.
+    expect(observedLikesPerMinute(10, t0, { likes: 130, at: t0 + 600 })).toBeCloseTo(12, 5);
+  });
+
+  it('ignores a gap too short to measure anything', () => {
+    expect(observedLikesPerMinute(10, t0, { likes: 40, at: t0 + 20 })).toBeNull();
+  });
+
+  it('ignores a like count that went backwards', () => {
+    // Deleted likes or a misparse: fall back rather than record a negative rate.
+    expect(observedLikesPerMinute(100, t0, { likes: 40, at: t0 + 600 })).toBeNull();
+  });
+});
+
+describe('readVelocity with a second sighting', () => {
+  const now = 1_700_000_000;
+  const minsAgo = (m: number) => now - m * 60;
+
+  it('prefers the measured rate over the since-posted proxy', () => {
+    // Posted 3h ago with 180 likes → proxy reads a sleepy 1/min. But it gained
+    // 120 likes in the last 10 minutes, so it is actually taking off now.
+    const firstSeen = minsAgo(10);
+    const v = readVelocity(60, minsAgo(180), now, CFG, 4, {
+      firstSeenSec: firstSeen,
+      obs: { likes: 180, at: now },
+    });
+
+    expect(v.lpmSource).toBe('observed');
+    expect(v.lpm).toBeCloseTo(12, 5);
+    expect(v.lpm).toBeGreaterThan(likesPerMinute(60, 180));
+  });
+
+  it('falls back to the proxy when the sighting is unusable', () => {
+    const v = readVelocity(60, minsAgo(30), now, CFG, 0, {
+      firstSeenSec: now - 30,        // gap of 30s — too short to measure
+      obs: { likes: 60, at: now },
+    });
+    expect(v.lpmSource).toBe('proxy');
+  });
+
+  it('surfaces a late surge that the proxy would score as dead', () => {
+    const sleepyProxy = readVelocity(60, minsAgo(180), now, CFG, 4);
+    const surging = readVelocity(60, minsAgo(180), now, CFG, 4, {
+      firstSeenSec: minsAgo(10),
+      obs: { likes: 180, at: now },
+    });
+    expect(surging.reachFactor).toBeGreaterThan(sleepyProxy.reachFactor);
   });
 });

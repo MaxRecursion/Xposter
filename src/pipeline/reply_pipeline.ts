@@ -4,7 +4,7 @@ import { getHandlesRepliedToToday, getTopicCountsToday, getPost, logEvent, Post,
 import { detectTopics } from '../context/topics.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
 import { listRecentReplyTexts } from '../storage/interactions.js';
-import { getBooleanSetting, getFloatSetting, getIntSetting, getListSetting } from '../storage/settings.js';
+import { getBooleanSetting, getBooleanSettingFromSchema, getFloatSetting, getIntSetting, getIntSettingFromSchema, getListSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import { classifyAccount } from './classifier.js';
@@ -23,7 +23,7 @@ import { classifyTrendSafety } from '../trends/trend_filter.js';
 import { updatePostStance } from '../storage/queries.js';
 import { instrumentPipelineRun, recordPipelineSkipped } from '../telemetry/instrument.js';
 import { notePipelineDelivery } from './stalled_delivery.js';
-import { markPostPostingError, setPostLastError, updatePostTournamentMeta } from '../storage/posts.js';
+import { getPoolCandidates, markPostPostingError, recordObservation, setPostLastError, updatePostTournamentMeta } from '../storage/posts.js';
 
 interface FilteredPost {
   post: Post;
@@ -110,11 +110,14 @@ export async function runReplyPipeline(
     const { ingested, newPosts } = ingestNewPosts(rawTweets);
     logger.info(`Ingested ${ingested} new posts (${rawTweets.length - ingested} duplicates skipped)`);
 
-    const { filtered, filterResults } = filterNewPosts(newPosts);
-    logger.info(`Filter: ${filtered.length}/${ingested} posts passed`);
+    const pool = carryOverPool(newPosts);
+    const candidates = [...newPosts, ...pool];
+
+    const { filtered, filterResults } = filterNewPosts(candidates);
+    logger.info(`Filter: ${filtered.length}/${candidates.length} posts passed`);
     logEvent('FILTER_COMPLETE', `${filtered.length} passed`);
 
-    const topCandidates = await selectCandidates(filtered, filterResults, newPosts);
+    const topCandidates = await selectCandidates(filtered, filterResults, candidates);
     logger.info(`Scored candidates selected: ${topCandidates.length}`);
     logEvent('SCORE_COMPLETE', `${topCandidates.length} candidates selected`);
 
@@ -197,13 +200,39 @@ function ingestNewPosts(rawTweets: Parameters<typeof upsertPost>[0][]): { ingest
 
   for (const tweet of rawTweets) {
     const post = upsertPost(tweet);
-    if (!post) continue;
+    if (!post) {
+      // Already held. The counts on this sighting are what let us measure a
+      // real like-rate rather than assuming one; status is left untouched.
+      recordObservation(tweet.tweet_id, tweet.likes, tweet.replies);
+      continue;
+    }
     ingested++;
     newPosts.push(post);
     upsertAccountSeen(tweet.author_handle, tweet.author_name);
   }
 
   return { ingested, newPosts };
+}
+
+/**
+ * Candidates carried over from earlier runs, minus anything ingested just now.
+ *
+ * The pipeline used to consider only tweets inserted during the current run and
+ * silently drop the rest — 811 rows were sitting in INGESTED having never been
+ * reconsidered. A tweet that looked flat when first seen and caught fire ten
+ * minutes later could therefore never be picked, which is exactly the shot
+ * velocity targeting exists to take. Re-filtering also prunes the pool, since
+ * anything failing the filter is marked SKIPPED on the way through.
+ */
+function carryOverPool(newPosts: Post[]): Post[] {
+  if (!getBooleanSettingFromSchema('velocity_pool_enabled')) return [];
+  const maxAgeMin = getIntSettingFromSchema('velocity_pool_max_age_min');
+  const seen = new Set(newPosts.map((p) => p.id));
+  const pool = getPoolCandidates(maxAgeMin).filter((p) => !seen.has(p.id));
+  if (pool.length > 0) {
+    logger.info('Carried over pooled candidates', { pooled: pool.length, maxAgeMin });
+  }
+  return pool;
 }
 
 function filterNewPosts(newPosts: Post[]): {

@@ -342,6 +342,12 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'posts', 'tournament_angle', 'TEXT');
   addColumnIfMissing(db, 'posts', 'tournament_critic_score', 'REAL');
   addColumnIfMissing(db, 'posts', 'tournament_critic_reasons', 'TEXT');
+  // Velocity targeting: a second sighting of the same tweet, so we can measure
+  // a real like-rate over a known interval instead of assuming a constant rate
+  // since the tweet was posted.
+  addColumnIfMissing(db, 'posts', 'obs_likes', 'INTEGER');
+  addColumnIfMissing(db, 'posts', 'obs_replies', 'INTEGER');
+  addColumnIfMissing(db, 'posts', 'obs_at', 'INTEGER');
   addColumnIfMissing(db, 'accounts', 'author_engaged_replies', 'INTEGER NOT NULL DEFAULT 0');
   // Indexed here rather than in the CREATE TABLE block: on an existing database
   // the table already exists, so the column only appears after the ALTER above.

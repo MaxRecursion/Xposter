@@ -44,6 +44,10 @@ export interface Post {
   tournament_angle: string | null;
   tournament_critic_score: number | null;
   tournament_critic_reasons: string | null;
+  /** Likes/replies at our most recent re-sighting (velocity targeting). */
+  obs_likes: number | null;
+  obs_replies: number | null;
+  obs_at: number | null;
   ingested_at: number;
   updated_at: number;
 }
@@ -324,4 +328,56 @@ export function expireOldPending(): number {
     WHERE status = 'PENDING_APPROVAL' AND updated_at < ?
   `).run(cutoff);
   return result.changes;
+}
+
+/** Statuses where a candidate has not yet been acted on and can still be picked. */
+const POOL_STATUSES = ['INGESTED', 'SCORED'] as const;
+
+/**
+ * Records a fresh sighting of a tweet we already hold.
+ *
+ * `upsertPost` deliberately ignores repeat sightings so a duplicate never
+ * resurrects a candidate we already decided about. But the like count on that
+ * second sighting is the only way to measure a *real* rate — likes gained over
+ * a known interval — rather than assuming a tweet has been gathering likes at a
+ * constant rate ever since it was posted. So we store it alongside, without
+ * touching status or the original counts.
+ *
+ * Only pre-decision rows are updated; anything already replied to, skipped, or
+ * filtered stays frozen.
+ */
+export function recordObservation(tweetId: string, likes: number, replies: number): void {
+  getDb().prepare(`
+    UPDATE posts
+       SET obs_likes = ?, obs_replies = ?, obs_at = unixepoch()
+     WHERE tweet_id = ?
+       AND status IN (${POOL_STATUSES.map(() => '?').join(', ')})
+  `).run(likes, replies, tweetId, ...POOL_STATUSES);
+}
+
+/**
+ * Candidates seen on an earlier run that were never acted on.
+ *
+ * Without this the pipeline only ever considers tweets ingested in the current
+ * run and discards the rest — so a tweet that was flat when we first saw it and
+ * caught fire ten minutes later is never reconsidered. Bounded by age because a
+ * stale pool is just a slower version of the problem velocity targeting exists
+ * to solve.
+ */
+export function getPoolCandidates(maxAgeMinutes: number, limit = 200): Post[] {
+  const since = Math.floor(Date.now() / 1000) - Math.max(maxAgeMinutes, 1) * 60;
+  return getDb().prepare(`
+    SELECT p.* FROM posts p
+     WHERE p.status IN (${POOL_STATUSES.map(() => '?').join(', ')})
+       AND p.ingested_at >= ?
+       -- Timeline only. Trend candidates run their own safety pipeline and
+       -- lifecycle; letting them fall through to the timeline path would route
+       -- around the per-post trend safety classifier.
+       AND p.source = 'TIMELINE'
+       -- A reply can exist while the row still reads INGESTED, so status alone
+       -- is not enough to prove we have not already answered this tweet.
+       AND NOT EXISTS (SELECT 1 FROM interactions i WHERE i.post_id = p.id)
+     ORDER BY p.ingested_at DESC
+     LIMIT ?
+  `).all(...POOL_STATUSES, since, limit) as Post[];
 }

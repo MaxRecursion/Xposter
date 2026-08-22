@@ -14,7 +14,8 @@ export interface ScoreBreakdown {
   engagementSweet: number;  // 0-10: sweet spot (not 0, not viral)
   topicalHeat: number;       // 0-10: similarity to fresh context reporting
   accountHistory: number;    // -6 to 10: prior engagement from this author
-  velocityLpm: number;       // observed likes/minute on the parent tweet
+  velocityLpm: number;       // likes/minute on the parent tweet
+  velocityMeasured: boolean; // true when lpm came from two sightings, not the proxy
   reachFactor: number;       // 0.15-1.4 multiplier: is anyone still watching?
 }
 
@@ -113,7 +114,15 @@ export function scorePost(post: Post, signals: ScoringSignals = {}): ScoredPost 
   // Applied to the composite rather than added to it: a dead tweet should not
   // be rescued by keyword relevance, however topical it looks.
   const velocityCfg = getVelocityConfig();
-  const velocity = readVelocity(post.likes, post.timestamp, now, velocityCfg, post.replies);
+  const velocity = readVelocity(
+    post.likes, post.timestamp, now, velocityCfg, post.replies,
+    {
+      firstSeenSec: post.ingested_at,
+      obs: post.obs_at != null && post.obs_likes != null
+        ? { likes: post.obs_likes, at: post.obs_at }
+        : null,
+    },
+  );
   const reachActive = isVelocityTargetingEnabled();
   const { velocityLpm, reachFactor } = roundVelocityRead(velocity);
 
@@ -126,6 +135,7 @@ export function scorePost(post: Post, signals: ScoringSignals = {}): ScoredPost 
     topicalHeat: Math.round(topicalHeat * 10) / 10,
     accountHistory: Math.round(accountHistory * 10) / 10,
     velocityLpm,
+    velocityMeasured: velocity.lpmSource === 'observed',
     reachFactor: reachActive ? reachFactor : 1,
   };
 

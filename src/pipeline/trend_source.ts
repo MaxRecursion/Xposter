@@ -10,7 +10,7 @@ import { searchTweets } from '../browser/ingestion.js';
 import { getDb } from '../storage/db.js';
 import {
   getHandlesRepliedToToday, getTopicCountsToday, logEvent, updatePostScore,
-  updatePostStance, upsertPost, type Post, type PostSource,
+  updatePostStance, updatePostStatus, upsertPost, type Post, type PostSource,
 } from '../storage/queries.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
 import { getIntSetting } from '../storage/settings.js';
@@ -178,6 +178,9 @@ async function candidatesForTrend(trend: TrendRow, source: PostSource): Promise<
     // a death announcement, and that must never get a contrarian reply.
     const postSafety = classifyTrendSafety(post.text);
     if (postSafety.class === 'SKIP') {
+      // Terminal, not just skipped for this run: left INGESTED the row stays a
+      // live candidate for any later pass that reads un-actioned posts.
+      updatePostStatus(post.id, 'SKIPPED');
       logEvent('TREND_POST_SKIPPED_UNSAFE', `reason=${postSafety.reason}`, post.id);
       continue;
     }
