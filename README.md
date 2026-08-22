@@ -29,7 +29,7 @@ Xposter runs five things on a schedule:
 
 | Job | What happens |
 |---|---|
-| **Reply pipeline** (5×/day) | Playwright scrapes timeline → filters by topic/language → scores by recency+engagement+opportunity → generates reply via Groq → awaits your ntfy tap → posts |
+| **Reply pipeline** (5×/day) | Playwright scrapes timeline and/or trends → filters → scores (including conversation opportunity + velocity) → generates English replies (Conversation Gravity + 20% Reply Tournament) → ntfy or auto-posts |
 | **Original posts** (7×/day) | Picks topic weighted by RAG trends → gathers research context → drafts via Groq → posts to your timeline |
 | **Follower sync** (periodic) | Detects new followers → ntfy alert with one-tap "Follow Back / Skip" |
 | **Impression sync** (every 2 h) | Playwright scrapes likes/replies/retweets/impressions for recent originals → stores for dashboard charting |
@@ -60,7 +60,8 @@ Everything is controlled from a local web dashboard backed by a single SQLite da
 │          │     │  2. filterPost()      — language+keywords   │   │
 │          │     │  3. scorePost()       — 0-100 composite     │   │
 │          │     │  4. classifyAccount() — heuristic→Groq LLM  │   │
-│          │     │  5. generateReply()   — Groq+context+memory │   │
+│          │     │  5. generateReply()   — Groq, topic brain,  │   │
+│          │     │     Gravity critic, 20% Tournament          │   │
 │          │     │  6. postReply()       — Playwright post     │   │
 │          │     │  7. ntfy notification — approve/skip        │   │
 │          │     └────────────────────────────────────────────-┘   │
@@ -77,10 +78,11 @@ Everything is controlled from a local web dashboard backed by a single SQLite da
 │          │                                                        │
 │          │     ┌──────────────────────────────────────────────┐  │
 │          │     │  Intelligence Layers                         │  │
+│          │     │  ├─ topic_graph.ts / brain.ts (linked topics)│  │
 │          │     │  ├─ neural_memory.ts  (concept graph)        │  │
 │          │     │  ├─ store/store.ts    (Voyage + sqlite-vec)  │  │
-│          │     │  ├─ retrieve/retriever.ts (re-ranker)        │  │
-│          │     │  └─ sources: rss · reddit · weather          │  │
+│          │     │  ├─ retrieve/retriever.ts (linked-topic rank)│  │
+│          │     │  └─ sources: Pune civic · India work · AI    │  │
 │          │     └──────────────────────────────────────────────┘  │
 │          │                                                        │
 │          │     ┌──────────────────────────────────────────────┐  │
@@ -100,7 +102,7 @@ Everything is controlled from a local web dashboard backed by a single SQLite da
 └───────────────────────────────────────────────────────────────────┘
        │                              │
   iPhone (Safari / Tailscale)    ntfy app
-  Dashboard (8 tabs)             Push alerts + action buttons
+  Dashboard (Queue, RAG, Analytics, Mind, …)     Push alerts + action buttons
 ```
 
 ### End-to-End Data Flows
@@ -113,12 +115,17 @@ Playwright scrolls home timeline (up to 40 tweets)
   → scorePost()              recency(0-30) + topic(0-30) + opportunity(0-20) + engagement(0-10) → SCORED
   → top-N candidates         (max_candidates_per_run, default 3; min_score threshold, default 40)
   → classifyAccount()        heuristic fast-path OR Groq 9-class LLM; 7-day cache
-  → generateReply()          system prompt (Pune/General persona, wit tier) +
-                             [CURRENT CONTEXT] (Voyage ANN retrieval) +
-                             [LEARNED MEMORY] (neural concept graph) → Groq LLM
-                             status: PENDING_APPROVAL
+  → generateReply()          English-only draft:
+                             [TOPIC BRAIN] linked topics (traffic → metro, civic, …)
+                             [CURRENT CONTEXT] Voyage ANN + linked-topic re-rank
+                             [LEARNED MEMORY] neural concept graph
+                             Conversation Gravity (skip if too generic)
+                             20% Reply Tournament (one-liner / second-order / receipt)
+                             Groq (openai/gpt-oss-120b) with Claude CLI circuit-break
+                             status: PENDING_APPROVAL or auto POSTING
   → ntfy push notification   signed approve/skip action URLs (HMAC, TTL-bound)
-  → user taps Approve        
+                             two empty scheduled runs → one stalled-delivery alert
+  → user taps Approve        (or require_approval=false auto-posts)
   → postReply()              Playwright navigates tweet URL, submits reply
   → recordInteraction()      status: POSTED
   → ntfy confirmation
@@ -159,18 +166,21 @@ audience_sync (periodic) scrapes follower activity page via Playwright
 
 **Context RAG ingestion:**
 ```
-For each source (RSS every 30 min, Reddit/weather every 60 min):
+Default brain sources only (Pune civic, India jobs/economy, AI-as-work).
+World/gadget/space feeds are opt-in via env.
+For each active source:
   fetch items
   → SHA-256 dedup (drop exact duplicates before embedding)
   → batch Voyage embed (voyage-3-lite, 512 dim)
   → cosine near-duplicate filter (dist < 0.06 against recent 48h items → drop)
-  → insert context_items + vec_context in single transaction
+  → insert context_items + vec_context; tag topics; update corpus co-occurrence graph
 
 On query (per reply/original-post generation):
-  embed query via Voyage
+  detect tweet topics → expand linked neighbors (static + corpus)
+  embed query (+ related topics) via Voyage
   → vec0 KNN on vec_context (fetch k×3 candidates)
-  → re-rank: 0.55×similarity + 0.25×recency + 0.10×credibility + 0.10×topicOverlap
-  → return top-K as [CURRENT CONTEXT] block
+  → re-rank: similarity + recency + credibility + query/linked topic overlap
+  → inject [TOPIC BRAIN] + [CURRENT CONTEXT] (Voyage optional; topic web always)
 ```
 
 ---
@@ -179,21 +189,24 @@ On query (per reply/original-post generation):
 
 ### Core Automation
 - **Timeline ingestion** — Playwright stealth scrolls home timeline, extracts tweet_id, author, text, and engagement counts
-- **Keyword + language filtering** — English requires topic keyword match; Marathi/Devanagari posts pass automatically
-- **Multi-factor scoring** — recency, topic relevance, reply opportunity, engagement sweet spot, context-store topical heat, and prior account reply performance
+- **Keyword + language filtering** — English tweets require a topic keyword match; Marathi/Devanagari posts can still be ingested. Generated replies are English-only.
+- **Multi-factor scoring** — recency, topic relevance, reply opportunity, conversation opportunity, engagement sweet spot, velocity/reach, context-store topical heat, and prior account reply performance (including author come-back)
 - **Account classification** — 9-class Groq LLM classifier (SERIOUS, NEWS, PARODY, COMEDY, INFLUENCER, REGULAR, BOT, BRAND_PROMO, UNKNOWN) with heuristic fast-path (PCF label, bot patterns, follower counts); 7-day TTL cache
-- **Configurable approval queue** — replies wait in PENDING_APPROVAL by default, with one-tap Approve/Skip via ntfy; approval can be disabled for automatic posting
+- **Configurable approval queue** — optional PENDING_APPROVAL with one-tap Approve/Skip via ntfy (`require_approval`, default off / autonomous)
+- **Conversation Gravity** — skip or rewrite drafts that would not earn a reply (heuristic 1–5 plus optional LLM judge)
+- **Reply Tournament (20%)** — a controlled slice of candidates gets three distinct angles (one-liner, second-order, specific receipt); Gravity picks the winner; assignment is persisted
 - **Original post generation** — 7 posts/day by default (4 ORIGINAL + 2 ENGAGEMENT_FARM + 1 QUOTE_TWEET); supports 2–3 post threads and trend-driven quote tweets
-- **Engagement tracking** — scheduled syncs collect likes/replies/retweets for replies and full impression snapshots for original posts
+- **Engagement tracking** — scheduled syncs collect likes/replies/retweets/impressions for replies and originals; quality rate is actions per 1,000 impressions on metric-synced rows only
 
 ### Intelligence Layers
 - **Dual persona** — Pune flavor (satirical Punekar: PMC, FC Road, Mula-Mutha, Hinjewadi) or General (sharp observer); auto-selected per tweet by content regex + topic tags
 - **Wit level** — 0–100 slider maps to 5 tiers (SERIOUS → MEASURED → BALANCED → WITTY → SHARP); controls Groq temperature and system prompt tone
-- **Neural schema memory** — concept graph built from 220 recent posts/replies; co-occurrence edges weighted by recency × engagement; top-3 events injected as `[LEARNED MEMORY]` block to maintain voice consistency
-- **Context RAG** (optional, `CONTEXT_ENABLED=true`) — RSS feeds, Reddit, weather via Voyage AI embeddings + sqlite-vec ANN; re-ranked by similarity × recency × credibility × topic overlap; injected as `[CURRENT CONTEXT]` block
+- **Neural schema memory** — concept graph built from 220 recent posts/replies; co-occurrence edges weighted by recency × engagement; top events injected as `[LEARNED MEMORY]`
+- **Topic brain** — linked-topic graph (traffic ↔ metro/civic, AI ↔ jobs/startups, …) plus co-occurrence from ingested RAG items; injected as `[TOPIC BRAIN]` on every reply even when Voyage is off
+- **Context RAG** (optional, `CONTEXT_ENABLED=true`) — related RSS/Reddit/weather sources only by default (Pune civic, India work/economy, AI-as-work); Voyage + sqlite-vec ANN; re-ranked with linked-topic overlap; injected as `[CURRENT CONTEXT]`
 - **Trend detection** — topic velocity (6 h vs 24 h event ratio) biases original post topic selection toward hot topics
 - **Audience heatmap** — 7×24 follower activity matrix biases scheduler toward high-engagement time slots
-- **Performance analytics** — follower growth, reply success by account class, topic trends, and best posting hours
+- **Performance analytics** — follower growth, reply success by class/source, topic trends, posting hours, and Tournament vs control **actions per 1,000 impressions**
 
 ### Notifications (ntfy)
 - Reply approval request with signed approve/skip URLs (HMAC, TTL-bound)
@@ -201,10 +214,12 @@ On query (per reply/original-post generation):
 - New follower alert with Follow Back / Skip action buttons
 - Session-expiry and unfollow alerts
 - Weekly performance digest with replies, approval rate, follower delta, top reply, and best topic
+- Stalled-delivery alert after two consecutive scheduled runs with no posted reply or approval candidate
 - Action mode: `view` (opens dashboard) or `http` (fires API silently from phone)
 
 ### Safety & Control
-- **Approval gate** — enabled by default and configurable with `require_approval`
+- **Approval gate** — optional; `require_approval` defaults false (autonomous posting)
+- **Human-likeness gate** — reject/regenerate AI-slop and engagement-farm openers
 - **Classification blocklist** — BOT and BRAND_PROMO skipped from follow-back by default
 - **Duplicate guard** — regenerates or skips replies and original posts that are too similar to recent output
 - **Posting retry queue** — retries transient compose failures once with a capped delay
@@ -217,7 +232,7 @@ On query (per reply/original-post generation):
 - **Live dashboard** — multi-tab SPA served by Express, auto-refreshing via polling
 - **Live settings** — all operational parameters editable from Settings tab, no restart required
 - **Activity log** — append-only event stream, queryable, shown in Console and History tabs
-- **Diagnostic endpoint** — `/api/diagnostics` reports connectivity, config, DB health
+- **Diagnostic endpoint** — `/api/diagnostics` reports Groq model availability, Claude CLI auth circuit, connectivity, and config
 - **Claude Agent** (optional) — watcher monitors activity log for recurring errors, spawns investigator agent (Claude Code CLI); proposed fix shown on dashboard; one-click implementer opens a PR in a fresh git worktree
 - **SSE streaming** — agent run progress streamed to dashboard in real time
 
@@ -225,7 +240,8 @@ On query (per reply/original-post generation):
 - Devanagari Marathi (23 script markers)
 - Transliterated Roman Marathi (9 phonetic markers: ahe, ahet, hota, karto, jato, mala, tula, khup, paus)
 - Hindi (17 Devanagari markers) — detected separately, filtered unless mixed with Marathi
-- English — requires topic keyword match to pass filter
+- English replies only (Marathi/Hinglish drafts are rejected at generation)
+- English tweets still require a topic keyword match to pass the ingest filter
 
 ---
 
@@ -291,6 +307,8 @@ iPhone (remote): install Tailscale on Mac + iPhone, set `CALLBACK_NETWORK=tailsc
 ```env
 CONTEXT_ENABLED=true
 VOYAGE_API_KEY=your_voyage_key   # voyage.ai; free tier = 50M tokens/month
+# Default sources are a related brain (Pune civic, India work, AI-as-work).
+# Blank geopolitics/gadget URLs in .env.example stay off unless you opt in.
 ```
 
 ### Optional: OpenTelemetry observability
@@ -345,7 +363,7 @@ AGENT_MODEL=claude-sonnet-4-5
 | Variable | Default | Description |
 |---|---|---|
 | `GROQ_API_KEY` | **required** | Groq API key |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model for reply + original post generation |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Model for reply + original post generation |
 | `LOG_PROMPTS` | `true` | Print full prompts to stdout |
 | `LOG_LEVEL` | `info` | Winston log level (`error`/`warn`/`info`/`http`/`debug`) |
 | `OTEL_ENABLED` | `false` | Export traces, metrics, and logs via OpenTelemetry |
@@ -384,14 +402,15 @@ AGENT_MODEL=claude-sonnet-4-5
 
 | Variable | Default | Description |
 |---|---|---|
-| `CONTEXT_ENABLED` | `false` | Master switch for the RAG system |
+| `CONTEXT_ENABLED` | `false` | Master switch for Voyage RAG retrieval (topic brain still runs without it) |
 | `VOYAGE_API_KEY` | required if enabled | Voyage AI API key |
 | `VOYAGE_DIM` | `512` | Embedding dimension (256/512/1024). Changing requires dropping `vec_context` |
 | `VOYAGE_RPM` | `2.7` | Rate limit cap (requests/min). Free tier is 3 RPM |
 | `CONTEXT_INGEST_INTERVAL_MIN` | per-source defaults | Override polling interval for all sources |
-| `CONTEXT_RSS_*` | built-in feeds | Override individual RSS feed URLs; set to `""` to disable |
+| `CONTEXT_RSS_*` | brain feeds | Override RSS URLs; `""` disables. Geopolitics/gadgets/space are opt-in |
 | `CONTEXT_REDDIT_PUNE` | `pune` | Subreddit for Pune posts |
-| `CONTEXT_REDDIT_INDIA` | `india` | Subreddit for India posts |
+| `CONTEXT_REDDIT_INDIA` | off by default | Set to `india` to opt in (too broad for the default brain) |
+| `CONTEXT_REDDIT_STARTUPS` | `startups` | Subreddit for startup posts |
 | `CONTEXT_WEATHER_PUNE` | `Pune` | wttr.in location string |
 
 ### Claude Agent (optional)
@@ -419,7 +438,7 @@ Stored in the `settings` table; take effect immediately without restart.
 | `topic_keywords` | string | `pune,rain,…` | comma list |
 | `min_score` | int | `40` | 0–100 |
 | `max_candidates_per_run` | int | `3` | 1–10 |
-| `require_approval` | bool | `true` | — |
+| `require_approval` | bool | `false` | — |
 | `approval_timeout_min` | int | `30` | 5–1440 |
 | `random_runs_per_day` | int | `5` | 1–12 |
 | `active_window_start_hour` | int | `9` | 0–23 |
@@ -431,6 +450,11 @@ Stored in the `settings` table; take effect immediately without restart.
 | `auto_follow_back_classifications` | string | `REGULAR,SERIOUS` | comma list |
 | `auto_follow_back_min_confidence` | int | `60` | 0–100 |
 | `original_posts_per_day` | int | `7` | 1–12 |
+| `engagement_bait_pct` | int | `15` | 0–100 |
+| `conversation_gravity_min` | int | `3` | 1–5 |
+| `conversation_gravity_judge` | bool | `true` | — |
+| `reply_tournament_enabled` | bool | `true` | — |
+| `reply_tournament_rollout_pct` | int | `20` | 0–100 |
 | `weekly_digest_enabled` | bool | `true` | — |
 | `weekly_digest_hour` | int | `9` | 0–23 |
 | `agent_enabled` | bool | `false` | — |
@@ -447,7 +471,7 @@ All mutation endpoints require `X-API-Key` header matching `API_KEY` in `.env`. 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | System health check |
-| `GET` | `/api/diagnostics` | Config, connectivity, and DB health report |
+| `GET` | `/api/diagnostics` | Groq model availability, Claude CLI auth circuit, config |
 | `POST` | `/api/run` | Manually trigger reply pipeline now |
 | `POST` | `/api/test/notification` | Send a test ntfy push |
 
@@ -503,17 +527,18 @@ All mutation endpoints require `X-API-Key` header matching `API_KEY` in `.env`. 
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/analytics/overview` | Performance summary. `?days=N` |
+| `GET` | `/api/analytics/overview` | Performance summary including `actions_per_1k_impressions` and Tournament vs control. `?days=N` |
 | `POST` | `/api/analytics/weekly-digest/send` | Generate and send the weekly ntfy digest now |
 
 ### Context / RAG
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/context/health` | RAG system health + per-source status |
+| `GET` | `/api/context/health` | RAG health, per-source status, and brain snapshot |
+| `GET` | `/api/context/brain` | Source clusters, topic links, corpus neighbors, memory summary |
 | `GET` | `/api/context/trends` | Topic velocity map (6 h vs 24 h ratio) |
 | `GET` | `/api/context/recent` | Recent ingested context items. `?limit=N` |
-| `GET` | `/api/context/preview` | Preview enrichment block for a query. `?q=TEXT&k=5&tokens=500` (costs one Voyage call) |
+| `GET` | `/api/context/preview` | Preview enrichment (topic web always; Voyage when enabled). `?q=TEXT&k=5&tokens=500` |
 | `GET` | `/api/context/neural-memory` | Full neural concept graph (nodes + edges) for D3 visualization |
 | `POST` | `/api/context/test-reply` | Debug full reply generation with live context. Body: `{text, handle, language}` |
 
@@ -553,7 +578,7 @@ All scheduler jobs are backed by the `scheduled_runs` SQLite table with jittered
 | **Audience heatmap sync** | `scheduler/audience_sync.ts` | Periodic (configurable interval) | Playwright scrapes 7×24 follower activity matrix |
 | **Session watchdog** | `scheduler/session_health.ts` | Periodic | Detect expired X login, alert, and pause schedulers |
 | **Weekly digest** | `scheduler/weekly_digest.ts` | Sunday at configured hour | Send the weekly performance summary via ntfy |
-| **Context ingest** | `context/ingest/scheduler.ts` | RSS: 30 min, Reddit: 60 min, weather: 60 min (per-source configurable) | Fetch, SHA-256 dedup, near-dup filter, Voyage embed, store to vec_context |
+| **Context ingest** | `context/ingest/scheduler.ts` | Per-source intervals (typically 30–120 min) | Fetch default brain sources, SHA-256 + near-dup filter, Voyage embed, store topics |
 | **Agent watcher** | `agent/watcher.ts` | Every `AGENT_WATCH_INTERVAL_MS` (5 min default) | Poll activity_log for recurring errors; spawn investigator if threshold hit |
 | **Approval expiry sweep** | `scheduler/cron.ts` | Every 5 min | Expire PENDING_APPROVAL posts older than `approval_timeout_min` |
 
@@ -576,22 +601,23 @@ A single-page app served from `public/` at `http://localhost:3000`. Accessible o
 
 | Tab | What it shows |
 |---|---|
-| **Queue** | PENDING_APPROVAL posts. Each card shows: tweet text, author, score breakdown (recency/topic/opportunity/engagement), generated reply. Actions: Edit reply · Approve · Skip · Regenerate |
+| **Queue** | PENDING_APPROVAL posts. Cards show tweet, author, score, generated reply, Tournament metadata, and `last_error` on ERROR/SKIPPED. Actions: Edit · Approve · Skip · Regenerate |
 | **Followers** | Pending follower events with Follow Back / Skip actions; recent follow-back history |
 | **Accounts** | All classified accounts with filters by classification type; shows bio, follower count, classification confidence, Marathi creator flag |
-| **Originals** | Recent original posts with impression sparklines (likes/replies/retweets/impressions over time); per-topic engagement performance chart |
-| **Analytics** | Follower growth, reply success by classification, topic performance trends, and best posting hours |
-| **Activity** | Audience heatmap — 7-day × 24-hour follower activity grid showing when your followers are most active |
-| **Agent** | Investigations list (proposed error diagnoses + fix descriptions); feature task queue; agent run history with live SSE progress stream |
-| **History** | Full activity log of all pipeline events (INGESTED → FILTERED → SCORED → PENDING_APPROVAL → POSTED/SKIPPED/EXPIRED) |
-| **Console** | Real-time log stream, hacker-green terminal style; most recent system events |
+| **Originals** | Recent original posts with impression sparklines; per-topic engagement performance |
+| **Analytics** | Follower growth, reply success by class/source, topic trends, posting hours, bait tuning, and Tournament quality (actions / 1k impressions) |
+| **Activity** | Audience heatmap — 7-day × 24-hour follower activity grid |
+| **RAG** | Source health, brain clusters, linked topics, topic velocity, recent ingestion |
+| **Agent** | Investigations, feature tasks, agent run history with live SSE |
+| **History** | Full activity log (INGESTED → FILTERED → SCORED → PENDING_APPROVAL → POSTED/SKIPPED/EXPIRED/ERROR) |
+| **Console** | Real-time log stream |
 
 ### Secondary Tabs
 
 | Tab | What it shows |
 |---|---|
-| **Mind (🧠)** | D3 force-directed graph of the neural schema memory: concept nodes sized by recency×engagement weight, edges by co-occurrence strength; trending topics panel; context source health |
-| **Settings** | Live-editable operational parameters (wit level slider, topic keywords, score threshold, window hours, follow-back limits, agent controls, etc.); no restart required |
+| **Mind (🧠)** | D3 force-directed graph of neural schema memory; trending topics; context source health |
+| **Settings** | Live knobs: wit, keywords, score, windows, follow-back, Conversation Gravity, Reply Tournament rollout, bait %, agent, image posts |
 
 ---
 
@@ -601,7 +627,7 @@ All data lives in `data/xposter.db` (SQLite WAL mode). Override path with `DB_PA
 
 | Table | Purpose | Key Fields |
 |---|---|---|
-| `posts` | Every ingested tweet with full lifecycle | tweet_id (UNIQUE), author_handle, text, status (INGESTED→FILTERED→SCORED→GENERATING→PENDING_APPROVAL→APPROVED→POSTING→POSTED / SKIPPED / EXPIRED / ERROR), score, generated_reply, final_reply, posting_attempts, retry_after, last_error |
+| `posts` | Every ingested tweet with full lifecycle | tweet_id (UNIQUE), author_handle, text, status, score, generated_reply, final_reply, posting_attempts, retry_after, last_error, tournament_strategy/angle/critic_score/reasons |
 | `accounts` | X account metadata + classification cache | handle (PK), display_name, bio, verified, follower_count_seen, is_marathi_creator, classification (9 types), classification_confidence, classified_at |
 | `interactions` | Outbound replies with engagement tracking | post_id (FK posts), our_reply_text, our_tweet_url, likes, replies, retweets, author_engaged, success_score |
 | `activity_log` | Append-only pipeline event log | post_id, event type, detail, created_at |
@@ -621,34 +647,24 @@ Logs rotate daily in `logs/` via `winston-daily-rotate-file`.
 
 ## Context / RAG System
 
-Enable with `CONTEXT_ENABLED=true` and a `VOYAGE_API_KEY`.
+Enable Voyage retrieval with `CONTEXT_ENABLED=true` and a `VOYAGE_API_KEY`. Linked-topic `[TOPIC BRAIN]` blocks still inject on replies when Voyage is off.
 
-**Sources polled automatically:**
+Default ingest is a **related brain**, not a world-news firehose:
 
-| Source | Interval | Credibility |
-|---|---|---|
-| Indian Express Pune / India / Tech / AI / Economy / Jobs RSS | 30–60 min | 0.78–0.85 |
-| Hindustan Times Pune RSS | 30 min | 0.82 |
-| Times of India Pune RSS | 30 min | 0.82 |
-| The Hindu India RSS | 45 min | 0.90 |
-| Economic Times Tech / Economy / Startups RSS | 45–60 min | 0.78–0.84 |
-| Mint AI / Industry / Tech RSS | 45–60 min | 0.82 |
-| RBI press releases RSS | 120 min | 0.98 |
-| Inc42 / YourStory startup RSS | 60–120 min | 0.74–0.80 |
-| TechCrunch / VentureBeat / Wired / Ars / The Verge / HN RSS | 30–60 min | 0.78–0.83 |
-| Google AI / DeepMind / SemiAnalysis / MIT Tech Review RSS | 120 min | 0.85–0.88 |
-| BBC World / Tech, NYT World, Guardian World, Al Jazeera RSS | 30–60 min | 0.85–0.92 |
-| NDTV India RSS | 45 min | 0.80 |
-| ESPN Cricinfo RSS | 60 min | 0.82 |
-| EV / space / consumer tech RSS (Electrek, SpaceNews, GSMArena, etc.) | 45–60 min | 0.75–0.85 |
-| Reddit r/pune, r/india, r/startups | 45–90 min | 0.55–0.65 |
-| wttr.in weather (Pune) | 90 min | 0.95 |
+| Cluster | Default sources |
+|---|---|
+| **Pune civic** | Indian Express / HT / TOI Pune, r/pune, wttr.in Pune weather |
+| **India work** | Jobs, workplace, economy, RBI, Inc42, YourStory, ET economy/startups, IE/Hindu/NDTV India, r/startups |
+| **AI / tech (jobs lens)** | IE AI/tech, Mint AI/tech, Inc42 AI Shift, ET tech, TechCrunch AI, VentureBeat AI, Google AI, DeepMind, SemiAnalysis, MIT TR, BBC Tech |
+| **Opt-in** | World geopolitics, gadgets, EV/space, generic TechCrunch/HN/Verge, ESPN Cricinfo, r/india — set a URL in `.env` to enable |
 
-**Deduplication:** SHA-256 hash of body prevents re-embedding the same article. Cosine distance < 0.06 against recent (48 h) embeddings filters near-duplicates before any embed cost is incurred.
+**Deduplication:** SHA-256 hash of body prevents re-embedding the same article. Cosine distance < 0.06 against recent (48 h) embeddings filters near-duplicates.
 
-**Retrieval pipeline:** query → Voyage embed → sqlite-vec KNN (k×3 candidates) → filter cosine distance > 0.95 → re-rank by `0.55×similarity + 0.25×recency + 0.10×credibility + 0.10×topicOverlap` → top-K injected as `[CURRENT CONTEXT]` block.
+**Topic graph:** static neighborhoods (`traffic → metro, roads, civic`; `ai → jobs, startup, tech`) plus co-occurrence edges from recent `context_items`. Retrieval expands the query with those neighbors and prefers items on the web.
 
-**Monitoring:** `/api/context/health` shows per-source last-ok timestamps and consecutive failure counts. `/api/context/preview?q=TEXT` previews the exact enrichment block that would be injected for a given query.
+**Retrieval:** query + related topics → Voyage embed → sqlite-vec KNN → re-rank by similarity, recency, credibility, and query/linked topic overlap → `[CURRENT CONTEXT]`.
+
+**Monitoring:** `/api/context/health` and `/api/context/brain` (clusters, links, memory). `/api/context/preview?q=TEXT` shows the enrichment block, including linked topics.
 
 ---
 
@@ -680,7 +696,7 @@ An optional autonomous error-investigation and fix system. Requires `claude` CLI
 |---|---|
 | Runtime | Node.js (ESM), TypeScript 5.7, `tsx` hot reload |
 | Browser automation | Playwright 1.49 + playwright-extra + puppeteer-extra-plugin-stealth |
-| LLM | Groq SDK → `llama-3.3-70b-versatile` (configurable) |
+| LLM | Groq SDK → `openai/gpt-oss-120b` (configurable) |
 | Embeddings | Voyage AI `voyage-3-lite` via REST API |
 | Vector search | `sqlite-vec` (vec0 virtual table, ANN) |
 | Database | `better-sqlite3` 9.4, WAL mode, foreign keys |
