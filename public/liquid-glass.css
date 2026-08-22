@@ -2793,11 +2793,18 @@ body.queue-active .ambient-bg {
 
 .nf-hero-empty-sub {
   display: block;
-  font-size: clamp(15px, 1.6vw, 18px);
-  color: var(--nf-text-dim);
+  font-size: clamp(16px, 1.6vw, 18px);
+  font-weight: 600;
+  color: #fff;
   max-width: 440px;
-  line-height: 1.5;
-  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.9);
+  line-height: 1.4;
+  padding: 8px 12px 8px 10px;
+  border-inline-start: 3px solid var(--nf-accent);
+  border-radius: 2px;
+  background: rgba(3, 7, 10, 0.82);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
 }
 
 .nf-hero-featured > * {
