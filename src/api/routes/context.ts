@@ -10,6 +10,8 @@ import { buildNeuralSchemaMemory, loadMemoryEvents } from '../../context/neural_
 import type { Post } from '../../storage/queries.js';
 import { logger } from '../../utils/logger.js';
 import { getVoyageApiKey } from '../../config.js';
+import { getBrainSnapshot } from '../../context/brain.js';
+import { expandLinkedTopics } from '../../context/topic_graph.js';
 export const contextRouter = express.Router();
 
 interface ContextStats {
@@ -64,6 +66,7 @@ contextRouter.get('/health', (_req, res) => {
     sources: getSourceHealth(),
     stats: gatherStats(),
     trends: getTopicVelocities().slice(0, 10),
+    brain: getBrainSnapshot(),
   });
 });
 
@@ -129,6 +132,9 @@ contextRouter.post('/test-reply', async (req, res) => {
     tournament_angle: null,
     tournament_critic_score: null,
     tournament_critic_reasons: null,
+    obs_likes: null,
+    obs_replies: null,
+    obs_at: null,
     ingested_at: Math.floor(Date.now() / 1000),
     updated_at: Math.floor(Date.now() / 1000),
   };
@@ -163,21 +169,43 @@ contextRouter.get('/preview', async (req, res) => {
   const maxTokens = Math.min(2000, Math.max(50, parseInt(String(req.query.tokens ?? '500'), 10) || 500));
 
   if (!isContextEnabled()) {
-    return res.json({ enabled: false, query: q, block: '' });
+    const detectedTopics = detectTopics(q);
+    const linkedTopics = expandLinkedTopics(detectedTopics);
+    const block = await enrichPrompt({ text: q, maxItems, maxTokens });
+    return res.json({
+      enabled: false,
+      query: q,
+      detected_topics: detectedTopics,
+      linked_topics: linkedTopics,
+      block_chars: block.length,
+      block,
+    });
   }
 
   const start = Date.now();
   const block = await enrichPrompt({ text: q, maxItems, maxTokens });
   const detectedTopics = detectTopics(q);
+  const linkedTopics = expandLinkedTopics(detectedTopics);
 
   res.json({
     enabled: true,
     query: q,
     detected_topics: detectedTopics,
+    linked_topics: linkedTopics,
     block_chars: block.length,
     elapsed_ms: Date.now() - start,
     block,
   });
+});
+
+contextRouter.get('/brain', (_req, res) => {
+  try {
+    res.json(getBrainSnapshot());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('brain endpoint failed', { err: msg });
+    res.status(500).json({ error: msg });
+  }
 });
 
 /**

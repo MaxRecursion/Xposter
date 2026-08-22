@@ -2,7 +2,7 @@ import {
   Post, Stance, getPost, getSetting, logEvent, updatePostEngagementMode,
 } from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
-import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
+import { enrichPrompt } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { EmptyReplyError } from './errors.js';
@@ -390,9 +390,12 @@ export async function generateReplyWithMeta(
     );
   const avoidTexts = options.avoidTexts ?? [];
 
-  const contextBlock = isContextEnabled()
-    ? await enrichPrompt({ text: post.text, language: post.language, maxItems: 6, maxTokens: 800 })
-    : '';
+  const contextBlock = await enrichPrompt({
+    text: post.text,
+    language: post.language,
+    maxItems: 6,
+    maxTokens: 800,
+  });
   const memoryBlock = recallNeuralMemory(post.text, { maxItems: 3, maxChars: 900 });
 
   const likenessOpts = {

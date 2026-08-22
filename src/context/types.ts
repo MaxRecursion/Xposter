@@ -17,6 +17,8 @@ export interface ContextSourceResult {
 export interface ContextSource {
   readonly name: string;
   readonly intervalMinutes: number;
+  /** Brain cluster this source belongs to, when known. */
+  readonly cluster?: string;
   fetch(): Promise<ContextSourceResult>;
 }
 

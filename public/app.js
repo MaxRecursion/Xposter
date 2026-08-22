@@ -2589,6 +2589,22 @@ async function activateMemoryQuery(query) {
     }).join('');
   }
 
+  function renderBrain(brain) {
+    const el = document.getElementById('rag-brain');
+    if (!el || !brain) return;
+    const clusters = brain.clusters || [];
+    const links = (brain.topicLinks || []).slice(0, 18);
+    const memory = brain.memory || {};
+    el.innerHTML = `
+      <div class="rag-topics" style="margin-bottom:10px">
+        ${clusters.map((c) => `<div class="rag-topic-pill">${escHtml(c.label)} · ${c.sourceCount}</div>`).join('')}
+      </div>
+      <div class="audience-sub" style="margin-bottom:6px">Learned memory: ${memory.concepts || 0} concepts · ${memory.links || 0} links · top ${escHtml((memory.topConcepts || []).slice(0, 8).join(', ') || '—')}</div>
+      <div class="rag-topics">
+        ${links.map((l) => `<div class="rag-topic-pill">${escHtml(l.from)} ↔ ${escHtml(l.to)}</div>`).join('')}
+      </div>`;
+  }
+
   // ── Feed ─────────────────────────────────────────────────────────────────
 
   const SOURCE_COLORS = { rss:'#4f6ef7', twitter:'#1da1f2', reddit:'#ff6314', weather:'#34c759', jina:'#fbbf24' };
@@ -2625,9 +2641,10 @@ async function activateMemoryQuery(query) {
 
   async function ragRefresh() {
     try {
-      const [health, recent] = await Promise.all([
+      const [health, recent, brain] = await Promise.all([
         fetch('/api/context/health').then(r => r.json()),
         fetch('/api/context/recent?limit=40').then(r => r.json()),
+        fetch('/api/context/brain').then(r => r.json()).catch(() => null),
       ]);
 
       const sources = health.sources || [];
@@ -2648,6 +2665,7 @@ async function activateMemoryQuery(query) {
       if (bySrc.length)   renderBarChart(bySrc);
       renderTopics(trends);
       if (Array.isArray(recent)) renderFeed(recent);
+      renderBrain(brain || health.brain);
 
     } catch (e) {
       console.error('RAG refresh error', e);

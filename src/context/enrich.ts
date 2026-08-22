@@ -2,6 +2,7 @@ import { ContextStore } from './store/store.js';
 import { Retriever } from './retrieve/retriever.js';
 import { VoyageEmbeddings } from './embeddings/voyage.js';
 import { logger } from '../utils/logger.js';
+import { recallBrainTopics } from './brain.js';
 
 export interface EnrichInput {
   /** Tweet text or topic phrase used as the retrieval query. */
@@ -58,23 +59,30 @@ export function getRetriever(): Retriever | null {
  * pass the result through unchanged when empty.
  */
 export async function enrichPrompt(input: EnrichInput): Promise<string> {
-  if (!isContextEnabled()) return '';
+  if (!isContextEnabled()) {
+    return recallBrainTopics(input.text).promptBlock;
+  }
   const ctx = init();
-  if (!ctx) return '';
+  const brain = recallBrainTopics(input.text);
+  if (!ctx) return brain.promptBlock;
 
   try {
     const items = await ctx.retriever.retrieve({
       text: input.text,
       language: input.language ?? null,
       k: input.maxItems ?? 4,
+      linkedTopics: brain.linkedTopics,
     });
-    if (items.length === 0) return '';
 
     const maxChars = (input.maxTokens ?? 500) * 4;
     const header =
       '[CURRENT CONTEXT — recent news and reporting on this topic. Use relevant facts, data, or events from these items to make your reply more informed and grounded. Do NOT quote URLs, do NOT attribute by publication name, do NOT invent details absent from the source text.]';
     const lines: string[] = [header];
-    let used = header.length;
+    if (brain.topicWeb) {
+      lines.push(`Related topics: ${brain.topicWeb}`);
+      lines.push('Prefer facts that sit on this topic web when they fit; do not force a linked topic.');
+    }
+    let used = lines.join('\n').length;
 
     for (const it of items) {
       const ageHours = it.publishedAt
@@ -90,11 +98,12 @@ export async function enrichPrompt(input: EnrichInput): Promise<string> {
       used += truncated.length + 1;
     }
 
-    if (lines.length === 1) return '';
+    const hasItems = lines.some((line) => line.startsWith('- ['));
+    if (!hasItems) return brain.promptBlock;
     lines.push('[/CONTEXT]');
     return lines.join('\n');
   } catch (err) {
     logger.warn('Context enrichment failed; continuing without context', { err: String(err) });
-    return '';
+    return brain.promptBlock;
   }
 }

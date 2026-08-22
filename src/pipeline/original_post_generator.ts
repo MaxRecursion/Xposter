@@ -1,5 +1,5 @@
 import { getRecentPosts, type Post, logEvent } from '../storage/queries.js';
-import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
+import { enrichPrompt } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
@@ -103,13 +103,11 @@ async function gatherResearchContext(topic: string): Promise<{ context: string; 
     ].join('\n'));
   }
 
-  if (isContextEnabled()) {
-    try {
-      const enriched = await enrichPrompt({ text: topic, maxItems: 5, maxTokens: 600 });
-      if (enriched) sections.push(enriched);
-    } catch (err) {
-      logger.warn('Context enrichment for original post failed; continuing', { err: String(err), topic });
-    }
+  try {
+    const enriched = await enrichPrompt({ text: topic, maxItems: 5, maxTokens: 600 });
+    if (enriched) sections.push(enriched);
+  } catch (err) {
+    logger.warn('Context enrichment for original post failed; continuing', { err: String(err), topic });
   }
 
   const memory = recallNeuralMemory(topic, { maxItems: 4, maxChars: 1100 });
