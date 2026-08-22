@@ -125,6 +125,10 @@ contextRouter.post('/test-reply', async (req, res) => {
     posting_attempts: 0,
     retry_after: null,
     last_error: null,
+    tournament_strategy: null,
+    tournament_angle: null,
+    tournament_critic_score: null,
+    tournament_critic_reasons: null,
     ingested_at: Math.floor(Date.now() / 1000),
     updated_at: Math.floor(Date.now() / 1000),
   };

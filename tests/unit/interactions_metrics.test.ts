@@ -77,5 +77,19 @@ describe('reply metric sync storage', () => {
     expect(account.total_engagement).toBe(4);
     expect(account.avg_reply_score).toBe(16);
     expect(account.successful_replies).toBe(1);
+    expect(account.author_engaged_replies).toBe(0);
+  });
+
+  it('counts author_engaged toward success_score and account stats', async () => {
+    const { interactions, interactionId } = await seedReply();
+    interactions.updateInteractionMetrics(interactionId, {
+      likes: 0, replies: 0, retweets: 0, impressions: 40, authorEngaged: true,
+    });
+    interactions.refreshAccountReplyStats('movie_user');
+
+    const { getAccount } = await import('../../src/storage/accounts.js');
+    const account = getAccount('movie_user')!;
+    expect(account.author_engaged_replies).toBe(1);
+    expect(account.avg_reply_score).toBe(25);
   });
 });

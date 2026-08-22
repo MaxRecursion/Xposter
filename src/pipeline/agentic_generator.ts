@@ -5,6 +5,7 @@ import { claudeGeneratorModel } from './claude_generator.js';
 import { charLength, cleanModelText } from './text_constraints.js';
 import { logger } from '../utils/logger.js';
 import { getAnthropicApiKey, getAgenticGeneratorModel, getAgenticGenMaxTurns } from '../config.js';
+import { isClaudeCliAuthBlocked, noteClaudeAuthFailure } from './provider_health.js';
 
 /**
  * Agentic content generation on the Claude Agent SDK.
@@ -40,9 +41,8 @@ export interface AgenticGenerationTask {
 
 export function isAgenticGenerationEnabled(): boolean {
   if (getSetting('agentic_generation', 'false') !== 'true') return false;
-  // The SDK authenticates with ANTHROPIC_API_KEY when set, otherwise with the
-  // local Claude Code CLI login — one of the two must be present.
   if (getAnthropicApiKey()) return true;
+  if (isClaudeCliAuthBlocked()) return false;
   return isClaudeCliFound();
 }
 
@@ -325,6 +325,7 @@ export async function runGenerationAgent(task: AgenticGenerationTask, modelOverr
       }
     }
   } catch (err) {
+    noteClaudeAuthFailure(err);
     logEvent('AGENTIC_GENERATION_FAILED', `error: ${String(err).slice(0, 300)} ${label}`, task.postId);
     throw err;
   }
@@ -366,8 +367,10 @@ export async function generateReplyAgentic(opts: {
     try {
       return await runGenerationAgent(task, model);
     } catch (err) {
+      noteClaudeAuthFailure(err);
       logger.warn(`Agentic generation attempt ${attempt}/${AGENTIC_MAX_ATTEMPTS} failed (model=${model})`, { err: String(err).slice(0, 200) });
       lastErr = err;
+      if (isClaudeCliAuthBlocked()) break;
     }
   }
   throw lastErr;

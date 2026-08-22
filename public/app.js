@@ -37,6 +37,9 @@ function renderPostCard(post, showActions = true) {
 
       <div class="engagement-row">${engagement}</div>
 
+      ${tournamentMetaHtml(post)}
+      ${lastErrorHtml(post)}
+
       ${reply ? `
         <div class="reply-section">
           <div class="reply-label">Generated Reply</div>
@@ -64,6 +67,22 @@ function renderPostCard(post, showActions = true) {
       `}
     </div>
   `;
+}
+
+function tournamentMetaHtml(post) {
+  if (!post.tournament_strategy) return '';
+  const bits = [post.tournament_strategy];
+  if (post.tournament_angle) bits.push(post.tournament_angle.replaceAll('_', ' '));
+  if (post.tournament_critic_score != null && post.tournament_critic_score !== '') {
+    bits.push(`gravity ${Number(post.tournament_critic_score).toFixed(1)}`);
+  }
+  return `<div class="post-time" style="padding:6px 0 0;">Tournament: ${escHtml(bits.join(' · '))}</div>`;
+}
+
+function lastErrorHtml(post) {
+  if (!post.last_error) return '';
+  if (post.status !== 'ERROR' && post.status !== 'SKIPPED') return '';
+  return `<div class="post-time" style="padding:6px 0 0;color:var(--danger, #ef4444);">Error: ${escHtml(post.last_error)}</div>`;
 }
 
 function updateCharCount(postId) {
@@ -352,6 +371,9 @@ function nfRenderHero(post) {
       ${post.stance ? `<span class="nf-score-pill">${escHtml(post.stance)}</span>` : ''}
       ${post.engagement_mode && post.engagement_mode !== 'NONE'
         ? `<span class="nf-score-pill">${escHtml(post.engagement_mode)}</span>` : ''}
+      ${post.tournament_strategy
+        ? `<span class="nf-score-pill">${escHtml(post.tournament_strategy)}${post.tournament_angle ? ' · ' + escHtml(String(post.tournament_angle).replaceAll('_', ' ')) : ''}${post.tournament_critic_score != null && post.tournament_critic_score !== '' ? ' · g' + Number(post.tournament_critic_score).toFixed(1) : ''}</span>`
+        : ''}
     </div>
     <h1 class="nf-hero-title">
       ${escHtml(post.author_name)}
@@ -514,9 +536,13 @@ async function loadSettings() {
     if ($('s-trend-enabled'))       $('s-trend-enabled').checked     = s.trend_replies_enabled !== 'false';
     if ($('s-trend-ratio'))         $('s-trend-ratio').value         = s.trend_reply_ratio ?? '70';
     if ($('s-contrarian-pct'))      $('s-contrarian-pct').value      = s.contrarian_reply_pct ?? '33';
-    if ($('s-bait-pct'))            $('s-bait-pct').value            = s.engagement_bait_pct ?? '30';
+    if ($('s-bait-pct'))            $('s-bait-pct').value            = s.engagement_bait_pct ?? '15';
     if ($('s-bait-style'))          $('s-bait-style').value          = s.bait_style ?? 'implicit';
     if ($('s-bait-candidates'))     $('s-bait-candidates').value     = s.bait_candidate_count ?? '2';
+    if ($('s-gravity-min'))         $('s-gravity-min').value         = s.conversation_gravity_min ?? '3';
+    if ($('s-gravity-judge'))       $('s-gravity-judge').checked     = s.conversation_gravity_judge !== 'false';
+    if ($('s-tournament'))          $('s-tournament').checked        = s.reply_tournament_enabled !== 'false';
+    if ($('s-tournament-pct'))      $('s-tournament-pct').value      = s.reply_tournament_rollout_pct ?? '20';
     if ($('s-human-gate'))          $('s-human-gate').checked        = s.human_likeness_gate !== 'false';
     if ($('s-image-enabled'))       $('s-image-enabled').checked     = s.image_posts_enabled !== 'false';
     if ($('s-image-per-day'))       $('s-image-per-day').value       = s.image_posts_per_day ?? '1';
@@ -571,11 +597,22 @@ function updateWitDisplay() {
 async function loadDiagnostics() {
   try {
     const d = await apiFetch('/api/diagnostics');
+    const groqAvail = d.groq_model_available;
+    const groqAvailLabel = groqAvail === true
+      ? `yes (${d.groq_model || ''})`
+      : groqAvail === false
+        ? `no — ${d.groq_health?.error || d.groq_model || 'unavailable'}`
+        : `unchecked (${d.groq_model || ''})`;
     const rows = [
       ['ntfy_topic',       d.ntfy_topic, d.ntfy_topic && d.ntfy_topic !== '(not set)' && d.ntfy_topic !== 'xposter-your-secret-topic'],
       ['ntfy_server',      d.ntfy_server, true],
       ['callback_base',    d.callback_base, true],
       ['groq_configured',  d.groq_configured ? 'yes' : 'no — set GROQ_API_KEY in .env', d.groq_configured],
+      ['groq_model_available', groqAvailLabel, groqAvail === true],
+      ['claude_cli_auth_blocked', d.claude_cli_auth_blocked
+        ? (d.claude_cli_auth_reason || 'yes — skipping CLI until restart')
+        : 'no',
+        !d.claude_cli_auth_blocked],
       ['api_key_set',      d.api_key_set ? 'yes' : 'placeholder (auth disabled)', d.api_key_set],
       ['browser_headless', d.browser_headless, true],
     ];
@@ -1041,6 +1078,7 @@ async function loadAnalytics() {
       ['Replies posted', summary.replies || 0],
       ['Successful replies', summary.successful_replies || 0],
       ['Original posts', summary.originals || 0],
+      ['Actions / 1k imp.', formatQualityRate(summary.actions_per_1k_impressions, summary.quality_sample_size)],
     ].map(([label, value]) => `
       <div class="analytics-summary-card">
         <div class="analytics-summary-value">${escHtml(value)}</div>
@@ -1060,6 +1098,8 @@ async function loadAnalytics() {
     renderTopicTrends(data.topic_trends || []);
     renderPostingHours(data.posting_hours || []);
     renderBaitTuning(bait);
+    renderTournamentQuality(data.tournament || {});
+    renderQualityBreakdowns(data.quality || {});
   } catch (e) {
     empty.style.display = 'block';
     empty.textContent = `Analytics failed to load: ${e.message}`;
@@ -1069,6 +1109,58 @@ async function loadAnalytics() {
 function formatSigned(value) {
   const n = Number(value) || 0;
   return n > 0 ? `+${n}` : String(n);
+}
+
+function formatQualityRate(rate, sample) {
+  if (rate == null || Number.isNaN(Number(rate))) {
+    return `n/a · n=${sample || 0}`;
+  }
+  return `${Number(rate).toFixed(2)} · n=${sample || 0}`;
+}
+
+function renderQualityRows(rows) {
+  if (!rows || !rows.length) return '<div class="analytics-no-data">No metric-synced quality data yet.</div>';
+  const max = Math.max(...rows.map((r) => Number(r.actions_per_1k_impressions) || 0), 1);
+  return rows.map((row) => `
+    <div class="analytics-bar-row">
+      <div class="analytics-bar-label">${escHtml(row.key)}</div>
+      <div class="analytics-bar-track">
+        <div class="analytics-bar-fill" style="width:${Math.max(2, ((Number(row.actions_per_1k_impressions) || 0) / max) * 100)}%"></div>
+      </div>
+      <div class="analytics-bar-value">${row.actions_per_1k_impressions == null ? 'n/a' : Number(row.actions_per_1k_impressions).toFixed(2)} /1k · n=${row.sample_size}</div>
+    </div>`).join('');
+}
+
+function renderTournamentQuality(data) {
+  const el = $('analytics-tournament');
+  if (!el) return;
+  const best = data.best_angle;
+  el.innerHTML = `
+    <div class="analytics-no-data" style="margin-bottom:8px">
+      Tournament ${data.tournament_actions_per_1k == null ? 'n/a' : Number(data.tournament_actions_per_1k).toFixed(2)} /1k
+      (n=${data.tournament_sample_size || 0})
+      · Control ${data.control_actions_per_1k == null ? 'n/a' : Number(data.control_actions_per_1k).toFixed(2)} /1k
+      (n=${data.control_sample_size || 0})
+      ${best ? `· Best angle ${escHtml(best.angle)} (${best.actions_per_1k_impressions == null ? 'n/a' : Number(best.actions_per_1k_impressions).toFixed(2)} /1k, n=${best.sample_size})` : ''}
+    </div>
+    ${renderQualityRows(data.by_strategy || [])}
+    ${data.by_angle?.length ? `<div class="analytics-card-title" style="margin-top:12px">By angle</div>${renderQualityRows(data.by_angle)}` : ''}`;
+}
+
+function renderQualityBreakdowns(quality) {
+  const el = $('analytics-quality');
+  if (!el) return;
+  const sections = [
+    ['Source', quality.by_source],
+    ['Hour', quality.by_hour],
+    ['Topic', quality.by_topic],
+    ['Stance', quality.by_stance],
+    ['Structure', quality.by_content_structure],
+  ];
+  el.innerHTML = sections.map(([title, rows]) => `
+    <div class="analytics-card-title" style="margin-top:10px">${escHtml(title)}</div>
+    ${renderQualityRows(rows)}
+  `).join('');
 }
 
 function renderBaitTuning(data) {
@@ -1766,6 +1858,10 @@ document.addEventListener('DOMContentLoaded', () => {
           engagement_bait_pct:          $('s-bait-pct')?.value,
           bait_style:                   $('s-bait-style')?.value,
           bait_candidate_count:         $('s-bait-candidates')?.value,
+          conversation_gravity_min:     $('s-gravity-min')?.value,
+          conversation_gravity_judge:   $('s-gravity-judge')?.checked ? 'true' : 'false',
+          reply_tournament_enabled:     $('s-tournament')?.checked ? 'true' : 'false',
+          reply_tournament_rollout_pct: $('s-tournament-pct')?.value,
           human_likeness_gate:          $('s-human-gate')?.checked ? 'true' : 'false',
           image_posts_enabled:          $('s-image-enabled')?.checked ? 'true' : 'false',
           image_posts_per_day:          $('s-image-per-day')?.value,

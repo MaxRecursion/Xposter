@@ -189,6 +189,13 @@ function baitMechanicsScore(text: string, mode: EngagementMode): number {
     if (findBannedOpener(trimmed, 'implicit')) score -= 0.4;
   }
 
+  if (mode === 'RECEIPT') {
+    if (DIGIT_RE.test(trimmed)) score += 0.2;
+    if (NAMED_ENTITY_RE.test(trimmed)) score += 0.2;
+    if (/\b(so |that's why|which means|because)\b/i.test(trimmed)) score += 0.15;
+    if (findBannedOpener(trimmed, 'implicit')) score -= 0.4;
+  }
+
   return Math.min(1, Math.max(0, score));
 }
 

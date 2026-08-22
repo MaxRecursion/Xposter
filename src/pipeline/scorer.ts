@@ -4,19 +4,33 @@ import { getContextStore } from '../context/enrich.js';
 import type { RetrievedContextItem } from '../context/types.js';
 import { logger } from '../utils/logger.js';
 import { keywordMatches } from './keywords.js';
+import { getVelocityConfig, isVelocityTargetingEnabled, readVelocity, roundVelocityRead } from './velocity.js';
 
 export interface ScoreBreakdown {
   recency: number;          // 0-30: newer = higher
   topicRelevance: number;   // 0-30: more keyword matches = higher
   replyOpportunity: number; // 0-20: questions, complaints, requests
+  conversationOpportunity: number; // 0-10: incomplete story, concrete complaint, genuine ask
   engagementSweet: number;  // 0-10: sweet spot (not 0, not viral)
   topicalHeat: number;       // 0-10: similarity to fresh context reporting
   accountHistory: number;    // -6 to 10: prior engagement from this author
+  velocityLpm: number;       // observed likes/minute on the parent tweet
+  reachFactor: number;       // 0.15-1.4 multiplier: is anyone still watching?
 }
 
 export interface ScoredPost {
   id: string;
+  /** Composite quality score, 0-100. Gates on `min_score` as it always has. */
   score: number;
+  /**
+   * `score` weighted by the reach multiplier. Decides *ordering* only.
+   *
+   * Reach is deliberately kept out of `score`: on a quiet timeline every
+   * candidate has a low like-rate, so folding the multiplier into the gate
+   * would push the whole pool under `min_score` and starve the run into
+   * permanent fallback. Volume should stay flat; only the aim changes.
+   */
+  reachScore: number;
   breakdown: ScoreBreakdown;
 }
 
@@ -33,6 +47,10 @@ const COMPLAINT_PATTERNS = [/\bterrible\b/i, /\bworst\b/i, /\bhorrible\b/i, /\bb
   /\bfrustrated\b/i, /\bsick of\b/i];
 
 const HELP_REQUEST_PATTERNS = [/\bhelp\b/i, /\bsuggest/i, /\brecommend/i, /\badvice\b/i];
+
+const CONVERSATION_ASK = [/\bwhat should i\b/i, /\bshould i\b/i, /\banyone (else|know|tried)\b/i, /\bchange my mind\b/i];
+const INCOMPLETE_STORY = [/\bthen\b.+\b(suddenly|today|just)\b/i, /\bstill waiting\b/i, /\bno update\b/i, /\bso far\b/i];
+const CONCRETE_COMPLAINT = [/\b(road|pothole|metro|pmc|salary|rent|placement|power cut|waterlog)/i];
 
 // English topic keyword weights
 const WEIGHTED_KEYWORDS: Array<[string, number]> = [
@@ -69,6 +87,15 @@ export function scorePost(post: Post, signals: ScoringSignals = {}): ScoredPost 
   if (HELP_REQUEST_PATTERNS.some((p) => p.test(post.text))) oppScore += 10;
   const replyOpportunity = Math.min(20, oppScore);
 
+  let convScore = 0;
+  if (CONVERSATION_ASK.some((p) => p.test(post.text))) convScore += 5;
+  if (INCOMPLETE_STORY.some((p) => p.test(post.text))) convScore += 4;
+  if (COMPLAINT_PATTERNS.some((p) => p.test(post.text)) && CONCRETE_COMPLAINT.some((p) => p.test(post.text))) {
+    convScore += 4;
+  }
+  if (/\?\s*$/.test(post.text.trim())) convScore += 2;
+  const conversationOpportunity = Math.min(10, convScore);
+
   // ── Engagement Sweet Spot (0–10) ──────────────────────────────────────────
   // Zero engagement = possibly irrelevant spam
   // Viral (>500 likes) = hard to stand out, skip
@@ -82,27 +109,45 @@ export function scorePost(post: Post, signals: ScoringSignals = {}): ScoredPost 
   const topicalHeat = clamp(signals.topicalHeat ?? 0, 0, 10);
   const accountHistory = clamp(signals.accountHistory ?? 0, -6, 10);
 
+  // ── Reach multiplier ──────────────────────────────────────────────────────
+  // Applied to the composite rather than added to it: a dead tweet should not
+  // be rescued by keyword relevance, however topical it looks.
+  const velocityCfg = getVelocityConfig();
+  const velocity = readVelocity(post.likes, post.timestamp, now, velocityCfg, post.replies);
+  const reachActive = isVelocityTargetingEnabled();
+  const { velocityLpm, reachFactor } = roundVelocityRead(velocity);
+
   const breakdown: ScoreBreakdown = {
     recency: Math.round(recency * 10) / 10,
     topicRelevance: Math.round(topicRelevance * 10) / 10,
     replyOpportunity: Math.round(replyOpportunity * 10) / 10,
+    conversationOpportunity: Math.round(conversationOpportunity * 10) / 10,
     engagementSweet,
     topicalHeat: Math.round(topicalHeat * 10) / 10,
     accountHistory: Math.round(accountHistory * 10) / 10,
+    velocityLpm,
+    reachFactor: reachActive ? reachFactor : 1,
   };
 
-  const score = clamp(
+  const base = clamp(
     breakdown.recency +
     breakdown.topicRelevance +
     breakdown.replyOpportunity +
+    breakdown.conversationOpportunity +
     breakdown.engagementSweet +
     breakdown.topicalHeat +
     breakdown.accountHistory,
     0,
     100,
   );
+  const reachScore = reachActive ? base * reachFactor : base;
 
-  return { id: post.id, score: Math.round(score * 10) / 10, breakdown };
+  return {
+    id: post.id,
+    score: Math.round(base * 10) / 10,
+    reachScore: Math.round(reachScore * 100) / 100,
+    breakdown,
+  };
 }
 
 export async function scorePostsWithSignals(posts: Post[]): Promise<ScoredPost[]> {
@@ -124,18 +169,25 @@ export function topicalHeatSignal(items: RetrievedContextItem[]): number {
 }
 
 export function accountHistorySignal(
-  account: Pick<Account, 'total_replies_sent' | 'avg_reply_score' | 'successful_replies'> | null,
+  account: Pick<Account, 'total_replies_sent' | 'avg_reply_score' | 'successful_replies'> & {
+    author_engaged_replies?: number;
+  } | null,
 ): number {
   if (!account || account.total_replies_sent <= 0) return 0;
   if (account.total_replies_sent >= 3 && account.successful_replies === 0) return -6;
 
   const successRate = account.successful_replies / Math.max(1, account.total_replies_sent);
   const scoreQuality = clamp(account.avg_reply_score / 40, 0, 1);
-  return Math.round(clamp(successRate * 6 + scoreQuality * 4, 0, 10) * 10) / 10;
+  const authorComeback = clamp((account.author_engaged_replies ?? 0) / Math.max(1, account.total_replies_sent), 0, 1);
+  return Math.round(clamp(successRate * 5 + scoreQuality * 3 + authorComeback * 4, 0, 10) * 10) / 10;
 }
 
+/**
+ * Orders candidates by reach-weighted score, so that among everything clearing
+ * `min_score` we always aim at the tweet still gathering attention.
+ */
 export function rankCandidates(scored: ScoredPost[]): ScoredPost[] {
-  return [...scored].sort((a, b) => b.score - a.score);
+  return [...scored].sort((a, b) => (b.reachScore ?? b.score) - (a.reachScore ?? a.score));
 }
 
 // ── Trend scoring ─────────────────────────────────────────────────────────────
@@ -218,7 +270,14 @@ export function scoreTrendPost(post: Post, signals: TrendScoringSignals = {}): S
     100,
   );
 
-  return { id: post.id, score: round1(score), breakdown: breakdown as unknown as ScoreBreakdown };
+  // The trend profile already scores velocity and reply-window directly, so its
+  // composite needs no separate reach weighting.
+  return {
+    id: post.id,
+    score: round1(score),
+    reachScore: round1(score),
+    breakdown: breakdown as unknown as ScoreBreakdown,
+  };
 }
 
 export function scoreTrendPosts(posts: Post[], trendHeat: number): ScoredPost[] {

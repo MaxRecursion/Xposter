@@ -35,6 +35,7 @@ function mockAccount(handle: string) {
     total_engagement: 0,
     avg_reply_score: 0,
     successful_replies: 0,
+    author_engaged_replies: 0,
     first_seen_at: now,
     last_seen_at: now,
     updated_at: now,

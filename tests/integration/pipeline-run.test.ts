@@ -71,6 +71,7 @@ describe('runPipeline', () => {
         total_engagement: 0,
         avg_reply_score: 0,
         successful_replies: 0,
+        author_engaged_replies: 0,
         first_seen_at: Math.floor(Date.now() / 1000),
         last_seen_at: Math.floor(Date.now() / 1000),
         updated_at: Math.floor(Date.now() / 1000),
@@ -103,7 +104,7 @@ describe('runPipeline', () => {
     const { getPostByTweetId } = await import('../../src/storage/queries.js');
     const post = getPostByTweetId(tweet.tweet_id);
 
-    expect(result).toEqual({ ingested: 1, candidates: 1 });
+    expect(result).toEqual({ ingested: 1, candidates: 1, posted: 1, pendingApproval: 0 });
     expect(post?.status).toBe('POSTED');
     expect(post?.posted_tweet_id).toBe('9999000011112222');
     expect(post?.generated_reply).toBe('That sounds like a fun watch.');
@@ -142,6 +143,12 @@ describe('runPipeline', () => {
       generateReplyWithMeta: vi.fn().mockResolvedValue({
         text: replyText,
         contentStructure: 'standard',
+        tournament: {
+          strategy: 'TOURNAMENT',
+          angle: 'ONE_LINER',
+          criticScore: 4,
+          criticReasons: ['specific'],
+        },
       }),
     }));
     const postReplyMock = vi.fn();
@@ -163,12 +170,59 @@ describe('runPipeline', () => {
     const { getPostByTweetId } = await import('../../src/storage/queries.js');
     const post = getPostByTweetId(tweet.tweet_id);
 
-    expect(result).toEqual({ ingested: 1, candidates: 1 });
+    expect(result).toEqual({ ingested: 1, candidates: 1, posted: 0, pendingApproval: 1 });
     expect(post?.status).toBe('PENDING_APPROVAL');
     expect(post?.generated_reply).toBe('Baner traffic has impeccable timing.');
+    expect(post?.tournament_strategy).toBe('TOURNAMENT');
+    expect(post?.tournament_angle).toBe('ONE_LINER');
+    expect(post?.tournament_critic_score).toBe(4);
     expect(postReplyMock).not.toHaveBeenCalled();
     expect(approvalMock).toHaveBeenCalledTimes(1);
     expect(approvalMock.mock.calls[0][0].id).toBe(post?.id);
+  });
+
+  it('persists a generation failure on last_error', async () => {
+    const tweet = {
+      tweet_id: '1723456789012347011',
+      author_handle: 'fail_user',
+      author_name: 'Fail User',
+      text: 'Evening traffic near Aundh is crawling again.',
+      timestamp: Math.floor(Date.now() / 1000) - 300,
+      likes: 2,
+      replies: 0,
+      retweets: 0,
+      tweet_url: 'https://x.com/fail_user/status/1723456789012347011',
+    };
+
+    vi.doMock('../../src/browser/ingestion.js', () => ({
+      ingestTimeline: vi.fn().mockResolvedValue([tweet]),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockResolvedValue(null),
+    }));
+    vi.doMock('../../src/pipeline/generator.js', () => ({
+      generateReply: vi.fn().mockRejectedValue(new Error('GROQ_API_KEY is not set')),
+      generateReplyWithMeta: vi.fn().mockRejectedValue(new Error('GROQ_API_KEY is not set')),
+    }));
+    vi.doMock('../../src/browser/posting.js', () => ({
+      postReply: vi.fn(),
+      deleteReply: vi.fn(),
+    }));
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendApprovalNotification: vi.fn(),
+      sendReplyPostedNotification: vi.fn(),
+    }));
+
+    const { runPipeline } = await import('../../src/scheduler/cron.js');
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('require_approval', 'false');
+    const result = await runPipeline();
+
+    const { getPostByTweetId } = await import('../../src/storage/queries.js');
+    const post = getPostByTweetId(tweet.tweet_id);
+    expect(result).toEqual({ ingested: 1, candidates: 0, posted: 0, pendingApproval: 0 });
+    expect(post?.status).toBe('ERROR');
+    expect(post?.last_error).toContain('GROQ_API_KEY');
   });
 
   it('regenerates a reply that duplicates recent interaction history', async () => {

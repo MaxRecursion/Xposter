@@ -4,6 +4,7 @@ import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { pickTopicAndCategory, type TopicCategory } from './topic_categories.js';
 import { EmptyReplyError } from './errors.js';
+import { applyConversationGravity } from './conversation_gravity.js';
 import { logger } from '../utils/logger.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, charLength, cleanModelText, fitToCharBudget } from './text_constraints.js';
@@ -14,9 +15,10 @@ import {
 } from './engagement_bait.js';
 import {
   checkHumanLikeness, getBaitCandidateCount, HUMAN_TEXTURE_RULES,
-  humanLikenessScore, pickBestCandidate, type ContentStructure,
+  humanLikenessScore, pickBestCandidate, detectContentStructure, type ContentStructure,
 } from './human_likeness.js';
 import { getOriginalBaitCountsToday } from '../storage/original_posts.js';
+import { winnerExamplesBlock } from '../storage/engagement_performance.js';
 import { generateText, type GroqCallOptions } from './llm_runner.js';
 
 const MAX_ORIGINAL_CHARS = 280;
@@ -302,6 +304,7 @@ async function generateRankedBaitDraft(opts: {
   avoidTexts?: string[];
   logContext?: Record<string, unknown>;
   onAttempt?: (attempt: number, prompt: string) => void;
+  parentText: string;
 }): Promise<{ text: string; contentStructure: ContentStructure }> {
   const candidateCount = opts.engagementMode !== 'NONE'
     ? Math.max(1, getBaitCandidateCount())
@@ -345,7 +348,26 @@ async function generateRankedBaitDraft(opts: {
     }
   }
 
-  return { text: picked.text, contentStructure: picked.structure };
+  const gravity = await applyConversationGravity({
+    parentText: opts.parentText,
+    drafts: [...new Set([picked.text, ...candidates])],
+    rewrite: async (reasons) => generateWithinBudget({
+      ...opts,
+      userPrompt: [
+        opts.userPrompt,
+        '',
+        `Previous draft scored low on conversation gravity (${reasons.slice(0, 3).join('; ')}).`,
+        'Add one concrete receipt and a natural opening for someone to reply.',
+      ].join('\n'),
+      groq: { ...opts.groq, temperature: Math.min((opts.groq.temperature ?? 0.9) + 0.06, 0.98) },
+      logContext: { ...opts.logContext, gravityRetry: true },
+    }),
+  });
+
+  return {
+    text: gravity.text,
+    contentStructure: detectContentStructure(gravity.text),
+  };
 }
 
 // ── Engagement farm ───────────────────────────────────────────────────────────
@@ -552,6 +574,7 @@ export async function generateQuoteTweetPost(
       system,
       prompt,
     ),
+    parentText: source.text,
   });
   const cleaned = ranked.text;
 
@@ -572,7 +595,7 @@ export async function generateQuoteTweetPost(
 export async function generateEngagementFarmPost(
   options: OriginalGenerationOptions = {},
 ): Promise<GeneratedOriginalPost> {
-  // Farms are the dedicated bait slots — always count toward the 30% quota.
+  // Farms are the dedicated bait slots — always count toward the bait quota.
   const engagementMode = allocateOriginalBait({
     topicText: 'pune tech civic engagement farm',
     forceBait: true,
@@ -607,6 +630,7 @@ export async function generateEngagementFarmPost(
       system,
       prompt,
     ),
+    parentText: baseUserPrompt,
   });
   const cleaned = ranked.text;
 
@@ -657,15 +681,17 @@ export async function generateOriginalPost(
     snippets.length > 0
       ? 'Important: Do NOT repeat ideas already in the context. Bring a fresh angle.'
       : '',
+    winnerExamplesBlock(3),
     '',
     'Write the tweet now:',
   ].filter((l) => l !== undefined).join('\n'), options.avoidTexts);
 
   logger.info('Generating original post', { topic, category, engagementMode });
 
-  const candidateCount = engagementMode !== 'NONE'
-    ? Math.max(1, getBaitCandidateCount())
-    : 1;
+  const candidateCount = Math.max(
+    2,
+    engagementMode !== 'NONE' ? getBaitCandidateCount() : 2,
+  );
   const likenessOpts = {
     engagementMode,
     flavor: category === 'local-pune' || category === 'pune-tech-economy' ? 'pune' as const : 'general' as const,
@@ -728,8 +754,33 @@ export async function generateOriginalPost(
 
     const qError = qualityCheck(cleaned, { avoidTexts: likenessOpts.avoidTexts });
     if (!qError) {
-      lastQualityError = null;
-      break;
+      try {
+        const gravity = await applyConversationGravity({
+          parentText: `${topic}\n${context.slice(0, 400)}`,
+          drafts: [cleaned, ...candidates],
+          rewrite: async (reasons) => cleanModelText(await callModel(
+            systemPromptText,
+            [
+              attemptPrompt,
+              '',
+              `Previous draft scored low on conversation gravity (${reasons.slice(0, 3).join('; ')}).`,
+              'Add one concrete receipt and a natural opening for someone to reply.',
+            ].join('\n'),
+            0.9,
+          )),
+        });
+        cleaned = gravity.text;
+        contentStructure = detectContentStructure(cleaned);
+        lastQualityError = null;
+        break;
+      } catch (err) {
+        lastQualityError = err instanceof Error ? err.message : String(err);
+        logger.warn('Original post failed conversation gravity', {
+          topic, category, attempt, error: lastQualityError,
+        });
+        if (attempt < MAX_REPAIR_ATTEMPTS) continue;
+        throw err;
+      }
     }
 
     lastQualityError = qError;

@@ -234,6 +234,15 @@
             <div class="analytics-card-title">Reply Source Performance</div>
             <div id="analytics-reply-source"></div>
           </div>
+          <div class="analytics-card analytics-card-wide">
+            <div class="analytics-card-title">Reply Tournament quality</div>
+            <div class="audience-sub" style="margin-bottom:8px;">Actions per 1,000 impressions (likes + replies + reposts) on metric-synced replies only.</div>
+            <div id="analytics-tournament"></div>
+          </div>
+          <div class="analytics-card analytics-card-wide">
+            <div class="analytics-card-title">Quality rate breakdowns</div>
+            <div id="analytics-quality"></div>
+          </div>
         </div>
         <div class="empty-state" id="analytics-empty" style="display:none;">No analytics data yet.</div>
       </div>
@@ -612,9 +621,9 @@
             <span class="settings-field-help">Share of trend replies that argue against the consensus. Automatically forced off for tragedy, health, religion, caste and party-political trends.</span>
           </div>
           <div class="settings-field">
-            <label>Clickbait / ragebait (%)</label>
+            <label>Clickbait / ragebait / receipt (%)</label>
             <input type="number" id="s-bait-pct" min="0" max="100" />
-            <span class="settings-field-help">Share of replies and original posts that use a curiosity-gap or debate-bait frame to earn impressions. Blocked on grief, hard news, and identity topics. Engagement-farm slots always count toward this quota.</span>
+            <span class="settings-field-help">Share of replies and original posts that use a curiosity-gap, debate, or concrete-receipt frame. Default 15%. Blocked on grief, hard news, and identity topics. Engagement-farm slots always count toward this quota.</span>
           </div>
           <div class="settings-field">
             <label>Bait style</label>
@@ -628,6 +637,36 @@
             <label>Bait candidate drafts</label>
             <input type="number" id="s-bait-candidates" min="1" max="3" />
             <span class="settings-field-help">How many drafts to generate for bait slots; the best human-likeness score wins.</span>
+          </div>
+          <div class="settings-field">
+            <label>Conversation gravity min (1–5)</label>
+            <input type="number" id="s-gravity-min" min="1" max="5" />
+            <span class="settings-field-help">Skip a draft instead of posting if it scores below this on “would someone hit Reply?”</span>
+          </div>
+          <div class="settings-field settings-field-toggle">
+            <label for="s-gravity-judge">
+              <span>Conversation gravity LLM judge</span>
+              <span class="settings-field-help">Blend a cheap second-pass score with the heuristic. Off = heuristic only.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-gravity-judge" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+          <div class="settings-field settings-field-toggle">
+            <label for="s-tournament">
+              <span>Reply Tournament</span>
+              <span class="settings-field-help">For a slice of candidates, generate three distinct angles and let Conversation Gravity pick the winner.</span>
+            </label>
+            <label class="ios-switch">
+              <input type="checkbox" id="s-tournament" />
+              <span class="ios-slider"></span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label>Tournament rollout (%)</label>
+            <input type="number" id="s-tournament-pct" min="0" max="100" />
+            <span class="settings-field-help">Keep at 20 until Tournament has enough metric-synced observations. 0 never assigns Tournament; 100 always does.</span>
           </div>
           <div class="settings-field settings-field-toggle">
             <label for="s-human-gate">

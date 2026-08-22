@@ -318,6 +318,25 @@ export async function sendSessionExpiredNotification(): Promise<NtfyResult> {
   }, { event: 'session_expired' });
 }
 
+/** One-shot alert when scheduled reply runs produce nothing twice in a row. */
+export async function sendStalledDeliveryNotification(consecutiveEmpty: number): Promise<NtfyResult> {
+  const cfg = getNtfyConfig();
+  if (!cfg) return notConfiguredResult();
+
+  const base = getCallbackBase();
+  return postToNtfy(cfg, {
+    topic: cfg.topic,
+    title: 'Xposter: Reply pipeline stalled',
+    message: `${consecutiveEmpty} scheduled runs produced no posted reply and no approval candidate. Check Groq model health and recent ERROR posts on the dashboard.`,
+    priority: 4,
+    tags: ['rotating_light'],
+    actions: [
+      { action: 'view', label: 'Open dashboard', url: base },
+    ],
+    click: base,
+  }, { event: 'pipeline_stalled', consecutiveEmpty });
+}
+
 // ── Weekly digest ────────────────────────────────────────────────────────────
 
 export async function sendWeeklyDigestNotification(

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import type { Post } from '../../src/storage/queries.js';
 
 // Mock the groq-sdk module before importing generator
@@ -29,6 +31,15 @@ vi.mock('../../src/pipeline/claude_generator.js', () => ({
   generateWithClaude: vi.fn(),
 }));
 
+const TEST_DB_RELATIVE = 'data/test-generator.db';
+const TEST_DB_PATH = path.resolve(process.cwd(), TEST_DB_RELATIVE);
+
+function removeTestDb(): void {
+  for (const suffix of ['', '-shm', '-wal']) {
+    fs.rmSync(`${TEST_DB_PATH}${suffix}`, { force: true });
+  }
+}
+
 function makePost(overrides: Partial<Post> = {}): Post {
   const now = Math.floor(Date.now() / 1000);
   return {
@@ -53,12 +64,21 @@ function makePost(overrides: Partial<Post> = {}): Post {
 }
 
 describe('generateReply', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    removeTestDb();
+    fs.mkdirSync(path.dirname(TEST_DB_PATH), { recursive: true });
+    process.env.DB_PATH_OVERRIDE = TEST_DB_RELATIVE;
     process.env.GROQ_API_KEY = 'test-key-mock';
     process.env.GROQ_MODEL = 'llama-3.3-70b-versatile';
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('conversation_gravity_judge', 'false');
+    setSetting('reply_tournament_enabled', 'false');
   });
 
   afterEach(() => {
+    delete process.env.DB_PATH_OVERRIDE;
+    removeTestDb();
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -166,5 +186,53 @@ describe('generateReply', () => {
     const userMsg = callArgs.messages.find((m: any) => m.role === 'user').content;
     expect(userMsg).toContain('VARIETY REQUIREMENT');
     expect(userMsg).toContain('Pune traffic has impeccable timing.');
+  });
+
+  it('never injects Tournament angles at 0% rollout', async () => {
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('reply_tournament_enabled', 'true');
+    setSetting('reply_tournament_rollout_pct', '0');
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate.mockResolvedValue({
+      choices: [{ message: { content: 'Baner crawl has unionized at this point.' } }],
+    });
+
+    const { generateReplyWithMeta } = await import('../../src/pipeline/generator.js');
+    const result = await generateReplyWithMeta(makePost());
+    expect(result.tournament?.strategy).toBe('CONTROL');
+    const systems = __mockCreate.mock.calls.map((call: any) =>
+      call[0].messages.find((m: any) => m.role === 'system').content,
+    );
+    expect(systems.some((s: string) => s.includes('TOURNAMENT ANGLE'))).toBe(false);
+  });
+
+  it('generates three Tournament angles at 100% rollout', async () => {
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('reply_tournament_enabled', 'true');
+    setSetting('reply_tournament_rollout_pct', '100');
+    setSetting('conversation_gravity_min', '1');
+    const { __mockCreate } = await import('groq-sdk') as any;
+    __mockCreate
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'Baner traffic filed for overtime without asking.' } }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'The second-order cost is another year of missed school pickups.' } }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'Hinjewadi Phase 2 still has one exit; that is the whole plot.' } }],
+      });
+
+    const { generateReplyWithMeta } = await import('../../src/pipeline/generator.js');
+    const result = await generateReplyWithMeta(makePost());
+    expect(result.tournament?.strategy).toBe('TOURNAMENT');
+    expect(['ONE_LINER', 'SECOND_ORDER', 'SPECIFIC_RECEIPT']).toContain(result.tournament?.angle);
+    expect(__mockCreate.mock.calls.length).toBeGreaterThanOrEqual(3);
+    const systems = __mockCreate.mock.calls.slice(0, 3).map((call: any) =>
+      call[0].messages.find((m: any) => m.role === 'system').content,
+    );
+    expect(systems.some((s: string) => s.includes('ONE_LINER'))).toBe(true);
+    expect(systems.some((s: string) => s.includes('SECOND_ORDER'))).toBe(true);
+    expect(systems.some((s: string) => s.includes('SPECIFIC_RECEIPT'))).toBe(true);
   });
 });

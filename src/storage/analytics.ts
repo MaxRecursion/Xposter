@@ -1,4 +1,5 @@
 import { getDb } from './db.js';
+import { detectTopics } from '../context/topics.js';
 
 export interface FollowerGrowthPoint {
   day: string;
@@ -46,6 +47,24 @@ export interface SourcePerformance {
   avg_impressions: number;
 }
 
+export interface QualityRateRow {
+  key: string;
+  sample_size: number;
+  actions_per_1k_impressions: number | null;
+  avg_success_score: number;
+}
+
+export interface TournamentQualitySummary {
+  sample_size: number;
+  tournament_sample_size: number;
+  control_sample_size: number;
+  tournament_actions_per_1k: number | null;
+  control_actions_per_1k: number | null;
+  best_angle: { angle: string; sample_size: number; actions_per_1k_impressions: number | null } | null;
+  by_strategy: QualityRateRow[];
+  by_angle: QualityRateRow[];
+}
+
 export interface AnalyticsOverview {
   days: number;
   summary: {
@@ -53,12 +72,22 @@ export interface AnalyticsOverview {
     replies: number;
     originals: number;
     successful_replies: number;
+    actions_per_1k_impressions: number | null;
+    quality_sample_size: number;
   };
   follower_growth: FollowerGrowthPoint[];
   reply_by_classification: ReplyClassPerformance[];
   reply_by_source: SourcePerformance[];
   topic_trends: TopicTrendPoint[];
   posting_hours: PostingHourPerformance[];
+  quality: {
+    by_source: QualityRateRow[];
+    by_hour: QualityRateRow[];
+    by_topic: QualityRateRow[];
+    by_stance: QualityRateRow[];
+    by_content_structure: QualityRateRow[];
+  };
+  tournament: TournamentQualitySummary;
 }
 
 export function getAnalyticsOverview(days = 30): AnalyticsOverview {
@@ -203,6 +232,9 @@ export function getAnalyticsOverview(days = 30): AnalyticsOverview {
   const successfulReplies = replyByClassification
     .reduce((sum, row) => sum + row.successful_replies, 0);
 
+  const quality = loadReplyQuality(db, since);
+  const tournament = loadTournamentQuality(db, since);
+
   return {
     days: windowDays,
     summary: {
@@ -210,12 +242,167 @@ export function getAnalyticsOverview(days = 30): AnalyticsOverview {
       replies,
       originals,
       successful_replies: successfulReplies,
+      actions_per_1k_impressions: quality.overall.actions_per_1k_impressions,
+      quality_sample_size: quality.overall.sample_size,
     },
     follower_growth: followerGrowth,
     reply_by_classification: replyByClassification,
     reply_by_source: replyBySource,
     topic_trends: topicTrends,
     posting_hours: postingHours,
+    quality: {
+      by_source: quality.by_source,
+      by_hour: quality.by_hour,
+      by_topic: quality.by_topic,
+      by_stance: quality.by_stance,
+      by_content_structure: quality.by_content_structure,
+    },
+    tournament,
+  };
+}
+
+interface SyncedReplyRow {
+  likes: number;
+  replies: number;
+  retweets: number;
+  impressions: number;
+  success_score: number;
+  source: string;
+  hour: number | null;
+  stance: string | null;
+  content_structure: string | null;
+  tournament_strategy: string | null;
+  tournament_angle: string | null;
+  text: string;
+}
+
+const SYNCED_REPLY_SQL = `
+  SELECT
+    i.likes_received AS likes,
+    i.replies_received AS replies,
+    i.retweets_received AS retweets,
+    i.impressions,
+    i.success_score,
+    COALESCE(p.source, 'TIMELINE') AS source,
+    CAST(strftime('%H', i.posted_at, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+    p.stance,
+    i.content_structure,
+    p.tournament_strategy,
+    p.tournament_angle,
+    p.text
+  FROM interactions i
+  JOIN posts p ON p.id = i.post_id
+  WHERE i.posted_at >= ?
+    AND i.last_metric_check IS NOT NULL
+    AND i.impressions > 0
+`;
+
+function loadSyncedReplies(db: ReturnType<typeof getDb>, since: number): SyncedReplyRow[] {
+  return db.prepare(SYNCED_REPLY_SQL).all(since) as SyncedReplyRow[];
+}
+
+export function actionsPer1k(
+  rows: Array<{ likes: number; replies: number; retweets: number; impressions: number }>,
+): { sample_size: number; actions_per_1k_impressions: number | null; avg_success_score: number } {
+  const sample_size = rows.length;
+  if (sample_size === 0) {
+    return { sample_size: 0, actions_per_1k_impressions: null, avg_success_score: 0 };
+  }
+  const impressions = rows.reduce((sum, r) => sum + r.impressions, 0);
+  const actions = rows.reduce((sum, r) => sum + r.likes + r.replies + r.retweets, 0);
+  const avgScore = rows.reduce((sum, r) => sum + ((r as { success_score?: number }).success_score ?? 0), 0) / sample_size;
+  return {
+    sample_size,
+    actions_per_1k_impressions: impressions > 0
+      ? Math.round((actions * 1000 / impressions) * 100) / 100
+      : null,
+    avg_success_score: Math.round(avgScore * 10) / 10,
+  };
+}
+
+function groupQuality(
+  rows: SyncedReplyRow[],
+  keyFn: (row: SyncedReplyRow) => string,
+): QualityRateRow[] {
+  const groups = new Map<string, SyncedReplyRow[]>();
+  for (const row of rows) {
+    const key = keyFn(row) || 'unknown';
+    const list = groups.get(key) ?? [];
+    list.push(row);
+    groups.set(key, list);
+  }
+  return [...groups.entries()]
+    .map(([key, list]) => {
+      const stats = actionsPer1k(list);
+      return {
+        key,
+        sample_size: stats.sample_size,
+        actions_per_1k_impressions: stats.actions_per_1k_impressions,
+        avg_success_score: stats.avg_success_score,
+      };
+    })
+    .sort((a, b) => (b.actions_per_1k_impressions ?? -1) - (a.actions_per_1k_impressions ?? -1));
+}
+
+function loadReplyQuality(db: ReturnType<typeof getDb>, since: number) {
+  const rows = loadSyncedReplies(db, since);
+  const topicRows: QualityRateRow[] = [];
+  const topicBuckets = new Map<string, SyncedReplyRow[]>();
+  for (const row of rows) {
+    const topics = detectTopics(row.text);
+    const keys = topics.length > 0 ? topics : ['untagged'];
+    for (const topic of keys) {
+      const list = topicBuckets.get(topic) ?? [];
+      list.push(row);
+      topicBuckets.set(topic, list);
+    }
+  }
+  for (const [key, list] of topicBuckets) {
+    const stats = actionsPer1k(list);
+    topicRows.push({
+      key,
+      sample_size: stats.sample_size,
+      actions_per_1k_impressions: stats.actions_per_1k_impressions,
+      avg_success_score: stats.avg_success_score,
+    });
+  }
+  topicRows.sort((a, b) => (b.actions_per_1k_impressions ?? -1) - (a.actions_per_1k_impressions ?? -1));
+
+  return {
+    overall: actionsPer1k(rows),
+    by_source: groupQuality(rows, (r) => r.source),
+    by_hour: groupQuality(rows, (r) => String(r.hour ?? 'unknown')),
+    by_topic: topicRows.slice(0, 20),
+    by_stance: groupQuality(rows, (r) => r.stance ?? 'none'),
+    by_content_structure: groupQuality(rows, (r) => r.content_structure ?? 'standard'),
+  };
+}
+
+function loadTournamentQuality(db: ReturnType<typeof getDb>, since: number): TournamentQualitySummary {
+  const rows = loadSyncedReplies(db, since);
+  const tournamentRows = rows.filter((r) => r.tournament_strategy === 'TOURNAMENT');
+  const controlRows = rows.filter((r) => r.tournament_strategy === 'CONTROL' || !r.tournament_strategy);
+  const by_strategy = groupQuality(rows, (r) => r.tournament_strategy ?? 'CONTROL');
+  const by_angle = groupQuality(
+    tournamentRows.filter((r) => r.tournament_angle),
+    (r) => r.tournament_angle ?? 'unknown',
+  );
+  const best = by_angle[0] ?? null;
+  return {
+    sample_size: rows.length,
+    tournament_sample_size: tournamentRows.length,
+    control_sample_size: controlRows.length,
+    tournament_actions_per_1k: actionsPer1k(tournamentRows).actions_per_1k_impressions,
+    control_actions_per_1k: actionsPer1k(controlRows).actions_per_1k_impressions,
+    best_angle: best
+      ? {
+        angle: best.key,
+        sample_size: best.sample_size,
+        actions_per_1k_impressions: best.actions_per_1k_impressions,
+      }
+      : null,
+    by_strategy,
+    by_angle,
   };
 }
 

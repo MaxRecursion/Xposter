@@ -22,6 +22,7 @@ import { logger } from '../utils/logger.js';
 import { requireApiKey } from './auth.js';
 import { getNtfyTopic, getNtfyServer, getNtfyActionMode, getCallbackNetwork, isBrowserHeadless, getGroqApiKey, isApiKeySet } from '../config.js';
 import { getTelemetryStatus } from '../telemetry/bootstrap.js';
+import { getProviderDiagnostics } from '../pipeline/provider_health.js';
 import { getNextRuns, getTodayPlan, ensureTodayPlan, getTodayMix } from '../scheduler/random_runs.js';
 import { getTodayOriginalPlan, getNextOriginalRuns } from '../scheduler/original_posts.js';
 
@@ -122,6 +123,7 @@ export function createServer(): express.Express {
 
   // Diagnostics — current configuration / connectivity info
   app.get('/api/diagnostics', (_req, res) => {
+    const providers = getProviderDiagnostics();
     res.json({
       ntfy_topic: getNtfyTopic() ?? '(not set)',
       ntfy_server: getNtfyServer(),
@@ -132,6 +134,11 @@ export function createServer(): express.Express {
       browser_urls: getBrowserUrls(),
       groq_configured: Boolean(getGroqApiKey()) &&
         getGroqApiKey() !== 'replace_me_with_groq_api_key',
+      groq_model: providers.groq.configured_model,
+      groq_model_available: providers.groq.available,
+      groq_health: providers.groq,
+      claude_cli_auth_blocked: providers.claude_cli_auth_blocked,
+      claude_cli_auth_reason: providers.claude_cli_auth_reason,
       api_key_set: isApiKeySet(),
       browser_headless: isBrowserHeadless(),
       agent_enabled: isAgentEnabled(),

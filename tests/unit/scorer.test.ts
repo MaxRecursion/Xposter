@@ -63,11 +63,21 @@ describe('scorePost', () => {
     expect(normal.breakdown.engagementSweet).toBeGreaterThan(viral.breakdown.engagementSweet);
   });
 
+  it('scores conversational openings higher (concrete complaint + ask)', () => {
+    const open = scorePost(makePost({
+      text: 'What should I do about the pothole on FC Road? Still waiting on PMC.',
+    }));
+    const closed = scorePost(makePost({ text: 'Nice weather in Pune today' }));
+    expect(open.breakdown.conversationOpportunity).toBeGreaterThan(closed.breakdown.conversationOpportunity);
+    expect(open.score).toBeGreaterThan(closed.score);
+  });
+
   it('returns breakdown with all components', () => {
     const { breakdown } = scorePost(makePost());
     expect(breakdown).toHaveProperty('recency');
     expect(breakdown).toHaveProperty('topicRelevance');
     expect(breakdown).toHaveProperty('replyOpportunity');
+    expect(breakdown).toHaveProperty('conversationOpportunity');
     expect(breakdown).toHaveProperty('engagementSweet');
     expect(breakdown).toHaveProperty('topicalHeat');
     expect(breakdown).toHaveProperty('accountHistory');
@@ -106,12 +116,29 @@ describe('dynamic scoring signals', () => {
       total_replies_sent: 5,
       successful_replies: 3,
       avg_reply_score: 20,
+      author_engaged_replies: 2,
     })).toBeGreaterThan(5);
     expect(accountHistorySignal({
       total_replies_sent: 4,
       successful_replies: 0,
       avg_reply_score: 0,
     })).toBe(-6);
+  });
+
+  it('boosts authors who reply back more than likes-only success', () => {
+    const likesOnly = accountHistorySignal({
+      total_replies_sent: 4,
+      successful_replies: 2,
+      avg_reply_score: 10,
+      author_engaged_replies: 0,
+    });
+    const comeBack = accountHistorySignal({
+      total_replies_sent: 4,
+      successful_replies: 2,
+      avg_reply_score: 10,
+      author_engaged_replies: 2,
+    });
+    expect(comeBack).toBeGreaterThan(likesOnly);
   });
 });
 
@@ -123,8 +150,9 @@ describe('rankCandidates', () => {
     const c = scorePost(makePost({ id: 'c', timestamp: now - 500 }));
 
     const ranked = rankCandidates([b, c, a]);
-    expect(ranked[0].score).toBeGreaterThanOrEqual(ranked[1].score);
-    expect(ranked[1].score).toBeGreaterThanOrEqual(ranked[2].score);
+    const key = (row: typeof ranked[0]) => row.reachScore ?? row.score;
+    expect(key(ranked[0])).toBeGreaterThanOrEqual(key(ranked[1]));
+    expect(key(ranked[1])).toBeGreaterThanOrEqual(key(ranked[2]));
   });
 
   it('handles empty array', () => {

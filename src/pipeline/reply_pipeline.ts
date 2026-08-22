@@ -8,10 +8,11 @@ import { getBooleanSetting, getFloatSetting, getIntSetting, getListSetting } fro
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
 import { classifyAccount } from './classifier.js';
-import { EmptyReplyError } from './errors.js';
+import { EmptyReplyError, GravitySkipError } from './errors.js';
 import { DetectedLanguage, filterPost } from './filter.js';
 import { generateReplyWithMeta } from './generator.js';
 import { rankCandidates, scorePostsWithSignals, ScoredPost } from './scorer.js';
+import { getVelocityConfig } from './velocity.js';
 import { generateDistinct } from './dedup.js';
 import { publishReply } from './reply_publisher.js';
 import { runReplyRetryQueue } from './reply_retry.js';
@@ -21,6 +22,8 @@ import { recordTrendReply } from '../trends/x_trends.js';
 import { classifyTrendSafety } from '../trends/trend_filter.js';
 import { updatePostStance } from '../storage/queries.js';
 import { instrumentPipelineRun, recordPipelineSkipped } from '../telemetry/instrument.js';
+import { notePipelineDelivery } from './stalled_delivery.js';
+import { markPostPostingError, setPostLastError, updatePostTournamentMeta } from '../storage/posts.js';
 
 interface FilteredPost {
   post: Post;
@@ -41,21 +44,32 @@ export interface RunReplyPipelineOptions {
   source?: PostSource;
 }
 
+export interface PipelineRunResult {
+  ingested: number;
+  candidates: number;
+  posted: number;
+  pendingApproval: number;
+}
+
+function emptyRun(): PipelineRunResult {
+  return { ingested: 0, candidates: 0, posted: 0, pendingApproval: 0 };
+}
+
 export async function runReplyPipeline(
   opts: RunReplyPipelineOptions = {},
-): Promise<{ ingested: number; candidates: number }> {
+): Promise<PipelineRunResult> {
   const source = opts.source ?? 'TIMELINE';
 
   if (_running) {
     logger.warn('Pipeline already running - skipping overlapping run');
     recordPipelineSkipped(source, 'overlap');
-    return { ingested: 0, candidates: 0 };
+    return emptyRun();
   }
 
   if (!getBooleanSetting('system_running', true)) {
     logger.info('System paused - skipping pipeline run');
     recordPipelineSkipped(source, 'paused');
-    return { ingested: 0, candidates: 0 };
+    return emptyRun();
   }
 
   return instrumentPipelineRun(source, async () => {
@@ -71,24 +85,25 @@ export async function runReplyPipeline(
     const blocklist = getListSetting('blocklist_classifications', ['BOT', 'SPAM', 'BRAND_PROMO'])
       .map((value) => value.toUpperCase());
 
-    // ── Trend path ────────────────────────────────────────────────────────────
-    // Deliberately a fall-through rather than a branch: if trend sourcing yields
-    // nothing (API down, no eligible trend, all results non-English) the run
-    // continues into the timeline path and still posts. A total X-trends outage
-    // therefore costs zero replies and degrades to the previous behaviour.
     if (source !== 'TIMELINE' && getBooleanSetting('trend_replies_enabled', true)) {
       const trendCandidates = await sourceTrendCandidates(source);
       if (trendCandidates.candidates.length > 0) {
         const result = await processTrendCandidates(trendCandidates.candidates, blocklist);
         logEvent('PIPELINE_COMPLETE', `source=${source} trend="${trendCandidates.trendName}" posted=${result.posted} pending=${result.pendingApproval}`);
         logger.info('Trend pipeline complete', { source, trend: trendCandidates.trendName, ...result });
-        return { ingested: trendCandidates.candidates.length, candidates: result.posted + result.pendingApproval };
+        const summary = {
+          ingested: trendCandidates.candidates.length,
+          candidates: result.posted + result.pendingApproval,
+          posted: result.posted,
+          pendingApproval: result.pendingApproval,
+        };
+        await notePipelineDelivery(summary);
+        return summary;
       }
       logEvent('TREND_SOURCING_EMPTY', `source=${source} — falling back to timeline`);
       logger.info('Trend sourcing produced nothing; falling back to home timeline', { source });
     }
 
-    // ── Timeline path ─────────────────────────────────────────────────────────
     const rawTweets = await ingestTimeline(60);
     logEvent('INGESTION_COMPLETE', `${rawTweets.length} raw tweets`);
 
@@ -116,7 +131,14 @@ export async function runReplyPipeline(
 
     logEvent('PIPELINE_COMPLETE', `ingested=${ingested} posted=${posted} pending=${pendingApproval}`);
     logger.info('Pipeline complete', { ingested, posted, pendingApproval });
-    return { ingested, candidates: posted + pendingApproval };
+    const summary = {
+      ingested,
+      candidates: posted + pendingApproval,
+      posted,
+      pendingApproval,
+    };
+    await notePipelineDelivery(summary);
+    return summary;
     } catch (err) {
       logger.error('Pipeline failed', { err });
       logEvent('PIPELINE_ERROR', String(err));
@@ -256,10 +278,45 @@ async function selectCandidates(
   const maxCandidates = getIntSetting('max_candidates_per_run', 5, 1, 20);
   const ranked = rankCandidates(scoredAboveThreshold);
   const topCandidates = ranked.slice(0, maxCandidates);
+
+  // Velocity targeting deliberately posts fewer replies on quiet days rather
+  // than spending the budget on tweets nobody is reading — so make the trade
+  // visible instead of letting the count quietly sag.
+  logVelocitySelection(scoredById, topCandidates);
+
   if (topCandidates.length > 0 || newPosts.length === 0) return topCandidates;
 
   const fallback = selectFallbackCandidate(newPosts, filterResults, scoredById, minScore, alreadyRepliedToday, topicCountsToday, topicDailyCap); // cap already computed above
   return fallback ? [fallback] : [];
+}
+
+/** Reports what the reach multiplier did to this run's candidate pool. */
+function logVelocitySelection(
+  scoredById: Map<string, ScoredPost>,
+  selected: ScoredPost[],
+): void {
+  const all = [...scoredById.values()];
+  if (all.length === 0) return;
+
+  const cfg = getVelocityConfig();
+  const dead = all.filter((s) => s.breakdown.reachFactor < 0.5).length;
+  const picked = selected.map((s) => s.breakdown.velocityLpm);
+  const medianLpm = picked.length
+    ? [...picked].sort((a, b) => a - b)[Math.floor(picked.length / 2)]
+    : 0;
+
+  logger.info('Velocity targeting', {
+    scored: all.length,
+    selected: selected.length,
+    lowReach: dead,
+    medianLpmSelected: medianLpm,
+    strikeWindowMin: cfg.strikeWindowMin,
+    minLpm: cfg.minLikesPerMin,
+  });
+  logEvent(
+    'VELOCITY_SELECTION',
+    `scored=${all.length} selected=${selected.length} lowReach=${dead} medianLpm=${medianLpm}`,
+  );
 }
 
 function selectFallbackCandidate(
@@ -370,6 +427,18 @@ async function processCandidate(
     const generated = distinct.value;
     const reply = generated.text;
     updateGeneratedReply(post.id, reply);
+    if (generated.tournament) {
+      try {
+        updatePostTournamentMeta(post.id, {
+          strategy: generated.tournament.strategy,
+          angle: generated.tournament.angle,
+          criticScore: generated.tournament.criticScore,
+          criticReasons: generated.tournament.criticReasons,
+        });
+      } catch {
+        // Synthetic posts in tests may omit tournament columns until migration.
+      }
+    }
 
     // Human-in-the-loop mode: stop at PENDING_APPROVAL and ask via ntfy.
     // Default is autonomous (require_approval=false). Enable in dashboard Settings to require approval.
@@ -395,12 +464,20 @@ async function processCandidate(
     if (err instanceof EmptyReplyError) {
       logger.warn('Empty reply from Groq - skipping candidate, waiting for next run', { id: candidate.id });
       updatePostStatus(candidate.id, 'SKIPPED');
+      setPostLastError(candidate.id, 'empty reply from provider');
       logEvent('CANDIDATE_SKIPPED_EMPTY', 'empty reply, skipped', candidate.id);
+      return 'skipped';
+    }
+    if (err instanceof GravitySkipError) {
+      logger.warn('Conversation gravity too low - skipping candidate', { id: candidate.id, err: err.message });
+      updatePostStatus(candidate.id, 'SKIPPED');
+      setPostLastError(candidate.id, err.message);
+      logEvent('CANDIDATE_SKIPPED_GRAVITY', err.message, candidate.id);
       return 'skipped';
     }
 
     logger.error('Error processing candidate', { id: candidate.id, err });
-    updatePostStatus(candidate.id, 'ERROR');
+    markPostPostingError(candidate.id, String(err));
     logEvent('CANDIDATE_ERROR', String(err), candidate.id);
     return 'error';
   }

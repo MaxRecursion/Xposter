@@ -37,6 +37,18 @@ describe('decideEngagementBait', () => {
       counts: { bait: 0, normal: 10 },
       rng: () => 0.1,
     });
+    expect(result.mode).toBe('RECEIPT');
+  });
+
+  it('picks clickbait when RNG says so and receipt is disabled', () => {
+    const result = decideEngagementBait({
+      targetPct: 30,
+      blocked: false,
+      counts: { bait: 0, normal: 10 },
+      rng: () => 0.1,
+      receiptProb: 0,
+      subtypeClickProb: 0.5,
+    });
     expect(result.mode).toBe('CLICKBAIT');
   });
 
@@ -46,6 +58,7 @@ describe('decideEngagementBait', () => {
       blocked: false,
       counts: { bait: 0, normal: 10 },
       rng: () => 0.9,
+      receiptProb: 0,
     });
     expect(result.mode).toBe('RAGEBAIT');
   });
@@ -69,6 +82,7 @@ describe('decideEngagementBait', () => {
         blocked: false,
         counts,
         rng: () => (i % 2 === 0 ? 0.1 : 0.9),
+        receiptProb: 0,
       });
       if (mode === 'NONE') counts.normal++;
       else {
@@ -91,6 +105,7 @@ describe('decideEngagementBait', () => {
       blocked: false,
       counts,
       rng: () => 0.2,
+      receiptProb: 0,
     });
     expect(mode).toBe('CLICKBAIT');
   });
@@ -102,6 +117,8 @@ describe('baitGuidanceFor', () => {
     expect(baitGuidanceFor('CLICKBAIT')).toMatch(/curiosity/i);
     expect(baitGuidanceFor('RAGEBAIT')).toMatch(/friction/i);
     expect(baitGuidanceFor('RAGEBAIT')).toMatch(/NEVER rage about/i);
+    expect(baitGuidanceFor('RECEIPT')).toMatch(/lived detail/i);
+    expect(baitGuidanceFor('RECEIPT')).toMatch(/falsifiable claim/i);
   });
 
   it('uses implicit guidance by default', () => {

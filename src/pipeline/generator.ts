@@ -1,9 +1,16 @@
-import { Post, Stance, getPost, getSetting, logEvent, updatePostEngagementMode } from '../storage/queries.js';
+import {
+  Post, Stance, getPost, getSetting, logEvent, updatePostEngagementMode,
+} from '../storage/queries.js';
 import { Account, Classification } from '../storage/accounts.js';
 import { enrichPrompt, isContextEnabled } from '../context/enrich.js';
 import { recallNeuralMemory } from '../context/neural_memory.js';
 import { detectTopics } from '../context/topics.js';
 import { EmptyReplyError } from './errors.js';
+import { applyConversationGravity } from './conversation_gravity.js';
+import {
+  allocateReplyTournament, angleGuidanceFor, tournamentSensitive,
+  TOURNAMENT_ANGLES, type TournamentAngle, type TournamentStrategy,
+} from './reply_tournament.js';
 import { logger } from '../utils/logger.js';
 import { logPromptToConsole } from './prompt_logger.js';
 import { assertEnglishOnly, cleanModelText, enforceCharacterLimit } from './text_constraints.js';
@@ -15,9 +22,11 @@ import {
 } from './engagement_bait.js';
 import {
   checkHumanLikeness, getBaitCandidateCount, HUMAN_TEXTURE_RULES,
-  humanLikenessScore, pickBestCandidate, type ContentStructure,
+  humanLikenessScore, pickBestCandidate, detectContentStructure, type ContentStructure,
 } from './human_likeness.js';
 import { getReplyBaitCountsToday } from '../storage/queries.js';
+import { winnerExamplesBlock } from '../storage/engagement_performance.js';
+import { updatePostTournamentMeta } from '../storage/posts.js';
 
 const MAX_REPLY_CHARS = 280;
 
@@ -289,6 +298,12 @@ function classificationGuidanceFor(c: Classification | null): string {
 export interface GeneratedReply {
   text: string;
   contentStructure: ContentStructure;
+  tournament?: {
+    strategy: TournamentStrategy;
+    angle: TournamentAngle | null;
+    criticScore: number | null;
+    criticReasons: string[];
+  };
 }
 
 export async function generateReply(
@@ -351,9 +366,28 @@ export async function generateReplyWithMeta(
   }
 
   const baitStructure = engagementMode !== 'NONE' ? pickBaitStructure() : null;
-  const candidateCount = engagementMode !== 'NONE'
-    ? Math.max(1, getBaitCandidateCount())
-    : 1;
+  const livePost = getPost(post.id);
+  const tournament = allocateReplyTournament({
+    blocked: tournamentSensitive(post.text)
+      || classification === 'NEWS'
+      || classification === 'SERIOUS',
+    persistedStrategy: livePost?.tournament_strategy ?? post.tournament_strategy,
+  });
+  try {
+    updatePostTournamentMeta(post.id, { strategy: tournament.strategy });
+  } catch {
+    // Synthetic posts in tests/scripts may not exist in DB.
+  }
+  if (tournament.strategy === 'TOURNAMENT') {
+    logEvent('REPLY_TOURNAMENT_ASSIGNED', tournament.reason, post.id);
+  }
+
+  const candidateCount = tournament.strategy === 'TOURNAMENT'
+    ? TOURNAMENT_ANGLES.length
+    : Math.max(
+      2,
+      engagementMode !== 'NONE' ? getBaitCandidateCount() : 2,
+    );
   const avoidTexts = options.avoidTexts ?? [];
 
   const contextBlock = isContextEnabled()
@@ -370,13 +404,18 @@ export async function generateReplyWithMeta(
   const generateOne = async (
     attempt: number,
     extraAvoid: string[] = [],
+    retryNote?: string,
+    angle?: TournamentAngle,
   ): Promise<string> => {
     const userPrompt = buildUserPrompt(
       post,
       authorAccount,
       [contextBlock, memoryBlock].filter(Boolean).join('\n\n'),
       [...avoidTexts, ...extraAvoid],
-      attempt > 1 ? 'Your previous draft sounded too generic or engagement-farmy. Rewrite with a more natural, human voice.' : undefined,
+      retryNote
+        ?? (attempt > 1
+          ? 'Your previous draft sounded too generic or engagement-farmy. Rewrite with a more natural, human voice.'
+          : undefined),
     );
 
     const baseTemp = engagementMode !== 'NONE'
@@ -386,9 +425,12 @@ export async function generateReplyWithMeta(
       ? baseTemp + (attempt - 1) * 0.04
       : baseTemp;
 
-    const sysPrompt = systemPrompt(
-      tier, classification, flavor, stance, engagementMode, baitStructure,
-    );
+    const sysPrompt = [
+      systemPrompt(
+        tier, classification, flavor, stance, engagementMode, baitStructure,
+      ),
+      angle ? angleGuidanceFor(angle) : '',
+    ].filter(Boolean).join('\n\n');
     logPromptToConsole(
       'REPLY',
       `${post.id} flavor=${flavor} stance=${stance ?? 'none'} bait=${engagementMode} attempt=${attempt}`,
@@ -427,9 +469,19 @@ export async function generateReplyWithMeta(
     return cleaned;
   };
 
+  const angleByText = new Map<string, TournamentAngle>();
   const candidates: string[] = [];
-  for (let i = 1; i <= candidateCount; i++) {
-    candidates.push(await generateOne(i));
+  if (tournament.strategy === 'TOURNAMENT') {
+    for (let i = 0; i < TOURNAMENT_ANGLES.length; i++) {
+      const angle = TOURNAMENT_ANGLES[i];
+      const text = await generateOne(i + 1, [], undefined, angle);
+      candidates.push(text);
+      angleByText.set(text, angle);
+    }
+  } else {
+    for (let i = 1; i <= candidateCount; i++) {
+      candidates.push(await generateOne(i));
+    }
   }
 
   let picked = pickBestCandidate(candidates, likenessOpts);
@@ -454,6 +506,28 @@ export async function generateReplyWithMeta(
     });
   }
 
+  const gravity = await applyConversationGravity({
+    parentText: post.text,
+    drafts: [...new Set([picked.text, ...candidates])],
+    rewrite: async (reasons) => {
+      const winningAngle = angleByText.get(picked.text);
+      return generateOne(
+        candidateCount + 2,
+        [picked.text],
+        `Previous draft scored low on conversation gravity (${reasons.slice(0, 3).join('; ')}). Add a concrete receipt the parent tweet lacks and one natural opening for the author to reply.`,
+        winningAngle,
+      );
+    },
+  });
+  picked = {
+    text: gravity.text,
+    structure: detectContentStructure(gravity.text),
+    score: picked.score,
+  };
+  const winningAngle = angleByText.get(picked.text)
+    ?? angleByText.get(gravity.text)
+    ?? (tournament.strategy === 'TOURNAMENT' ? TOURNAMENT_ANGLES[0] : null);
+
   logger.info('Reply generated', {
     postId: post.id,
     reply: picked.text,
@@ -461,10 +535,29 @@ export async function generateReplyWithMeta(
     engagementMode,
     contentStructure: picked.structure,
     humanScore: picked.score,
+    gravityScore: gravity.score,
     candidates: candidateCount,
+    tournament: tournament.strategy,
+    tournamentAngle: winningAngle,
   });
 
-  return { text: picked.text, contentStructure: picked.structure };
+  const tournamentMeta = {
+    strategy: tournament.strategy,
+    angle: tournament.strategy === 'TOURNAMENT' ? winningAngle : null,
+    criticScore: gravity.score,
+    criticReasons: gravity.reasons,
+  };
+  try {
+    updatePostTournamentMeta(post.id, tournamentMeta);
+  } catch {
+    // Synthetic posts in tests/scripts may not exist in DB.
+  }
+
+  return {
+    text: picked.text,
+    contentStructure: picked.structure,
+    tournament: tournamentMeta,
+  };
 }
 
 function buildUserPrompt(
@@ -491,6 +584,10 @@ function buildUserPrompt(
   );
   if (contextBlock) {
     lines.push('', contextBlock);
+  }
+  const winners = winnerExamplesBlock(3);
+  if (winners) {
+    lines.push('', winners);
   }
   if (avoidTexts.length > 0) {
     lines.push(

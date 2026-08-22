@@ -42,7 +42,7 @@ export function getStanceCountsToday(): { aligned: number; contrarian: number } 
 
 /**
  * Counts today's POSTED replies by engagement bait mode.
- * Modes CLICKBAIT/RAGEBAIT count as bait; everything else (incl. null) as normal.
+ * Modes CLICKBAIT/RAGEBAIT/RECEIPT count as bait; everything else (incl. null) as normal.
  */
 export function getReplyBaitCountsToday(): { bait: number; normal: number } {
   const startOfDay = startOfLocalDayUnix();
@@ -56,7 +56,7 @@ export function getReplyBaitCountsToday(): { bait: number; normal: number } {
   let bait = 0;
   let normal = 0;
   for (const row of rows) {
-    if (row.mode === 'CLICKBAIT' || row.mode === 'RAGEBAIT') bait += row.n;
+    if (row.mode === 'CLICKBAIT' || row.mode === 'RAGEBAIT' || row.mode === 'RECEIPT') bait += row.n;
     else normal += row.n;
   }
   return { bait, normal };

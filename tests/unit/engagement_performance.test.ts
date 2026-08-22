@@ -90,6 +90,33 @@ describe('engagement performance storage', () => {
     expect(top[0].mode).toBe('RAGEBAIT');
     expect(top[0].score).toBeGreaterThan(top[1].score);
   });
+
+  it('ranks conversational winners by replies then author_engaged', async () => {
+    await seedBaitReply('NONE', 2);
+    const { upsertPost, updatePostEngagementMode } = await import('../../src/storage/queries.js');
+    const interactions = await import('../../src/storage/interactions.js');
+    const tweetId = '199000000000009999';
+    const post = upsertPost({
+      tweet_id: tweetId,
+      author_handle: 'perf_user',
+      author_name: 'Perf User',
+      text: 'Source tweet about traffic',
+      timestamp: Math.floor(Date.now() / 1000) - 600,
+      likes: 2, replies: 0, retweets: 0,
+      tweet_url: `https://x.com/perf_user/status/${tweetId}`,
+    })!;
+    updatePostEngagementMode(post.id, 'NONE');
+    const id = interactions.recordInteraction(post.id, 'perf_user', 'Wakad drain still dumps onto the footpath. Has PMC actually finished that stretch?');
+    interactions.updateInteractionMetrics(id, {
+      likes: 1, replies: 4, retweets: 0, impressions: 80, authorEngaged: true,
+    });
+
+    const { getTopConversationalReplies, winnerExamplesBlock } = await import('../../src/storage/engagement_performance.js');
+    const top = getTopConversationalReplies(3);
+    expect(top[0].replies).toBe(4);
+    expect(winnerExamplesBlock(3)).toMatch(/EARNED REPLIES/);
+    expect(winnerExamplesBlock(3)).toMatch(/Wakad drain/);
+  });
 });
 
 describe('engagement bait tuning helpers', () => {
@@ -101,6 +128,7 @@ describe('engagement bait tuning helpers', () => {
       counts: { bait: 0, normal: 10 },
       rng: () => 0.85,
       subtypeClickProb: 0.9,
+      receiptProb: 0,
     });
     expect(result.mode).toBe('CLICKBAIT');
   });

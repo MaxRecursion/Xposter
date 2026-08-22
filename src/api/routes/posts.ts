@@ -3,8 +3,9 @@ import {
   getRecentPosts, getPendingApproval, getDashboardStats,
   updateFinalReply, getPost,
 } from '../../storage/queries.js';
-import { generateReply } from '../../pipeline/generator.js';
+import { generateReplyWithMeta } from '../../pipeline/generator.js';
 import { updateGeneratedReply, updatePostStatus } from '../../storage/queries.js';
+import { markPostPostingError, updatePostTournamentMeta } from '../../storage/posts.js';
 import { sendApprovalNotification } from '../../notifications/ntfy.js';
 import { logger } from '../../utils/logger.js';
 import { requireApiKey } from '../auth.js';
@@ -59,17 +60,24 @@ postsRouter.post('/:id/regenerate', requireApiKey, async (req: Request, res: Res
 
   try {
     updatePostStatus(post.id, 'GENERATING');
-    const reply = await generateReply(post);
-    updateGeneratedReply(post.id, reply);
+    const generated = await generateReplyWithMeta(post);
+    updateGeneratedReply(post.id, generated.text);
+    if (generated.tournament) {
+      updatePostTournamentMeta(post.id, {
+        strategy: generated.tournament.strategy,
+        angle: generated.tournament.angle,
+        criticScore: generated.tournament.criticScore,
+        criticReasons: generated.tournament.criticReasons,
+      });
+    }
 
-    // Resend notification
     const updated = getPost(post.id)!;
     await sendApprovalNotification(updated);
 
-    res.json({ ok: true, reply });
+    res.json({ ok: true, reply: generated.text, tournament: generated.tournament });
   } catch (err) {
     logger.error('Regenerate failed', { id: post.id, err });
-    updatePostStatus(post.id, 'ERROR');
+    markPostPostingError(post.id, String(err));
     res.status(500).json({ error: String(err) });
   }
 });

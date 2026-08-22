@@ -140,9 +140,13 @@ export function refreshAccountReplyStats(accountHandle: string): void {
         SELECT COUNT(*) FROM interactions
         WHERE account_handle = ? AND success_score >= ${SUCCESSFUL_REPLY_MIN_SCORE}
       ), 0),
+      author_engaged_replies = COALESCE((
+        SELECT COUNT(*) FROM interactions
+        WHERE account_handle = ? AND author_engaged = 1
+      ), 0),
       updated_at = unixepoch()
     WHERE handle = ?
-  `).run(accountHandle, accountHandle, accountHandle, accountHandle);
+  `).run(accountHandle, accountHandle, accountHandle, accountHandle, accountHandle);
 }
 
 export function listRecentInteractions(limit = 50): Interaction[] {

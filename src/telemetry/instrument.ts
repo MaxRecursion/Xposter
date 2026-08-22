@@ -28,10 +28,10 @@ export async function withSpan<T>(
   }
 }
 
-export async function instrumentPipelineRun<T>(
+export async function instrumentPipelineRun<T extends { ingested: number; candidates: number }>(
   source: string,
-  fn: () => Promise<{ ingested: number; candidates: number }>,
-): Promise<{ ingested: number; candidates: number }> {
+  fn: () => Promise<T>,
+): Promise<T> {
   const start = Date.now();
   if (!isOtelEnabled()) return fn();
 

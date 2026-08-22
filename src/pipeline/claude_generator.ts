@@ -3,6 +3,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getAnthropicApiKey, getClaudeGeneratorModel } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { isClaudeCliAuthBlocked, noteClaudeAuthFailure } from './provider_health.js';
 
 const DEFAULT_MODEL = 'claude-opus-5';
 /** CLI `--model` alias for Opus 5. */
@@ -86,6 +87,7 @@ async function generateWithClaudeCli(
         stderr: (e.stderr ?? '').trim().slice(-200),
       });
       lastErr = err;
+      if (noteClaudeAuthFailure(err)) break;
     }
   }
   throw lastErr;
@@ -97,8 +99,9 @@ async function generateWithClaudeCli(
  *   2. API key is configured (paid API credits)
  */
 export function isClaudeAvailable(): boolean {
-  // Sync check: either path qualifies
-  return !!getAnthropicApiKey() || _cliAvailableCache === true;
+  if (getAnthropicApiKey()) return true;
+  if (isClaudeCliAuthBlocked()) return false;
+  return _cliAvailableCache === true;
 }
 
 /**
@@ -115,13 +118,14 @@ export async function generateWithClaude(
   userPrompt: string,
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   // ── 1. Try Claude CLI (Pro/Max subscription, no API credits needed) ──────────
-  const cliAvailable = await checkCliAvailable();
+  const cliAvailable = !isClaudeCliAuthBlocked() && await checkCliAvailable();
   if (cliAvailable) {
     try {
       logger.debug('Trying Claude CLI for generation (Opus 5 on the subscription)');
       const text = await generateWithClaudeCli(systemPrompt, userPrompt);
       return { text, inputTokens: 0, outputTokens: 0 };
     } catch (err) {
+      noteClaudeAuthFailure(err);
       logger.warn(`Claude CLI failed after ${CLI_MAX_ATTEMPTS} attempts, trying API`, { err: String(err) });
     }
   }

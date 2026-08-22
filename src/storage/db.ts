@@ -338,6 +338,11 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'posts', 'stance', 'TEXT');
   addColumnIfMissing(db, 'posts', 'trend_key', 'TEXT');
   addColumnIfMissing(db, 'posts', 'engagement_mode', 'TEXT');
+  addColumnIfMissing(db, 'posts', 'tournament_strategy', 'TEXT');
+  addColumnIfMissing(db, 'posts', 'tournament_angle', 'TEXT');
+  addColumnIfMissing(db, 'posts', 'tournament_critic_score', 'REAL');
+  addColumnIfMissing(db, 'posts', 'tournament_critic_reasons', 'TEXT');
+  addColumnIfMissing(db, 'accounts', 'author_engaged_replies', 'INTEGER NOT NULL DEFAULT 0');
   // Indexed here rather than in the CREATE TABLE block: on an existing database
   // the table already exists, so the column only appears after the ALTER above.
   db.exec('CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source, updated_at DESC)');

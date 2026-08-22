@@ -6,7 +6,7 @@
  */
 import { getDb } from './db.js';
 
-export type TrackedEngagementMode = 'NONE' | 'CLICKBAIT' | 'RAGEBAIT';
+export type TrackedEngagementMode = 'NONE' | 'CLICKBAIT' | 'RAGEBAIT' | 'RECEIPT';
 
 export interface ModePerformanceRow {
   mode: TrackedEngagementMode;
@@ -126,7 +126,7 @@ export function getTopPerformingReplies(
   const windowDays = opts.windowDays ?? DEFAULT_WINDOW_DAYS;
   const since = Math.floor(Date.now() / 1000) - windowDays * 86400;
   const baitFilter = opts.baitOnly
-    ? `AND p.engagement_mode IN ('CLICKBAIT', 'RAGEBAIT')`
+    ? `AND p.engagement_mode IN ('CLICKBAIT', 'RAGEBAIT', 'RECEIPT')`
     : '';
 
   const rows = getDb().prepare(`
@@ -167,7 +167,7 @@ export function getTopPerformingOriginals(
   const windowDays = opts.windowDays ?? DEFAULT_WINDOW_DAYS;
   const since = Math.floor(Date.now() / 1000) - windowDays * 86400;
   const baitFilter = opts.baitOnly
-    ? `AND op.engagement_mode IN ('CLICKBAIT', 'RAGEBAIT')`
+    ? `AND op.engagement_mode IN ('CLICKBAIT', 'RAGEBAIT', 'RECEIPT')`
     : '';
 
   const rows = getDb().prepare(`
@@ -284,7 +284,7 @@ function weightedAvg(a: number, aN: number, b: number, bN: number): number {
 }
 
 function normalizeMode(mode: string): TrackedEngagementMode {
-  if (mode === 'CLICKBAIT' || mode === 'RAGEBAIT') return mode;
+  if (mode === 'CLICKBAIT' || mode === 'RAGEBAIT' || mode === 'RECEIPT') return mode;
   return 'NONE';
 }
 
@@ -302,4 +302,66 @@ function mergeTopPosts(
   return [...replies, ...originals]
     .sort((a, b) => baitExampleRankScore(b) - baitExampleRankScore(a) || b.posted_at - a.posted_at)
     .slice(0, limit);
+}
+
+const DEVANAGARI_RE = /[ऀ-ॿ]/;
+
+export function getTopConversationalReplies(
+  limit = 5,
+  windowDays = DEFAULT_WINDOW_DAYS,
+): TopPerformingReply[] {
+  const since = Math.floor(Date.now() / 1000) - windowDays * 86400;
+  const rows = getDb().prepare(`
+    SELECT
+      i.our_reply_text AS text,
+      COALESCE(p.engagement_mode, 'NONE') AS mode,
+      i.success_score AS score,
+      i.likes_received AS likes,
+      i.replies_received AS replies,
+      i.retweets_received AS retweets,
+      i.impressions,
+      i.posted_at
+    FROM interactions i
+    JOIN posts p ON p.id = i.post_id
+    WHERE i.posted_at >= ?
+      AND TRIM(i.our_reply_text) <> ''
+      AND (
+        i.replies_received > 0
+        OR i.author_engaged = 1
+        OR i.success_score > 0
+      )
+    ORDER BY i.replies_received DESC, i.author_engaged DESC, i.success_score DESC, i.posted_at DESC
+    LIMIT ?
+  `).all(since, Math.min(Math.max(limit, 1), 20)) as Array<{
+    text: string;
+    mode: TrackedEngagementMode;
+    score: number;
+    likes: number;
+    replies: number;
+    retweets: number;
+    impressions: number;
+    posted_at: number;
+  }>;
+
+  return rows
+    .filter((row) => !DEVANAGARI_RE.test(row.text))
+    .map((row) => ({ ...row, kind: 'reply' as const }));
+}
+
+/** Few-shot winners for every generation path — replies that earned replies. */
+export function winnerExamplesBlock(limit = 3): string {
+  try {
+    const picks = getTopConversationalReplies(limit);
+    if (picks.length === 0) return '';
+    const lines = picks.map((p, i) => {
+      const snippet = p.text.replace(/\s+/g, ' ').trim().slice(0, 220);
+      return `${i + 1}. [replies ${p.replies} · score ${p.score.toFixed(1)}] ${snippet}`;
+    });
+    return [
+      'RECENT REPLIES THAT EARNED REPLIES (match energy and structure, not exact words):',
+      ...lines,
+    ].join('\n');
+  } catch {
+    return '';
+  }
 }

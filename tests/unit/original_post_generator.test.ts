@@ -19,6 +19,7 @@ vi.mock('../../src/storage/queries.js', () => ({
   // setting; returning the fallback keeps the agentic path disabled in tests.
   getSetting: (key: string, fallback: string) => {
     if (key === 'human_likeness_gate') return 'false';
+    if (key === 'conversation_gravity_judge') return 'false';
     return fallback;
   },
 }));
@@ -43,14 +44,17 @@ const validDraft =
   'Pune AI hiring is moving from headcount plans to automation bets. Founders in Hinjewadi need judgment, not just cheaper workflows. Who adapts first?';
 
 const slightlyLongDraft =
-  'Pune AI jobs are moving faster than the old hiring playbook. '.repeat(4) +
-  'Who is ready for the second-order effects?';
+  'Pune AI jobs are moving faster than the old hiring playbook ever allowed. '.repeat(3) +
+  'Judgment is the scarce skill now. Who is ready for the second-order effects?';
 
 describe('generateOriginalPost', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.GROQ_API_KEY = 'test-key-mock';
     process.env.GROQ_MODEL = 'llama-3.3-70b-versatile';
     process.env.LOG_PROMPTS = 'false';
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('human_likeness_gate', 'false');
+    setSetting('conversation_gravity_judge', 'false');
   });
 
   afterEach(() => {
@@ -74,7 +78,7 @@ describe('generateOriginalPost', () => {
     expect(result.parts.length).toBeGreaterThanOrEqual(2);
     expect(result.parts.length).toBeLessThanOrEqual(3);
     expect(result.parts.every((part) => Array.from(part).length <= 280)).toBe(true);
-    expect(__mockCreate).toHaveBeenCalledTimes(1);
+    expect(__mockCreate.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it('packs complete sentences greedily into thread parts', async () => {
@@ -164,10 +168,13 @@ describe('single-tweet length repair', () => {
   const validFarmDraft =
     'Pune traffic is a policy failure dressed up as bad luck. Every flyover buys two years of quiet. Who actually pays for it?';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.GROQ_API_KEY = 'test-key-mock';
     process.env.GROQ_MODEL = 'llama-3.3-70b-versatile';
     process.env.LOG_PROMPTS = 'false';
+    const { setSetting } = await import('../../src/storage/settings.js');
+    setSetting('human_likeness_gate', 'false');
+    setSetting('conversation_gravity_judge', 'false');
   });
 
   afterEach(() => {

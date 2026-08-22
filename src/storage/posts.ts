@@ -40,6 +40,10 @@ export interface Post {
   posting_attempts: number;
   retry_after: number | null;
   last_error: string | null;
+  tournament_strategy: string | null;
+  tournament_angle: string | null;
+  tournament_critic_score: number | null;
+  tournament_critic_reasons: string | null;
   ingested_at: number;
   updated_at: number;
 }
@@ -242,6 +246,38 @@ export function schedulePostRetry(id: string, error: string): void {
     SET status = 'ERROR', retry_after = unixepoch(), last_error = ?, updated_at = unixepoch()
     WHERE id = ?
   `).run(error.slice(0, 1000), id);
+}
+
+export function setPostLastError(id: string, error: string): void {
+  getDb()
+    .prepare(`UPDATE posts SET last_error = ?, updated_at = unixepoch() WHERE id = ?`)
+    .run(error.slice(0, 1000), id);
+}
+
+export function updatePostTournamentMeta(
+  id: string,
+  meta: {
+    strategy: string;
+    angle?: string | null;
+    criticScore?: number | null;
+    criticReasons?: string[] | null;
+  },
+): void {
+  getDb().prepare(`
+    UPDATE posts SET
+      tournament_strategy = ?,
+      tournament_angle = COALESCE(?, tournament_angle),
+      tournament_critic_score = COALESCE(?, tournament_critic_score),
+      tournament_critic_reasons = COALESCE(?, tournament_critic_reasons),
+      updated_at = unixepoch()
+    WHERE id = ?
+  `).run(
+    meta.strategy,
+    meta.angle ?? null,
+    meta.criticScore ?? null,
+    meta.criticReasons ? JSON.stringify(meta.criticReasons).slice(0, 2000) : null,
+    id,
+  );
 }
 
 export function markPostPostingError(id: string, error: string): void {

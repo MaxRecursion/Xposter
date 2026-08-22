@@ -5,7 +5,7 @@ import {
 import { getIntSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
 import { fetchProfile, AuthorProfile } from '../browser/profile.js';
-import { getOptionalGroqClient } from './groq_client.js';
+import { getOptionalGroqClient, groqReasoningParams } from './groq_client.js';
 import { getGroqClassifierModel } from '../config.js';
 
 const CLASSIFICATION_VALUES: Classification[] = [
@@ -136,6 +136,7 @@ export async function classifyAccount(
       max_completion_tokens: 6000,
       temperature: 0.1,
       top_p: 0.9,
+      ...groqReasoningParams(model),
     } as any);
 
     const raw = completion.choices[0]?.message?.content?.trim() ?? '';

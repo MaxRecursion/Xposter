@@ -30,6 +30,7 @@ export interface Account {
   total_engagement: number;
   avg_reply_score: number;
   successful_replies: number;
+  author_engaged_replies: number;
   first_seen_at: number;
   last_seen_at: number;
   updated_at: number;

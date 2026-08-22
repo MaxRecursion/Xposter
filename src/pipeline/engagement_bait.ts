@@ -1,8 +1,8 @@
 /**
  * Engagement-bait allocator for replies and original posts.
  *
- * Goal: about `engagement_bait_pct` of outbound text (default 30%) uses a
- * clickbait or ragebait frame to earn impressions — without punching down on
+ * Goal: about `engagement_bait_pct` of outbound text (default 15%) uses a
+ * clickbait, ragebait, or receipt frame — without punching down on
  * identity, grief, or other third-rail topics.
  *
  * Same deficit math as stance.ts: a per-call coin flip drifts; counting what
@@ -16,7 +16,11 @@ import {
 import { getIntSetting, getSetting } from '../storage/settings.js';
 import { getBaitStyle, type BaitStyle, type ContentStructure } from './human_likeness.js';
 
-export type EngagementMode = 'NONE' | 'CLICKBAIT' | 'RAGEBAIT';
+export type EngagementMode = 'NONE' | 'CLICKBAIT' | 'RAGEBAIT' | 'RECEIPT';
+
+export function isBaitMode(mode: string | null | undefined): boolean {
+  return mode === 'CLICKBAIT' || mode === 'RAGEBAIT' || mode === 'RECEIPT';
+}
 
 export interface BaitCounts {
   bait: number;
@@ -29,10 +33,12 @@ export interface DecideBaitOptions {
   /** Absolute veto — grief, hard news, harassment, etc. */
   blocked: boolean;
   counts?: BaitCounts;
-  /** Injectable RNG for the CLICKBAIT vs RAGEBAIT split. */
+  /** Injectable RNG for the RECEIPT / CLICKBAIT / RAGEBAIT split. */
   rng?: () => number;
-  /** Override live performance-based CLICKBAIT probability (tests). */
+  /** Override live performance-based CLICKBAIT probability among click vs rage (tests). */
   subtypeClickProb?: number;
+  /** Probability that a bait slot is RECEIPT rather than click/rage. Default 0.5. */
+  receiptProb?: number;
 }
 
 export interface BaitDecision {
@@ -76,14 +82,14 @@ export function isBlockedForBait(text: string): boolean {
 }
 
 export function getEngagementBaitPct(): number {
-  return getIntSetting('engagement_bait_pct', 30, 0, 100);
+  return getIntSetting('engagement_bait_pct', 15, 0, 100);
 }
 
 /**
- * Picks NONE / CLICKBAIT / RAGEBAIT for the next outbound item.
+ * Picks NONE / RECEIPT / CLICKBAIT / RAGEBAIT for the next outbound item.
  *
- * Safety is absolute. Within the bait budget, subtypes split ~50/50 so the
- * feed doesn't become one flavour of provocation.
+ * Safety is absolute. Within the bait budget, about half of slots are RECEIPT
+ * (a concrete lived detail); the rest split click vs rage from live performance.
  */
 export function decideEngagementBait(opts: DecideBaitOptions): BaitDecision {
   if (opts.blocked) {
@@ -93,10 +99,11 @@ export function decideEngagementBait(opts: DecideBaitOptions): BaitDecision {
   const target = Math.min(100, Math.max(0, opts.targetPct));
   if (target <= 0) return { mode: 'NONE', reason: 'bait disabled' };
   const clickProb = opts.subtypeClickProb ?? getLiveClickSubtypeProb();
+  const receiptProb = opts.receiptProb ?? 0.5;
 
   if (target >= 100) {
-    const mode = pickBaitSubtype(opts.rng, clickProb);
-    return { mode, reason: `bait forced (clickProb=${clickProb.toFixed(2)})` };
+    const mode = pickBaitSubtype(opts.rng, clickProb, receiptProb);
+    return { mode, reason: `bait forced (receiptProb=${receiptProb.toFixed(2)} clickProb=${clickProb.toFixed(2)})` };
   }
 
   const counts = opts.counts ?? { bait: 0, normal: 0 };
@@ -104,10 +111,10 @@ export function decideEngagementBait(opts: DecideBaitOptions): BaitDecision {
   const shareIfSkipped = counts.bait / (total + 1);
 
   if (shareIfSkipped < target / 100) {
-    const mode = pickBaitSubtype(opts.rng, clickProb);
+    const mode = pickBaitSubtype(opts.rng, clickProb, receiptProb);
     return {
       mode,
-      reason: `deficit ${(shareIfSkipped * 100).toFixed(0)}% < ${target}% → ${mode} (clickProb=${clickProb.toFixed(2)})`,
+      reason: `deficit ${(shareIfSkipped * 100).toFixed(0)}% < ${target}% → ${mode} (receiptProb=${receiptProb.toFixed(2)} clickProb=${clickProb.toFixed(2)})`,
     };
   }
 
@@ -128,9 +135,13 @@ function getLiveClickSubtypeProb(): number {
 function pickBaitSubtype(
   rng: (() => number) | undefined,
   clickProb = 0.5,
+  receiptProb = 0.5,
 ): EngagementMode {
   const roll = (rng ?? Math.random)();
-  return roll < clickProb ? 'CLICKBAIT' : 'RAGEBAIT';
+  const receiptShare = Math.min(0.8, Math.max(0, receiptProb));
+  if (roll < receiptShare) return 'RECEIPT';
+  const rest = receiptShare >= 1 ? 1 : (roll - receiptShare) / (1 - receiptShare);
+  return rest < clickProb ? 'CLICKBAIT' : 'RAGEBAIT';
 }
 
 /** Weighted random structural mode for bait posts/replies. */
@@ -200,6 +211,16 @@ Make the reader need the next line — but sound mid-conversation, not like a he
 - Still human — no all-caps spam, no engagement-farm emoji bait.${examplesSuffix}`;
 }
 
+function receiptGuidance(examplesSuffix: string): string {
+  return `ENGAGEMENT INTENT: receipt (this reply/post is in the engagement quota).
+Lead with one specific lived detail — a named place, number, delay, salary band, agency, or product — then one implication.
+- The receipt must be true and checkable; never invent a statistic.
+- Implication, not a headline: "FC Road's third monsoon drain still dumps onto the footpath, so the 'desilting complete' banner is theatre."
+- No curiosity-gap openers, no "nobody talks about", no colon-title hooks.
+- Invite a reply by leaving a falsifiable claim or a genuine question about the next consequence.
+- Still no identity punches. Situation and systems only.${examplesSuffix}`;
+}
+
 function implicitRageGuidance(examplesSuffix: string): string {
   return `ENGAGEMENT INTENT: friction (this reply/post is in the engagement quota).
 Take a confident position against a system, product, or civic failure — never a person or tribe.
@@ -248,9 +269,11 @@ export function baitGuidanceFor(
   const examplesSuffix = examples ? `\n\n${examples}` : '';
   const structureBlock = opts.structure ? structureGuidance(opts.structure) : '';
 
-  const modeBlock = mode === 'CLICKBAIT'
-    ? (baitStyle === 'explicit' ? explicitClickGuidance(examplesSuffix) : implicitClickGuidance(examplesSuffix))
-    : (baitStyle === 'explicit' ? explicitRageGuidance(examplesSuffix) : implicitRageGuidance(examplesSuffix));
+  const modeBlock = mode === 'RECEIPT'
+    ? receiptGuidance(examplesSuffix)
+    : mode === 'CLICKBAIT'
+      ? (baitStyle === 'explicit' ? explicitClickGuidance(examplesSuffix) : implicitClickGuidance(examplesSuffix))
+      : (baitStyle === 'explicit' ? explicitRageGuidance(examplesSuffix) : implicitRageGuidance(examplesSuffix));
 
   return [modeBlock, structureBlock].filter(Boolean).join('\n\n');
 }
@@ -260,12 +283,14 @@ export function describeBaitTuning(): string {
   const snap = getBaitTuningSnapshot();
   const click = snap.mode_performance.find((r) => r.mode === 'CLICKBAIT');
   const rage = snap.mode_performance.find((r) => r.mode === 'RAGEBAIT');
+  const receipt = snap.mode_performance.find((r) => r.mode === 'RECEIPT');
   const none = snap.mode_performance.find((r) => r.mode === 'NONE');
   const parts = [
     `clickProb=${snap.click_subtype_prob.toFixed(2)}`,
     `baitStyle=${getSetting('bait_style', 'implicit')}`,
     click ? `CLICK n=${click.count} avg=${click.avg_score}` : 'CLICK n=0',
     rage ? `RAGE n=${rage.count} avg=${rage.avg_score}` : 'RAGE n=0',
+    receipt ? `RECEIPT n=${receipt.count} avg=${receipt.avg_score}` : 'RECEIPT n=0',
     none ? `NONE n=${none.count} avg=${none.avg_score}` : 'NONE n=0',
   ];
   if (snap.top_bait_posts[0]) {

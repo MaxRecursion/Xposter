@@ -139,7 +139,7 @@ export function markOriginalPostError(id: string): void {
   `).run(id);
 }
 
-/** Today's posted originals by bait vs normal — drives the 30% allocator. */
+/** Today's posted originals by bait vs normal — drives the 15% allocator. */
 export function getOriginalBaitCountsToday(): { bait: number; normal: number } {
   const startOfDay = startOfLocalDayUnix();
   const rows = getDb().prepare(`
@@ -152,7 +152,7 @@ export function getOriginalBaitCountsToday(): { bait: number; normal: number } {
   let bait = 0;
   let normal = 0;
   for (const row of rows) {
-    if (row.mode === 'CLICKBAIT' || row.mode === 'RAGEBAIT') bait += row.n;
+    if (row.mode === 'CLICKBAIT' || row.mode === 'RAGEBAIT' || row.mode === 'RECEIPT') bait += row.n;
     else normal += row.n;
   }
   return { bait, normal };

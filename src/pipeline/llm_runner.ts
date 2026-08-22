@@ -1,7 +1,7 @@
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
 import { getGroqModel } from '../config.js';
-import { getGroqClient } from './groq_client.js';
+import { getGroqClient, groqReasoningParams } from './groq_client.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 import {
   AGENTIC_MAX_ATTEMPTS,
@@ -11,6 +11,7 @@ import {
   type AgenticGenerationTask,
 } from './agentic_generator.js';
 import { EmptyReplyError } from './errors.js';
+import { isClaudeCliAuthBlocked, noteClaudeAuthFailure } from './provider_health.js';
 
 export interface GroqCallOptions {
   maxTokens?: number;
@@ -47,6 +48,7 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
       try {
         text = (await opts.agenticRunner()).trim();
       } catch (err) {
+        noteClaudeAuthFailure(err);
         logger.warn('Agentic generation failed; falling back to single-shot', { ...logCtx, err: String(err) });
       }
     } else if (opts.agenticTask) {
@@ -56,9 +58,11 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
           text = (await runGenerationAgent(opts.agenticTask, agModel)).trim();
           break;
         } catch (err) {
+          noteClaudeAuthFailure(err);
           logger.warn(`Agentic attempt ${attempt}/${AGENTIC_MAX_ATTEMPTS} failed`, {
             ...logCtx, err: String(err).slice(0, 200),
           });
+          if (isClaudeCliAuthBlocked() && !opts.agenticRunner) break;
         }
       }
       if (!text) {
@@ -98,6 +102,7 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
         logger.warn('Claude returned short/empty text, falling back to Groq', { ...logCtx, textLen: candidate.length });
       }
     } catch (err) {
+      noteClaudeAuthFailure(err);
       logEvent('CLAUDE_GENERATION_FAILED', `error: ${String(err)} — triggering Groq fallback fn=${opts.taskName}`, opts.postId);
       logger.warn('Claude threw; falling back to Groq', { ...logCtx, err: String(err) });
     }
@@ -120,7 +125,8 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
         ...(opts.groq.maxCompletionTokens != null
           ? { max_completion_tokens: opts.groq.maxCompletionTokens }
           : { max_tokens: opts.groq.maxTokens ?? 400 }),
-      });
+        ...groqReasoningParams(groqModel),
+      } as any);
       text = (completion.choices[0]?.message?.content ?? '').trim();
       logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${text.length} fn=${opts.taskName}`, opts.postId);
       logger.info('Groq generation succeeded', { chars: text.length, ...logCtx });

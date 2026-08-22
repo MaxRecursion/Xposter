@@ -61,12 +61,15 @@ export async function runReplyMetricsSync(
       const url = interaction.our_tweet_url
         ?? `https://x.com/i/web/status/${interaction.our_tweet_id}`;
       try {
-        const data = await scrapeEngagement(url);
+        const data = await scrapeEngagement(url, {
+          parentAuthorHandle: interaction.account_handle,
+        });
         updateInteractionMetrics(interaction.id, {
           likes: data.likes,
           replies: data.replies,
           retweets: data.retweets,
           impressions: data.impressions,
+          authorEngaged: data.authorEngaged,
         });
         touchedAccounts.add(interaction.account_handle);
         synced++;

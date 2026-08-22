@@ -98,6 +98,8 @@ describe('analytics overview', () => {
       replies: 1,
       originals: 1,
       successful_replies: 1,
+      actions_per_1k_impressions: 40,
+      quality_sample_size: 1,
     });
     expect(result.reply_by_classification[0]).toMatchObject({
       classification: 'SERIOUS',
@@ -132,13 +134,13 @@ describe('analytics overview', () => {
 
     // Timeline post → reply with metric sync
     const timelinePost = queries.upsertPost({
-      tweet_id: 'tl_tweet_001',
+      tweet_id: '1723456789012348001',
       author_handle: 'user_a',
       author_name: 'User A',
       text: 'Timeline tweet',
       timestamp: now - 3600,
       likes: 5, replies: 1, retweets: 0,
-      tweet_url: 'https://x.com/user_a/status/tl_tweet_001',
+      tweet_url: 'https://x.com/user_a/status/1723456789012348001',
     })!;
     // source defaults to TIMELINE on insert
 
@@ -151,13 +153,13 @@ describe('analytics overview', () => {
 
     // Trend post → reply with metric sync
     const trendPost = queries.upsertPost({
-      tweet_id: 'tr_tweet_001',
+      tweet_id: '1723456789012348002',
       author_handle: 'user_b',
       author_name: 'User B',
       text: '#TrendingTopic tweet',
       timestamp: now - 3600,
       likes: 500, replies: 200, retweets: 80,
-      tweet_url: 'https://x.com/user_b/status/tr_tweet_001',
+      tweet_url: 'https://x.com/user_b/status/1723456789012348002',
     }, { source: 'TREND_GLOBAL', trendKey: '#TrendingTopic' })!;
 
     const trId = interactions.recordInteraction(
@@ -169,13 +171,13 @@ describe('analytics overview', () => {
 
     // A reply without metric sync should be excluded from source breakdown
     const unsyncedPost = queries.upsertPost({
-      tweet_id: 'un_tweet_001',
+      tweet_id: '1723456789012348003',
       author_handle: 'user_a',
       author_name: 'User A',
       text: 'Unsynced tweet',
       timestamp: now - 7200,
       likes: 1, replies: 0, retweets: 0,
-      tweet_url: 'https://x.com/user_a/status/un_tweet_001',
+      tweet_url: 'https://x.com/user_a/status/1723456789012348003',
     })!;
     interactions.recordInteraction(
       unsyncedPost.id, 'user_a', 'Unsynced reply', { tweetId: 'our_un_001' },
@@ -194,5 +196,81 @@ describe('analytics overview', () => {
     expect(tr!.total_replies).toBe(1);
     // TIMELINE should outperform TREND in this fixture (10 likes vs 2 likes)
     expect(tl!.avg_success_score).toBeGreaterThan(tr!.avg_success_score);
+
+    expect(result.summary.quality_sample_size).toBe(2);
+    expect(result.quality.by_source).toHaveLength(2);
+    expect(result.quality.by_source.every((row) => row.sample_size >= 1)).toBe(true);
+    expect(result.tournament.sample_size).toBe(2);
+  });
+
+  it('computes actions per 1k impressions and ignores unsynced replies', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const queries = await import('../../src/storage/queries.js');
+    const interactions = await import('../../src/storage/interactions.js');
+    const { updatePostTournamentMeta } = await import('../../src/storage/posts.js');
+
+    const tournamentPost = queries.upsertPost({
+      tweet_id: '1723456789012348101',
+      author_handle: 'user_t',
+      author_name: 'User T',
+      text: 'Pune Metro frequency actually held this week.',
+      timestamp: now - 3600,
+      likes: 4, replies: 1, retweets: 0,
+      tweet_url: 'https://x.com/user_t/status/1723456789012348101',
+    })!;
+    updatePostTournamentMeta(tournamentPost.id, {
+      strategy: 'TOURNAMENT',
+      angle: 'ONE_LINER',
+      criticScore: 4,
+    });
+    const tId = interactions.recordInteraction(
+      tournamentPost.id, 'user_t', 'Metro held the clock for once.', { tweetId: '1723456789012348191' },
+    );
+    interactions.updateInteractionMetrics(tId, {
+      likes: 5, replies: 1, retweets: 0, impressions: 100,
+    });
+
+    const controlPost = queries.upsertPost({
+      tweet_id: '1723456789012348102',
+      author_handle: 'user_c',
+      author_name: 'User C',
+      text: 'Pune traffic near Baner is stuck.',
+      timestamp: now - 3600,
+      likes: 3, replies: 0, retweets: 0,
+      tweet_url: 'https://x.com/user_c/status/1723456789012348102',
+    })!;
+    updatePostTournamentMeta(controlPost.id, { strategy: 'CONTROL' });
+    const cId = interactions.recordInteraction(
+      controlPost.id, 'user_c', 'Baner crawl filed overtime.', { tweetId: '1723456789012348192' },
+    );
+    interactions.updateInteractionMetrics(cId, {
+      likes: 1, replies: 0, retweets: 0, impressions: 100,
+    });
+
+    const unsynced = queries.upsertPost({
+      tweet_id: '1723456789012348103',
+      author_handle: 'user_u',
+      author_name: 'User U',
+      text: 'Unsynced metro note.',
+      timestamp: now - 1800,
+      likes: 1, replies: 0, retweets: 0,
+      tweet_url: 'https://x.com/user_u/status/1723456789012348103',
+    })!;
+    interactions.recordInteraction(
+      unsynced.id, 'user_u', 'Would look viral if counted.', { tweetId: '1723456789012348193' },
+    );
+
+    const { getAnalyticsOverview, actionsPer1k } = await import('../../src/storage/analytics.js');
+    expect(actionsPer1k([
+      { likes: 5, replies: 1, retweets: 0, impressions: 100 },
+    ]).actions_per_1k_impressions).toBe(60);
+
+    const result = getAnalyticsOverview(30);
+    expect(result.summary.quality_sample_size).toBe(2);
+    expect(result.summary.actions_per_1k_impressions).toBe(35);
+    expect(result.tournament.tournament_actions_per_1k).toBe(60);
+    expect(result.tournament.control_actions_per_1k).toBe(10);
+    expect(result.tournament.best_angle?.angle).toBe('ONE_LINER');
+    expect(result.quality.by_source.every((row) => typeof row.sample_size === 'number')).toBe(true);
   });
 });

@@ -17,14 +17,16 @@ import { startTrendRefreshScheduler, stopTrendRefreshScheduler } from './trend_r
 import { isContextEnabled, getContextStore } from '../context/enrich.js';
 import { buildContextSources } from '../context/sources/index.js';
 import { startContextIngest, stopContextIngest } from '../context/ingest/scheduler.js';
-import { isReplyPipelineRunning, runReplyPipeline } from '../pipeline/reply_pipeline.js';
+import { isReplyPipelineRunning, runReplyPipeline, type PipelineRunResult } from '../pipeline/reply_pipeline.js';
 import { primeClaudeCliCheck } from '../pipeline/claude_generator.js';
+import { startGroqHealthProbe, stopGroqHealthProbe } from '../pipeline/provider_health.js';
 
 let _expiryHandle: NodeJS.Timeout | null = null;
 
 export function startScheduler(): void {
   // Prime Claude CLI availability check so isClaudeAvailable() is accurate immediately
   void primeClaudeCliCheck();
+  startGroqHealthProbe();
 
   // The pipeline cron is now driven by random_runs.ts, which also decides
   // whether each run pulls from a trending topic or the home timeline.
@@ -80,6 +82,7 @@ export function stopScheduler(): void {
   stopImagePostScheduler();
   stopTrendRefreshScheduler();
   stopContextIngest();
+  stopGroqHealthProbe();
   if (_expiryHandle) {
     clearInterval(_expiryHandle);
     _expiryHandle = null;
@@ -88,7 +91,7 @@ export function stopScheduler(): void {
 }
 
 /** Manually trigger a pipeline run (also called by the random scheduler). */
-export async function runPipeline(): Promise<{ ingested: number; candidates: number }> {
+export async function runPipeline(): Promise<PipelineRunResult> {
   return runReplyPipeline();
 }
 
