@@ -14,7 +14,7 @@ describe('settings_schema', () => {
   });
 
   it('returns schema defaults', () => {
-    expect(getSettingDefault('min_score')).toBe('40');
+    expect(getSettingDefault('min_score')).toBe('60');
     expect(getSettingDefault('unknown_key', 'fallback')).toBe('fallback');
   });
 

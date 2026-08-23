@@ -13,7 +13,7 @@ import {
   updatePostStance, updatePostStatus, upsertPost, type Post, type PostSource,
 } from '../storage/queries.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
-import { getIntSetting } from '../storage/settings.js';
+import { getFloatSetting, getIntSetting } from '../storage/settings.js';
 import { detectTopics } from '../context/topics.js';
 import { logger } from '../utils/logger.js';
 import { delay, randomBetween } from '../utils/delay.js';
@@ -208,9 +208,12 @@ async function candidatesForTrend(trend: TrendRow, source: PostSource): Promise<
 
   for (const s of scored) updatePostScore(s.id, s.score, s.breakdown);
 
+  const minScore = getFloatSetting('min_score', 60, 0, 100);
+  const aboveThreshold = scored.filter((s) => s.score >= minScore);
+
   const contrarianPct = getIntSetting('contrarian_reply_pct', 33, 0, 100);
 
-  return rankCandidates(scored).flatMap((s) => {
+  return rankCandidates(aboveThreshold).flatMap((s) => {
     const post = postById.get(s.id);
     const safetyClass = safetyById.get(s.id);
     if (!post || !safetyClass) return [];
@@ -228,6 +231,6 @@ function computeTopicDailyCap(): number {
   const topicCapPct = getIntSetting('topic_daily_cap', 10, 1, 100);
   const plannedReplies = getIntSetting('random_runs_per_day', 20, 1, 30)
     * getIntSetting('max_candidates_per_run', 5, 1, 20);
-  const plannedOriginals = getIntSetting('original_posts_per_day', 10, 1, 15);
+  const plannedOriginals = getIntSetting('original_posts_per_day', 2, 1, 15);
   return Math.max(3, Math.ceil((plannedReplies + plannedOriginals) * topicCapPct / 100));
 }

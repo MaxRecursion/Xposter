@@ -21,6 +21,18 @@ export function getHandlesRepliedToToday(): Set<string> {
 }
 
 /**
+ * Total count of replies POSTED today (midnight-to-now, local time).
+ * Used to enforce the `max_replies_per_day` hard cap.
+ */
+export function getRepliesPostedTodayCount(): number {
+  const startOfDay = startOfLocalDayUnix();
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM posts WHERE status = 'POSTED' AND updated_at >= ?`)
+    .get(startOfDay) as { n: number };
+  return row.n;
+}
+
+/**
  * Counts today's POSTED replies by stance (midnight-to-now, local time).
  */
 export function getStanceCountsToday(): { aligned: number; contrarian: number } {

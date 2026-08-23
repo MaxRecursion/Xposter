@@ -297,7 +297,7 @@ async function fireOnePost(trigger: string, postType: OriginalPostType = 'ORIGIN
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function generateRandomSlots(dateKey: string): Array<{ ts: number; postType: OriginalPostType }> {
-  const n = getIntSetting('original_posts_per_day', 7, 1, 12);
+  const n = getIntSetting('original_posts_per_day', 2, 1, 15);
   const quoteTweetCount = n >= 3 ? 1 : 0;
   const engagementFarmCount = Math.min(2, Math.max(0, n - quoteTweetCount - 1));
 

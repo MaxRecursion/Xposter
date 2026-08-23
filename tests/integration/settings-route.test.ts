@@ -55,7 +55,7 @@ describe('settings and activity routes', () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/settings/all`);
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, string>;
-    expect(body.min_score).toBe('40');
+    expect(body.min_score).toBe('60');
     expect(body.topic_category_weights).toContain('pune-tech-economy');
   });
 

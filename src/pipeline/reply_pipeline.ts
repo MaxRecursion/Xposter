@@ -1,6 +1,6 @@
 import { ingestTimeline } from '../browser/ingestion.js';
 import { sendApprovalNotification } from '../notifications/ntfy.js';
-import { getHandlesRepliedToToday, getTopicCountsToday, getPost, logEvent, Post, PostSource, Stance, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
+import { getHandlesRepliedToToday, getRepliesPostedTodayCount, getTopicCountsToday, getPost, logEvent, Post, PostSource, Stance, updateGeneratedReply, updatePostLanguage, updatePostScore, updatePostStatus, upsertPost } from '../storage/queries.js';
 import { detectTopics } from '../context/topics.js';
 import { upsertAccountSeen } from '../storage/accounts.js';
 import { listRecentReplyTexts } from '../storage/interactions.js';
@@ -72,6 +72,16 @@ export async function runReplyPipeline(
     return emptyRun();
   }
 
+  const maxRepliesPerDay = getIntSetting('max_replies_per_day', 8, 1, 50);
+  const repliesSoFarToday = getRepliesPostedTodayCount();
+  const remainingBudget = Math.max(0, maxRepliesPerDay - repliesSoFarToday);
+  if (remainingBudget === 0) {
+    logger.info('Daily reply cap reached - skipping run', { repliesSoFarToday, maxRepliesPerDay });
+    logEvent('DAILY_REPLY_CAP_REACHED', `posted=${repliesSoFarToday} cap=${maxRepliesPerDay}`);
+    recordPipelineSkipped(source, 'daily_cap');
+    return emptyRun();
+  }
+
   return instrumentPipelineRun(source, async () => {
     _running = true;
     logEvent('PIPELINE_START', `source=${source}`);
@@ -88,7 +98,7 @@ export async function runReplyPipeline(
     if (source !== 'TIMELINE' && getBooleanSetting('trend_replies_enabled', true)) {
       const trendCandidates = await sourceTrendCandidates(source);
       if (trendCandidates.candidates.length > 0) {
-        const result = await processTrendCandidates(trendCandidates.candidates, blocklist);
+        const result = await processTrendCandidates(trendCandidates.candidates, blocklist, remainingBudget);
         logEvent('PIPELINE_COMPLETE', `source=${source} trend="${trendCandidates.trendName}" posted=${result.posted} pending=${result.pendingApproval}`);
         logger.info('Trend pipeline complete', { source, trend: trendCandidates.trendName, ...result });
         const summary = {
@@ -117,13 +127,14 @@ export async function runReplyPipeline(
     logger.info(`Filter: ${filtered.length}/${candidates.length} posts passed`);
     logEvent('FILTER_COMPLETE', `${filtered.length} passed`);
 
-    const topCandidates = await selectCandidates(filtered, filterResults, candidates);
-    logger.info(`Scored candidates selected: ${topCandidates.length}`);
-    logEvent('SCORE_COMPLETE', `${topCandidates.length} candidates selected`);
+    const scoredCandidates = await selectCandidates(filtered, filterResults, candidates);
+    const topCandidates = scoredCandidates.slice(0, remainingBudget);
+    logger.info(`Scored candidates selected: ${topCandidates.length}`, { remainingBudget });
+    logEvent('SCORE_COMPLETE', `${topCandidates.length} candidates selected (budget=${remainingBudget})`);
 
     let posted = 0;
     let pendingApproval = 0;
-    for (let i = 0; i < topCandidates.length; i++) {
+    for (let i = 0; i < topCandidates.length && posted < remainingBudget; i++) {
       const outcome = await processCandidate(topCandidates[i], blocklist);
       if (outcome === 'posted') posted++;
       if (outcome === 'pending_approval') pendingApproval++;
@@ -163,15 +174,16 @@ export async function runReplyPipeline(
 async function processTrendCandidates(
   candidates: TrendCandidate[],
   blocklist: string[],
+  remainingBudget: number,
 ): Promise<{ posted: number; pendingApproval: number }> {
-  const maxCandidates = Math.min(getIntSetting('max_candidates_per_run', 5, 1, 20), 3);
+  const maxCandidates = Math.min(getIntSetting('max_candidates_per_run', 5, 1, 20), 3, remainingBudget);
   const minIntervalSec = getIntSetting('trend_min_reply_interval_sec', 90, 0, 600);
   const selected = candidates.slice(0, maxCandidates);
 
   let posted = 0;
   let pendingApproval = 0;
 
-  for (let i = 0; i < selected.length; i++) {
+  for (let i = 0; i < selected.length && posted < remainingBudget; i++) {
     const candidate = selected[i];
     const outcome = await processCandidate(candidate.scored, blocklist, candidate.post.stance ?? null);
 
@@ -266,7 +278,7 @@ async function selectCandidates(
   // topic_daily_cap is a PERCENTAGE (default 10 = 10%) of planned daily volume
   const topicCapPct = getIntSetting('topic_daily_cap', 10, 1, 100);
   const plannedReplies = getIntSetting('random_runs_per_day', 20, 1, 30) * getIntSetting('max_candidates_per_run', 5, 1, 20);
-  const plannedOriginals = getIntSetting('original_posts_per_day', 10, 1, 15);
+  const plannedOriginals = getIntSetting('original_posts_per_day', 2, 1, 15);
   const topicDailyCap = Math.max(3, Math.ceil((plannedReplies + plannedOriginals) * topicCapPct / 100));
   // One reply per account per day
   const alreadyRepliedToday = getHandlesRepliedToToday();

@@ -249,6 +249,8 @@ const SHARED_RULES = `Hard limits:
 
 LANGUAGE: Write in sharp, polished English only. Do NOT write in Marathi, Hindi, or any other language. Do NOT use Devanagari script.
 
+QUALITY BAR (CRITICAL): This account posts only twice a day — every post has to earn its place. Only write the tweet if you have a genuinely specific, non-obvious observation, argument, or piece of information about this exact topic. A post that could be written about the topic by anyone, at any time, with no research, is filler — do not write it. If you don't have something that clears that bar, reply with the single word SKIP instead of a mediocre post. SKIP is a better outcome than filler.
+
 RETURN ONLY THE TWEET TEXT. No quotes, no preamble, no explanation.`;
 
 const SYSTEM_BASE_PUNE = `You are a real person from Pune, Maharashtra posting original thoughts on X (Twitter).
@@ -736,13 +738,13 @@ export async function generateOriginalPost(
       );
       const raw = await callModel(systemPromptText, attemptPrompt, 0.85 + c * 0.04);
       const draft = cleanModelText(raw);
-      if (draft.length > 0) candidates.push(draft);
+      if (draft.length > 0 && !/^skip$/i.test(draft.trim())) candidates.push(draft);
     }
 
     if (candidates.length === 0) {
       lastQualityError = 'empty response';
       if (attempt < MAX_REPAIR_ATTEMPTS) continue;
-      logger.warn('Original post: empty response, skipping this run', { topic, category });
+      logger.info('Original post: model found nothing worth posting, skipping this slot', { topic, category });
       throw new EmptyReplyError('Original post returned empty reply');
     }
 
