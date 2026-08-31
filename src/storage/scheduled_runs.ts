@@ -22,10 +22,46 @@ export function getScheduledRunsForDate(date: string, kind = 'PIPELINE'): Schedu
     .all(date, kind) as ScheduledRun[];
 }
 
-export function getDuePendingRuns(now: number, kind = 'PIPELINE'): ScheduledRun[] {
+/**
+ * Due, unfired runs for a single day.
+ *
+ * `runDate` is required by every scheduler: without it a row left SCHEDULED by
+ * an outage stays `run_at <= now` forever and replays on the next boot, days
+ * later, publishing content researched for a date that has passed. Scoping the
+ * query to one day makes a missed slot stay missed — `expireStaleScheduledRuns`
+ * is what closes those rows out.
+ */
+export function getDuePendingRuns(now: number, kind = 'PIPELINE', runDate?: string): ScheduledRun[] {
+  if (runDate === undefined) {
+    return getDb()
+      .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at <= ? AND kind = ? ORDER BY run_at`)
+      .all(now, kind) as ScheduledRun[];
+  }
   return getDb()
-    .prepare(`SELECT * FROM scheduled_runs WHERE status='SCHEDULED' AND run_at <= ? AND kind = ? ORDER BY run_at`)
-    .all(now, kind) as ScheduledRun[];
+    .prepare(`
+      SELECT * FROM scheduled_runs
+      WHERE status='SCHEDULED' AND run_at <= ? AND kind = ? AND run_date = ?
+      ORDER BY run_at
+    `)
+    .all(now, kind, runDate) as ScheduledRun[];
+}
+
+/**
+ * Closes out SCHEDULED rows left behind by earlier days (outage, machine
+ * asleep, network drop mid-run) so they cannot fire retroactively.
+ *
+ * Returns the number of rows expired, so callers can log a real recovery
+ * instead of silently swallowing it.
+ */
+export function expireStaleScheduledRuns(beforeDate: string, kind: string): number {
+  const result = getDb().prepare(`
+    UPDATE scheduled_runs
+    SET status='SKIPPED',
+        fired_at=unixepoch(),
+        detail=COALESCE(detail || '; ', '') || 'expired: missed slot from ' || run_date
+    WHERE status='SCHEDULED' AND kind = ? AND run_date < ?
+  `).run(kind, beforeDate);
+  return result.changes;
 }
 
 export function getUpcomingRuns(now: number, limit = 10, kind = 'PIPELINE'): ScheduledRun[] {

@@ -1,10 +1,14 @@
-import { Post } from '../storage/queries.js';
+import { logEvent, Post } from '../storage/queries.js';
 import { Account, getAccount } from '../storage/accounts.js';
 import { getContextStore } from '../context/enrich.js';
 import type { RetrievedContextItem } from '../context/types.js';
 import { logger } from '../utils/logger.js';
+import { withTimeoutFallback } from '../utils/timeout.js';
 import { keywordMatches } from './keywords.js';
 import { getVelocityConfig, isVelocityTargetingEnabled, readVelocity, roundVelocityRead } from './velocity.js';
+
+/** Ceiling on the RAG heat lookup before candidates are scored without it. */
+const TOPICAL_HEAT_TIMEOUT_MS = 45_000;
 
 export interface ScoreBreakdown {
   recency: number;          // 0-30: newer = higher
@@ -306,15 +310,31 @@ async function loadTopicalHeat(posts: Post[]): Promise<number[]> {
   const store = getContextStore();
   if (!store) return posts.map(() => 0);
 
+  const base = posts.map(() => 0);
   try {
-    const matches = await store.semanticSearchMany(
-      posts.map((post) => post.text),
-      { k: 3, maxAgeSeconds: 48 * 3600 },
+    // Topical heat is a scoring boost, not a requirement. The embedding API is
+    // rate-limited to a few requests per minute and shared with context ingest,
+    // so this lookup can queue for minutes after a restart — long enough to
+    // stall the whole run and push the next scheduled one into the overlap
+    // guard. Capping it trades a slightly worse ranking for a run that finishes.
+    const matches = await withTimeoutFallback(
+      store.semanticSearchMany(
+        posts.map((post) => post.text),
+        { k: 3, maxAgeSeconds: 48 * 3600 },
+      ),
+      TOPICAL_HEAT_TIMEOUT_MS,
+      null,
+      () => {
+        logEvent('TOPICAL_HEAT_TIMEOUT', `${posts.length} candidates scored without RAG heat`);
+        logger.warn('Topical-heat lookup timed out; using base scores', {
+          candidates: posts.length, timeoutMs: TOPICAL_HEAT_TIMEOUT_MS,
+        });
+      },
     );
-    return matches.map(topicalHeatSignal);
+    return matches ? matches.map(topicalHeatSignal) : base;
   } catch (err) {
     logger.warn('Candidate topical-heat lookup failed; using base scores', { err: String(err) });
-    return posts.map(() => 0);
+    return base;
   }
 }
 

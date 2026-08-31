@@ -63,6 +63,7 @@ contextRouter.get('/health', (_req, res) => {
     enabled,
     voyage_api_key_set: apiKeyConfigured,
     store_initialized: store !== null,
+    embedding_queue: store?.embeddingQueueState() ?? null,
     sources: getSourceHealth(),
     stats: gatherStats(),
     trends: getTopicVelocities().slice(0, 10),

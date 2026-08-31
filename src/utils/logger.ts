@@ -1,6 +1,7 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import fs from 'fs';
 import { trace } from '@opentelemetry/api';
 import { OpenTelemetryTransportV3 } from '@opentelemetry/winston-transport';
 import { getLogLevel, isOtelEnabled } from '../config.js';
@@ -61,3 +62,44 @@ export const logger = winston.createLogger({
     ...(isOtelEnabled() ? [new OpenTelemetryTransportV3()] : []),
   ],
 });
+
+/** launchd's StandardOutPath capture — plain append, no rotation of its own. */
+const LAUNCHD_LOG = path.join(LOG_DIR, 'launchd.log');
+const LAUNCHD_LOG_MAX_BYTES = 32 * 1024 * 1024;
+const LAUNCHD_LOG_KEEP_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Keeps launchd's capture file from growing without bound.
+ *
+ * The winston transport above rotates the app log, but launchd's
+ * StandardOutPath/StandardErrorPath is a raw append that nothing prunes — it
+ * had reached tens of MB. launchd holds the file open, so the file is
+ * truncated in place (keeping the newest tail, which is what a crash
+ * postmortem actually needs) rather than renamed, which would leave launchd
+ * writing to an unlinked inode.
+ */
+export function trimLaunchdLog(): void {
+  try {
+    const stat = fs.statSync(LAUNCHD_LOG);
+    if (stat.size <= LAUNCHD_LOG_MAX_BYTES) return;
+
+    const fd = fs.openSync(LAUNCHD_LOG, 'r');
+    const keep = Buffer.alloc(LAUNCHD_LOG_KEEP_BYTES);
+    const read = fs.readSync(fd, keep, 0, LAUNCHD_LOG_KEEP_BYTES, stat.size - LAUNCHD_LOG_KEEP_BYTES);
+    fs.closeSync(fd);
+
+    // Drop the partial first line so the tail starts on a record boundary.
+    const tail = keep.subarray(0, read);
+    const firstNewline = tail.indexOf(0x0a);
+    const body = firstNewline >= 0 ? tail.subarray(firstNewline + 1) : tail;
+
+    fs.writeFileSync(LAUNCHD_LOG, body);
+    logger.info('Trimmed launchd.log', {
+      wasMB: Math.round(stat.size / 1024 / 1024),
+      nowMB: Math.round(body.length / 1024 / 1024),
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;  // not run under launchd
+    logger.warn('Could not trim launchd.log', { err: String(err) });
+  }
+}

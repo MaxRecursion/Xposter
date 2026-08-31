@@ -139,7 +139,39 @@ export function markOriginalPostError(id: string): void {
   `).run(id);
 }
 
+/**
+ * Fails out drafts abandoned mid-generation.
+ *
+ * A draft row is written before the post goes to X, so a crash, restart, or
+ * killed generation leaves it at GENERATING forever — nothing else ever
+ * revisits it. They accumulate silently and skew any analytics that reads
+ * status counts. Anything older than the cutoff cannot still be in flight:
+ * generation is bounded by the agentic timeout well under an hour.
+ */
+export function reapStaleGeneratingPosts(olderThanSeconds = 3600): number {
+  const cutoff = Math.floor(Date.now() / 1000) - olderThanSeconds;
+  const result = getDb().prepare(`
+    UPDATE original_posts
+    SET status = 'ERROR', updated_at = unixepoch()
+    WHERE status = 'GENERATING' AND created_at < ?
+  `).run(cutoff);
+  return result.changes;
+}
+
 /** Today's posted originals by bait vs normal — drives the 15% allocator. */
+/**
+ * Originals actually published since local midnight — the number the daily cap
+ * is enforced against. Counts rows, not scheduled slots, so retries and
+ * rescheduled runs cannot push the day past the configured volume.
+ */
+export function getOriginalsPostedTodayCount(): number {
+  const startOfDay = startOfLocalDayUnix();
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM original_posts WHERE status = 'POSTED' AND posted_at >= ?`)
+    .get(startOfDay) as { n: number };
+  return row.n;
+}
+
 export function getOriginalBaitCountsToday(): { bait: number; normal: number } {
   const startOfDay = startOfLocalDayUnix();
   const rows = getDb().prepare(`

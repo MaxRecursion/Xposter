@@ -30,6 +30,20 @@ export function recordSourceRun(source: string, ok: boolean, error: string | nul
   `).run({ source, now, ok: ok ? 1 : 0, error: errTrimmed });
 }
 
+/**
+ * Consecutive failures for one source, or 0 when it has never run.
+ *
+ * Used by the ingest circuit breaker: a feed that has been dead for months
+ * (a subreddit now behind OAuth, a retired feed URL) otherwise keeps its full
+ * schedule forever, spending a request every interval to collect the same 403.
+ */
+export function getConsecutiveFailures(source: string): number {
+  const row = getDb()
+    .prepare('SELECT consecutive_failures AS n FROM context_source_health WHERE source = ?')
+    .get(source) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
 export function getSourceHealth(): SourceHealth[] {
   const rows = getDb()
     .prepare('SELECT * FROM context_source_health ORDER BY source')

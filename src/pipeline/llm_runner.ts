@@ -1,6 +1,7 @@
 import { logEvent } from '../storage/queries.js';
 import { logger } from '../utils/logger.js';
-import { getGroqModel } from '../config.js';
+import { getAgenticTimeoutMs, getGroqModel, getLlmTimeoutMs } from '../config.js';
+import { withTimeout } from '../utils/timeout.js';
 import { getGroqClient, groqReasoningParams } from './groq_client.js';
 import { isClaudeAvailable, claudeGeneratorModel, generateWithClaude } from './claude_generator.js';
 import {
@@ -46,7 +47,9 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
   if (isAgenticGenerationEnabled()) {
     if (opts.agenticRunner) {
       try {
-        text = (await opts.agenticRunner()).trim();
+        text = (await withTimeout(
+          opts.agenticRunner(), getAgenticTimeoutMs(), `${opts.taskName} (agentic)`,
+        )).trim();
       } catch (err) {
         noteClaudeAuthFailure(err);
         logger.warn('Agentic generation failed; falling back to single-shot', { ...logCtx, err: String(err) });
@@ -77,7 +80,11 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
     logEvent('CLAUDE_GENERATION_START', `model=${claudeModel} fn=${opts.taskName}${suffix}`, opts.postId);
     logger.info('Trying Claude', { model: claudeModel, ...logCtx });
     try {
-      const result = await generateWithClaude(opts.systemPrompt, opts.userPrompt);
+      const result = await withTimeout(
+        generateWithClaude(opts.systemPrompt, opts.userPrompt),
+        getLlmTimeoutMs(),
+        `${opts.taskName} (claude)`,
+      );
       const candidate = result.text.trim();
       if (candidate.length >= minChars) {
         logEvent(
@@ -114,19 +121,23 @@ export async function generateText(opts: GenerateTextOptions): Promise<string> {
     logEvent('GROQ_FALLBACK_START', `model=${groqModel} fn=${opts.taskName}`, opts.postId);
     logger.info('Calling Groq', { model: groqModel, ...logCtx });
     try {
-      const completion = await client.chat.completions.create({
-        model: groqModel,
-        messages: [
-          { role: 'system', content: opts.systemPrompt },
-          { role: 'user', content: opts.userPrompt },
-        ],
-        temperature: opts.groq.temperature ?? 0.8,
-        top_p: opts.groq.topP ?? 0.95,
-        ...(opts.groq.maxCompletionTokens != null
-          ? { max_completion_tokens: opts.groq.maxCompletionTokens }
-          : { max_tokens: opts.groq.maxTokens ?? 400 }),
-        ...groqReasoningParams(groqModel),
-      } as any);
+      const completion = await withTimeout(
+        client.chat.completions.create({
+          model: groqModel,
+          messages: [
+            { role: 'system', content: opts.systemPrompt },
+            { role: 'user', content: opts.userPrompt },
+          ],
+          temperature: opts.groq.temperature ?? 0.8,
+          top_p: opts.groq.topP ?? 0.95,
+          ...(opts.groq.maxCompletionTokens != null
+            ? { max_completion_tokens: opts.groq.maxCompletionTokens }
+            : { max_tokens: opts.groq.maxTokens ?? 400 }),
+          ...groqReasoningParams(groqModel),
+        } as any),
+        getLlmTimeoutMs(),
+        `${opts.taskName} (groq)`,
+      );
       text = (completion.choices[0]?.message?.content ?? '').trim();
       logEvent('GROQ_FALLBACK_SUCCESS', `model=${groqModel} chars=${text.length} fn=${opts.taskName}`, opts.postId);
       logger.info('Groq generation succeeded', { chars: text.length, ...logCtx });

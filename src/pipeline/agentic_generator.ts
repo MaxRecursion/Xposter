@@ -4,8 +4,11 @@ import { isClaudeCliFound } from '../agent/client.js';
 import { claudeGeneratorModel } from './claude_generator.js';
 import { charLength, cleanModelText } from './text_constraints.js';
 import { logger } from '../utils/logger.js';
-import { getAnthropicApiKey, getAgenticGeneratorModel, getAgenticGenMaxTurns } from '../config.js';
+import {
+  getAnthropicApiKey, getAgenticGeneratorModel, getAgenticGenMaxTurns, getAgenticTimeoutMs,
+} from '../config.js';
 import { isClaudeCliAuthBlocked, noteClaudeAuthFailure } from './provider_health.js';
+import { TimeoutError } from '../utils/timeout.js';
 
 /**
  * Agentic content generation on the Claude Agent SDK.
@@ -300,6 +303,20 @@ export async function runGenerationAgent(task: AgenticGenerationTask, modelOverr
   const env: Record<string, string | undefined> = { ...process.env };
   if (isClaudeCliFound()) delete env.ANTHROPIC_API_KEY;
 
+  // A wedged CLI subprocess emits no turns and no error, so `maxTurns` never
+  // trips and the caller waits forever while holding the scheduler's
+  // single-flight guard. The abort controller is what makes the timeout real:
+  // it terminates the subprocess rather than leaving it running, unwatched and
+  // still billing, behind an abandoned promise.
+  const abortController = new AbortController();
+  const timeoutMs = getAgenticTimeoutMs();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeoutMs);
+  timer.unref?.();
+
   const stream = sdk.query({
     prompt: task.userPrompt,
     options: {
@@ -307,6 +324,7 @@ export async function runGenerationAgent(task: AgenticGenerationTask, modelOverr
       env,
       model,
       maxTurns,
+      abortController,
       permissionMode: 'default',
       allowedTools: allToolNames,
       disallowedTools: ['Bash', 'Read', 'Grep', 'Glob', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task'],
@@ -325,9 +343,23 @@ export async function runGenerationAgent(task: AgenticGenerationTask, modelOverr
       }
     }
   } catch (err) {
+    if (timedOut) {
+      logEvent('AGENTIC_GENERATION_TIMEOUT', `after ${Math.round(timeoutMs / 1000)}s turns=${turnCount} ${label}`, task.postId);
+      logger.warn('Agentic generation timed out; aborted', { timeoutMs, turns: turnCount, kind: task.kind });
+      throw new TimeoutError('Agentic generation', timeoutMs);
+    }
     noteClaudeAuthFailure(err);
     logEvent('AGENTIC_GENERATION_FAILED', `error: ${String(err).slice(0, 300)} ${label}`, task.postId);
     throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // A submission accepted before the abort landed is still discarded: the run
+  // is past its budget and the caller has already been told to move on.
+  if (timedOut) {
+    logEvent('AGENTIC_GENERATION_TIMEOUT', `after ${Math.round(timeoutMs / 1000)}s turns=${turnCount} ${label}`, task.postId);
+    throw new TimeoutError('Agentic generation', timeoutMs);
   }
 
   if (!submitted) {

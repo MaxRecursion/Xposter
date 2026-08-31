@@ -12,6 +12,13 @@ interface VoyageResponse {
   usage?: { total_tokens?: number };
 }
 
+interface QueuedBatch {
+  batch: string[];
+  kind: EmbeddingKind;
+  resolve: (vectors: Float32Array[]) => void;
+  reject: (err: unknown) => void;
+}
+
 /**
  * Voyage embeddings client with a global request-rate limiter.
  *
@@ -25,7 +32,8 @@ export class VoyageEmbeddings implements EmbeddingClient {
 
   private readonly minIntervalMs: number;
   private nextSlot = 0;
-  private chain: Promise<unknown> = Promise.resolve();
+  private queue: QueuedBatch[] = [];
+  private draining = false;
 
   constructor(private readonly apiKey: string, dim = 512) {
     this.dim = dim;
@@ -36,6 +44,14 @@ export class VoyageEmbeddings implements EmbeddingClient {
   /** Time in ms until the next slot is available, for /api/context/health. */
   msUntilNextSlot(): number {
     return Math.max(0, this.nextSlot - Date.now());
+  }
+
+  /** Batches waiting on a rate-limit slot, split by kind, for /api/context/health. */
+  queueDepth(): { query: number; document: number } {
+    return {
+      query: this.queue.filter((entry) => entry.kind === 'query').length,
+      document: this.queue.filter((entry) => entry.kind === 'document').length,
+    };
   }
 
   async embed(inputs: string[], opts: { kind?: EmbeddingKind } = {}): Promise<Float32Array[]> {
@@ -54,16 +70,49 @@ export class VoyageEmbeddings implements EmbeddingClient {
    * Serializes batches and enforces minIntervalMs between requests, regardless
    * of how many concurrent callers (ingest sources, retrieval queries) are in
    * flight. Returns a promise that resolves with the batch's vectors.
+   *
+   * Queries are placed ahead of any queued ingest work. The rate limit is a
+   * few requests per minute shared by both, and a cold-start backfill can hold
+   * dozens of document batches — strict FIFO makes a reply-pipeline lookup wait
+   * out the entire backlog, which is minutes of a scoring run blocked on a
+   * signal that is only a scoring boost. Ingest is throughput work and can
+   * wait; a query has a caller sitting on it.
    */
   private scheduleBatch(batch: string[], kind: EmbeddingKind): Promise<Float32Array[]> {
-    const next = this.chain.then(async () => {
-      const wait = Math.max(0, this.nextSlot - Date.now());
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      this.nextSlot = Date.now() + this.minIntervalMs;
-      return this.embedBatch(batch, kind);
+    return new Promise<Float32Array[]>((resolve, reject) => {
+      const entry: QueuedBatch = { batch, kind, resolve, reject };
+      if (kind === 'query') {
+        // Insert before the first queued document batch, after any queries
+        // already waiting, so queries stay FIFO relative to each other.
+        const firstDoc = this.queue.findIndex((queued) => queued.kind === 'document');
+        if (firstDoc === -1) this.queue.push(entry);
+        else this.queue.splice(firstDoc, 0, entry);
+      } else {
+        this.queue.push(entry);
+      }
+      void this.drain();
     });
-    this.chain = next.catch(() => undefined);
-    return next;
+  }
+
+  /** Single consumer: one in-flight request at a time, spaced by minIntervalMs. */
+  private async drain(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      while (this.queue.length > 0) {
+        const entry = this.queue.shift()!;
+        const wait = Math.max(0, this.nextSlot - Date.now());
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        this.nextSlot = Date.now() + this.minIntervalMs;
+        try {
+          entry.resolve(await this.embedBatch(entry.batch, entry.kind));
+        } catch (err) {
+          entry.reject(err);
+        }
+      }
+    } finally {
+      this.draining = false;
+    }
   }
 
   private async embedBatch(batch: string[], kind: EmbeddingKind): Promise<Float32Array[]> {

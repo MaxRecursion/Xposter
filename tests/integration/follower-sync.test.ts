@@ -208,6 +208,51 @@ describe('runFollowerSync', () => {
     expect(sendUnfollowNotification).toHaveBeenCalledWith(['fickle_fan']);
   });
 
+  it('skips followers already awaiting a decision so fresh ones are reached', async () => {
+    // The follower list comes back in a stable order. Without excluding the
+    // handles already sitting PENDING, the same entries at the head of the
+    // list consume every slot on every run and nothing behind them is ever
+    // classified — which is how a real backlog stopped surfacing new followers.
+    const sendFollowerNotification = vi.fn().mockResolvedValue({ ok: true });
+    const followerEntries = [{ handle: 'blocker', followedByUs: false }];
+
+    vi.doMock('../../src/browser/followers.js', () => ({
+      resolveOwnHandle: vi.fn().mockResolvedValue('my_handle'),
+      fetchOurFollowerEntries: vi.fn().mockImplementation(() => Promise.resolve(followerEntries)),
+      fetchOurFollowers: vi.fn(),
+      followBack: vi.fn(),
+    }));
+    vi.doMock('../../src/pipeline/classifier.js', () => ({
+      classifyAccount: vi.fn().mockImplementation((handle: string) => Promise.resolve(mockAccount(handle))),
+    }));
+    vi.doMock('../../src/notifications/ntfy.js', () => ({
+      sendFollowerNotification,
+      sendUnfollowNotification: vi.fn().mockResolvedValue({ ok: true }),
+    }));
+
+    const { setSetting } = await import('../../src/storage/settings.js');
+    // One slot per run makes head-of-line blocking unambiguous.
+    setSetting('follow_back_candidates_per_run', '1');
+
+    const { runFollowerSync } = await import('../../src/scheduler/follower_sync.js');
+    const { listPendingFollowBackEvents } = await import('../../src/storage/follower_events.js');
+
+    // Run 1: 'blocker' is classified and parked as PENDING.
+    await runFollowerSync();
+    expect(listPendingFollowBackEvents().map((e) => e.account_handle)).toEqual(['blocker']);
+
+    // Run 2: a new follower arrives behind the still-pending 'blocker'.
+    followerEntries.push({ handle: 'fresh_follower', followedByUs: false });
+    const second = await runFollowerSync();
+
+    expect(second.notFollowedBack).toBe(2);
+    // The single slot went to the new handle, not back to 'blocker'.
+    expect(second.queued).toBe(1);
+    const pending = listPendingFollowBackEvents().map((e) => e.account_handle).sort();
+    expect(pending).toEqual(['blocker', 'fresh_follower']);
+    expect(sendFollowerNotification).toHaveBeenCalledTimes(2);
+  });
+
   it('returns a visible failure when the account handle cannot be resolved', async () => {
     vi.doMock('../../src/browser/followers.js', () => ({
       resolveOwnHandle: vi.fn().mockResolvedValue(null),

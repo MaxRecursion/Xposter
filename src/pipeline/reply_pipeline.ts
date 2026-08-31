@@ -156,6 +156,11 @@ export async function runReplyPipeline(
     } catch (err) {
       logger.error('Pipeline failed', { err });
       logEvent('PIPELINE_ERROR', String(err));
+      // A run that threw delivered nothing, so it counts toward the stall
+      // latch exactly like an empty one. Without this, the failure mode most
+      // worth paging about — every run erroring or timing out — was the one
+      // case that never raised the alert.
+      await notePipelineDelivery({ posted: 0, pendingApproval: 0 }).catch(() => undefined);
       throw err;
     } finally {
       _running = false;

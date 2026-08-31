@@ -1,5 +1,5 @@
 import {
-  getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
+  expireStaleScheduledRuns, getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
   insertScheduledRun, markRunError, markRunFired, ScheduledRun,
 } from '../storage/scheduled_runs.js';
 import { logEvent, type PostSource } from '../storage/queries.js';
@@ -53,6 +53,15 @@ export function stopRandomScheduler(): void {
 /** Ensures we have a plan row for today; called at boot and once per tick. */
 export function ensureTodayPlan(): ScheduledRun[] {
   const dateKey = todayDateKey();
+
+  // Slots missed while the app was down are closed out rather than left due,
+  // so a restart cannot replay yesterday's runs on top of today's plan.
+  const expired = expireStaleScheduledRuns(dateKey, 'PIPELINE');
+  if (expired > 0) {
+    logEvent('SCHEDULE_RUNS_EXPIRED', `${expired} missed run(s) from earlier days`);
+    logger.info('Expired missed pipeline runs', { count: expired, before: dateKey });
+  }
+
   const existing = getScheduledRunsForDate(dateKey);
   if (existing.length > 0) return existing;
 
@@ -151,7 +160,7 @@ async function tick(): Promise<void> {
   ensureTodayPlan();
   if (!getBooleanSetting('system_running', true)) return;
 
-  const due = getDuePendingRuns(Math.floor(Date.now() / 1000));
+  const due = getDuePendingRuns(Math.floor(Date.now() / 1000), 'PIPELINE', todayDateKey());
   if (due.length === 0) return;
 
   // Fire only the oldest due run; remaining will fire on next tick.

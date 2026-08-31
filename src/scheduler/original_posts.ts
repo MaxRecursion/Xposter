@@ -1,11 +1,12 @@
 import {
-  getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
+  expireStaleScheduledRuns, getDuePendingRuns, getScheduledRunsForDate, getUpcomingRuns,
   insertScheduledRun, markRunError, markRunFired, markRunSkipped,
   rescheduleRun, retryCountFromDetail, withRetryDetail, ScheduledRun,
 } from '../storage/scheduled_runs.js';
 import {
   insertOriginalPost, markOriginalPostPosted, markOriginalPostError,
   getPostsNeedingImpressionSync, insertImpression, listRecentOriginalPostContents,
+  getOriginalsPostedTodayCount, reapStaleGeneratingPosts,
 } from '../storage/original_posts.js';
 import {
   generateEngagementFarmPost, generateOriginalPost, generateQuoteTweetPost,
@@ -37,6 +38,14 @@ let _posting = false;
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function startOriginalPostScheduler(): void {
+  // Drafts left mid-generation by the previous process are failed out here,
+  // before anything reads status counts.
+  const reaped = reapStaleGeneratingPosts();
+  if (reaped > 0) {
+    logEvent('ORIGINAL_DRAFTS_REAPED', `${reaped} abandoned GENERATING draft(s) marked ERROR`);
+    logger.info('Reaped abandoned original post drafts', { count: reaped });
+  }
+
   ensureTodayOriginalPlan();
   if (_tickHandle) return;
 
@@ -66,6 +75,8 @@ export async function triggerOriginalPost(): Promise<{ ok: boolean; id?: string;
 
 export function ensureTodayOriginalPlan(): ScheduledRun[] {
   const dateKey = todayDateKey();
+  expireMissedRuns(dateKey);
+
   const existing = getScheduledRunsForDate(dateKey, KIND);
   if (existing.length > 0) return existing;
 
@@ -86,6 +97,14 @@ export function ensureTodayOriginalPlan(): ScheduledRun[] {
 
 export function getTodayOriginalPlan(): ScheduledRun[] {
   return getScheduledRunsForDate(todayDateKey(), KIND);
+}
+
+/** Closes out slots missed while the app was down, before today's plan runs. */
+function expireMissedRuns(dateKey: string): void {
+  const expired = expireStaleScheduledRuns(dateKey, KIND);
+  if (expired === 0) return;
+  logEvent('ORIGINAL_RUNS_EXPIRED', `${expired} missed slot(s) from earlier days`);
+  logger.info('Expired missed original post slots', { count: expired, before: dateKey });
 }
 
 export function getNextOriginalRuns(limit = 5): ScheduledRun[] {
@@ -145,8 +164,25 @@ async function tick(): Promise<void> {
   if (!getBooleanSetting('system_running', true)) return;
   if (_posting) return;
 
-  const due = getDuePendingRuns(Math.floor(Date.now() / 1000), KIND);
+  const dateKey = todayDateKey();
+  const due = getDuePendingRuns(Math.floor(Date.now() / 1000), KIND, dateKey);
   if (due.length === 0) return;
+
+  // Slot count alone is not a cap: transient reschedules and retries can each
+  // fire an extra post, so the day's real total is checked against the setting
+  // here — the same guard the reply pipeline applies to `max_replies_per_day`.
+  const cap = getIntSetting('original_posts_per_day', 2, 1, 15);
+  const postedToday = getOriginalsPostedTodayCount();
+  if (postedToday >= cap) {
+    for (const run of due) {
+      markRunSkipped(run.id, `daily cap reached (posted=${postedToday} cap=${cap})`);
+    }
+    logEvent('ORIGINAL_DAILY_CAP_REACHED', `posted=${postedToday} cap=${cap} skipped=${due.length}`);
+    logger.info('Original post daily cap reached — skipping due runs', {
+      postedToday, cap, skipped: due.length,
+    });
+    return;
+  }
 
   const next = due[0];
   const postType: OriginalPostType = next.detail === 'ENGAGEMENT_FARM'

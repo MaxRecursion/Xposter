@@ -4,7 +4,7 @@ import { createServer } from './api/server.js';
 import { getDb } from './storage/db.js';
 import { startScheduler } from './scheduler/cron.js';
 import { isLoggedIn } from './browser/session.js';
-import { logger } from './utils/logger.js';
+import { logger, trimLaunchdLog } from './utils/logger.js';
 import { getBindHost, getBrowserUrls, getPort } from './utils/network.js';
 import { getIngestCron } from './config.js';
 import { getTelemetryStatus, shutdownTelemetry } from './telemetry/bootstrap.js';
@@ -12,6 +12,7 @@ import { stopScheduler } from './scheduler/cron.js';
 
 async function main(): Promise<void> {
   logger.info('=== Xposter starting ===');
+  trimLaunchdLog();
 
   // Initialize database
   getDb();

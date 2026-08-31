@@ -17,6 +17,12 @@ export interface AudienceScrapeResult {
   levels?: number[][];     // [dayOfWeek][hour] = bucket 0..4
   cellCount?: number;
   error?: string;
+  /**
+   * X served the Premium upsell instead of the analytics page. Distinct from a
+   * scrape failure: no selector work can recover it, and retrying on a daily
+   * timer only burns a browser page. Callers use this to stand the job down.
+   */
+  premiumRequired?: boolean;
 }
 
 export async function scrapeAudienceHeatmap(): Promise<AudienceScrapeResult> {
@@ -58,6 +64,21 @@ async function scrapeAudienceHeatmapImpl(): Promise<AudienceScrapeResult> {
 
     // Let any final animations settle
     await delay(randomBetween(1500, 2500));
+
+    // Check for the subscription gate before parsing. X shows an "Advanced
+    // analytics with X Premium … Upgrade to continue" dialog over a blurred
+    // preview, so the heatmap is genuinely absent from the DOM rather than
+    // merely behind a selector we got wrong.
+    const paywalled = await page.evaluate(() => {
+      const body = (document.body?.innerText ?? '').toLowerCase();
+      return /advanced analytics with x premium/.test(body)
+        || (/upgrade to continue/.test(body) && /analytics/.test(body));
+    }).catch(() => false);
+
+    if (paywalled) {
+      logger.warn('Audience analytics is gated behind X Premium for this account');
+      return { ok: false, error: 'premium_required', premiumRequired: true };
+    }
 
     const data = await page.evaluate(() => {
       // ── Colour helpers ─────────────────────────────────────────────────────

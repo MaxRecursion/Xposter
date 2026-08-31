@@ -27,6 +27,23 @@ export class ContextStore {
   constructor(private readonly embeddings: EmbeddingClient) {}
 
   /**
+   * Embedding rate-limiter state, when the client exposes it.
+   *
+   * Surfaced on /api/context/health because a saturated queue is otherwise
+   * invisible: ingest and query traffic share a few requests per minute, and
+   * the symptom shows up as an unexplained stall in a consumer rather than as
+   * an error anywhere near the queue.
+   */
+  embeddingQueueState(): { waitMs: number; query: number; document: number } | null {
+    const client = this.embeddings as EmbeddingClient & {
+      msUntilNextSlot?: () => number;
+      queueDepth?: () => { query: number; document: number };
+    };
+    if (!client.queueDepth || !client.msUntilNextSlot) return null;
+    return { waitMs: client.msUntilNextSlot(), ...client.queueDepth() };
+  }
+
+  /**
    * Insert items that aren't already stored. Two-stage dedup:
    *   1. SHA-256 of body — exact duplicate detection (cheap, no embedding spent)
    *   2. Cosine distance against recent items — semantic near-duplicate

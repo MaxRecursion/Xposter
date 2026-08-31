@@ -3,8 +3,8 @@ import {
   listFollowerHandles, setFollowerState, setFollowingState,
 } from '../storage/accounts.js';
 import {
-  autoApproveFollowBack, enqueueFollowerEvent, setFollowerEventStatus,
-  upsertPendingFollowBackEvent,
+  autoApproveFollowBack, enqueueFollowerEvent, listPendingFollowBackEvents,
+  setFollowerEventStatus, upsertPendingFollowBackEvent,
 } from '../storage/follower_events.js';
 import { logEvent } from '../storage/queries.js';
 import { getBooleanSetting, getIntSetting, getListSetting } from '../storage/settings.js';
@@ -195,12 +195,24 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
   }
 
   // Cap to avoid notification/classification bursts on first run after a long absence.
-  const maxPerRun = 5;
+  const maxPerRun = getIntSetting('follow_back_candidates_per_run', 5, 1, 50);
   const autoCfg = getAutoFollowBackConfig();
+
+  // Handles already awaiting a decision are skipped, not re-processed. The
+  // follower list comes back in a stable order, so without this the first few
+  // entries — typically bots and brand accounts that auto-follow-back will
+  // never clear — occupy every slot on every run, and genuine followers deeper
+  // in the list are never reached at all.
+  const alreadyPending = new Set(
+    listPendingFollowBackEvents().map((event) => event.account_handle.toLowerCase()),
+  );
+  const freshCandidates = notFollowedBack.filter(
+    (handle) => !alreadyPending.has(handle.toLowerCase()),
+  );
 
   let queued = 0;
   let autoScheduled = 0;
-  for (const handle of notFollowedBack.slice(0, maxPerRun)) {
+  for (const handle of freshCandidates.slice(0, maxPerRun)) {
     try {
       const account = await classifyAccount(handle, null, { fetchProfileIfMissing: true });
       const cls = (account.classification ?? 'UNKNOWN').toUpperCase();
@@ -233,10 +245,12 @@ export async function runFollowerSync(): Promise<FollowerSyncResult> {
     }
   }
 
-  if (notFollowedBack.length > maxPerRun) {
+  if (freshCandidates.length > maxPerRun) {
     logEvent(
       'FOLLOW_BACK_BATCH_TRUNCATED',
-      `${notFollowedBack.length} not-followed-back followers; processed ${maxPerRun}`,
+      `${notFollowedBack.length} not-followed-back followers `
+      + `(${alreadyPending.size} awaiting decision, ${freshCandidates.length} fresh); `
+      + `processed ${maxPerRun}`,
     );
   }
 

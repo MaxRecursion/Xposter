@@ -12,8 +12,8 @@
  * worse for the account than no image at all.
  */
 import {
-  getDuePendingRuns, getScheduledRunsForDate, insertScheduledRun, markRunError,
-  markRunFired, markRunSkipped, rescheduleRun, retryCountFromDetail, withRetryDetail,
+  expireStaleScheduledRuns, getDuePendingRuns, getScheduledRunsForDate, insertScheduledRun,
+  markRunError, markRunFired, markRunSkipped, rescheduleRun, retryCountFromDetail, withRetryDetail,
 } from '../storage/scheduled_runs.js';
 import { getBooleanSetting, getIntSetting } from '../storage/settings.js';
 import { logEvent } from '../storage/queries.js';
@@ -58,6 +58,13 @@ export function stopImagePostScheduler(): void {
 
 export function ensureTodayImagePlan() {
   const dateKey = todayDateKey();
+
+  const expired = expireStaleScheduledRuns(dateKey, KIND);
+  if (expired > 0) {
+    logEvent('IMAGE_RUNS_EXPIRED', `${expired} missed image slot(s) from earlier days`);
+    logger.info('Expired missed image post slots', { count: expired, before: dateKey });
+  }
+
   const existing = getScheduledRunsForDate(dateKey, KIND);
   if (existing.length > 0) return existing;
 
@@ -88,7 +95,7 @@ async function tick(): Promise<void> {
 
   ensureTodayImagePlan();
 
-  const due = getDuePendingRuns(Math.floor(Date.now() / 1000), KIND);
+  const due = getDuePendingRuns(Math.floor(Date.now() / 1000), KIND, todayDateKey());
   if (due.length === 0) return;
 
   const run = due[0];
