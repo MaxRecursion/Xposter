@@ -54,6 +54,15 @@ export function getGroqClassifierModel(): string {
   return process.env.GROQ_CLASSIFIER_MODEL?.trim() || getGroqModel();
 }
 
+/**
+ * Cheap/fast model for the LLM-as-judge eval loop — this scores replies that
+ * already posted, so it runs on a schedule, not the hot path. llama3-8b-8192
+ * has been decommissioned on Groq; llama-3.1-8b-instant is its replacement.
+ */
+export function getGroqJudgeModel(): string {
+  return process.env.GROQ_JUDGE_MODEL?.trim() || 'llama-3.1-8b-instant';
+}
+
 export function getOpenAiApiKey(): string | null {
   return process.env.OPENAI_API_KEY?.trim() || null;
 }

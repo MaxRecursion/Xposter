@@ -1,5 +1,6 @@
 import { logEvent, Post } from '../storage/queries.js';
 import { Account, getAccount } from '../storage/accounts.js';
+import { withCache } from '../cache/cache.js';
 import { getContextStore } from '../context/enrich.js';
 import type { RetrievedContextItem } from '../context/types.js';
 import { logger } from '../utils/logger.js';
@@ -164,12 +165,18 @@ export function scorePost(post: Post, signals: ScoringSignals = {}): ScoredPost 
   };
 }
 
+const SCORE_CACHE_TTL_SECONDS = 6 * 60 * 60;
+
 export async function scorePostsWithSignals(posts: Post[]): Promise<ScoredPost[]> {
   const topicalHeat = await loadTopicalHeat(posts);
-  return posts.map((post, index) => scorePost(post, {
-    topicalHeat: topicalHeat[index] ?? 0,
-    accountHistory: accountHistorySignal(getAccount(post.author_handle)),
-  }));
+  return Promise.all(posts.map((post, index) => withCache(
+    `score:${post.tweet_id}`,
+    SCORE_CACHE_TTL_SECONDS,
+    async () => scorePost(post, {
+      topicalHeat: topicalHeat[index] ?? 0,
+      accountHistory: accountHistorySignal(getAccount(post.author_handle)),
+    }),
+  )));
 }
 
 export function topicalHeatSignal(items: RetrievedContextItem[]): number {

@@ -8,6 +8,7 @@ import { startFollowBackProcessor, stopFollowBackProcessor } from './follow_back
 import { startOriginalPostScheduler, stopOriginalPostScheduler } from './original_posts.js';
 import { startAudienceSync, stopAudienceSync } from './audience_sync.js';
 import { startReplyMetricsSync, stopReplyMetricsSync } from './reply_metrics_sync.js';
+import { startJudgeEvalScheduler, stopJudgeEvalScheduler } from './judge_eval.js';
 import { startSessionHealthWatchdog, stopSessionHealthWatchdog } from './session_health.js';
 import { startWeeklyDigestScheduler, stopWeeklyDigestScheduler } from './weekly_digest.js';
 import { startAgentWatcher, stopAgentWatcher } from '../agent/watcher.js';
@@ -37,6 +38,7 @@ export function startScheduler(): void {
   startOriginalPostScheduler();
   startAudienceSync();
   startReplyMetricsSync();
+  startJudgeEvalScheduler();
   startSessionHealthWatchdog();
   startWeeklyDigestScheduler();
   startAgentWatcher();
@@ -75,6 +77,7 @@ export function stopScheduler(): void {
   stopOriginalPostScheduler();
   stopAudienceSync();
   stopReplyMetricsSync();
+  stopJudgeEvalScheduler();
   stopSessionHealthWatchdog();
   stopWeeklyDigestScheduler();
   stopAgentWatcher();

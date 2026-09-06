@@ -27,6 +27,7 @@ import {
 import { getReplyBaitCountsToday } from '../storage/queries.js';
 import { winnerExamplesBlock } from '../storage/engagement_performance.js';
 import { updatePostTournamentMeta } from '../storage/posts.js';
+import { get as getCache, set as setCache } from '../cache/cache.js';
 
 const MAX_REPLY_CHARS = 280;
 
@@ -323,7 +324,41 @@ export async function generateReply(
   return result.text;
 }
 
+/** Bump whenever the reply system prompts change meaningfully, so cached replies from the old wording expire on their own instead of lingering for their TTL. */
+export const PROMPT_VERSION = 1;
+const REPLY_CACHE_TTL_SECONDS = 2 * 60 * 60;
+
 export async function generateReplyWithMeta(
+  post: Post,
+  authorAccount: Account | null = null,
+  options: {
+    avoidTexts?: string[];
+    stance?: Stance | null;
+    engagementMode?: EngagementMode | null;
+  } = {},
+): Promise<GeneratedReply> {
+  // A retry-for-distinctness call (generateDistinct passing avoidTexts) must
+  // always regenerate — reusing the cached first draft would defeat the
+  // duplicate-avoidance it exists for. Only the first, plain call per tweet
+  // is cached.
+  const isRetry = Boolean(options.avoidTexts && options.avoidTexts.length > 0);
+  const cacheKey = `reply:${post.tweet_id}:${PROMPT_VERSION}`;
+
+  if (!isRetry) {
+    const cached = await getCache<GeneratedReply>(cacheKey);
+    if (cached) {
+      logger.info('Reply generation cache hit', { postId: post.id, tweetId: post.tweet_id });
+      return cached;
+    }
+  }
+
+  const result = await generateReplyUncached(post, authorAccount, options);
+
+  if (!isRetry) await setCache(cacheKey, result, REPLY_CACHE_TTL_SECONDS);
+  return result;
+}
+
+async function generateReplyUncached(
   post: Post,
   authorAccount: Account | null = null,
   options: {

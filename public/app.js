@@ -1079,6 +1079,8 @@ async function loadAnalytics() {
       ['Successful replies', summary.successful_replies || 0],
       ['Original posts', summary.originals || 0],
       ['Actions / 1k imp.', formatQualityRate(summary.actions_per_1k_impressions, summary.quality_sample_size)],
+      ['Avg judge score', formatQualityRate(summary.avg_judge_score, summary.judge_sample_size)],
+      ['Judge pass rate', summary.judge_pass_rate == null ? `n/a · n=${summary.judge_sample_size || 0}` : `${summary.judge_pass_rate}% · n=${summary.judge_sample_size || 0}`],
     ].map(([label, value]) => `
       <div class="analytics-summary-card">
         <div class="analytics-summary-value">${escHtml(value)}</div>

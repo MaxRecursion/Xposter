@@ -8,3 +8,4 @@ export * from './agent.js';
 export * from './llm.js';
 export * from './images.js';
 export * from './x.js';
+export * from './cache.js';

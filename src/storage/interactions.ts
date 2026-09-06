@@ -17,6 +17,9 @@ export interface Interaction {
   author_engaged: number;
   content_structure: string | null;
   notes: string | null;
+  judge_score: number | null;
+  judge_reasoning: string | null;
+  judge_evaluated_at: number | null;
 }
 
 export function recordInteraction(
@@ -114,6 +117,31 @@ export function getInteractionsNeedingMetricSync(opts: {
     now - opts.olderThanSeconds,
     Math.min(Math.max(opts.limit, 1), 100),
   ) as Interaction[];
+}
+
+/**
+ * Interactions eligible for LLM-judge evaluation: metric-synced (so the judge
+ * always has a real posted reply to look at, not one that never went out) and
+ * not yet judged. Oldest first so the backlog drains in posting order.
+ */
+export function getUnjudgedInteractions(limit = 10): Interaction[] {
+  return getDb().prepare(`
+    SELECT * FROM interactions
+    WHERE last_metric_check IS NOT NULL
+      AND judge_evaluated_at IS NULL
+    ORDER BY posted_at ASC
+    LIMIT ?
+  `).all(Math.min(Math.max(limit, 1), 100)) as Interaction[];
+}
+
+export function updateJudgeScore(id: number, result: { score: number; reasoning: string }): void {
+  getDb().prepare(`
+    UPDATE interactions SET
+      judge_score        = ?,
+      judge_reasoning    = ?,
+      judge_evaluated_at = unixepoch()
+    WHERE id = ?
+  `).run(result.score, result.reasoning, id);
 }
 
 // A reply counts as "successful" once it has meaningful engagement:

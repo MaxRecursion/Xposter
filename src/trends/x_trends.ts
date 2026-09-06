@@ -15,6 +15,7 @@ import { getDb } from '../storage/db.js';
 import { recordSourceRun } from '../context/ingest/health.js';
 import { getIntSetting } from '../storage/settings.js';
 import { logger } from '../utils/logger.js';
+import { withCache } from '../cache/cache.js';
 import { classifyTrendSafety, detectScript, type TrendSafetyClass } from './trend_filter.js';
 
 /** The public web-app bearer used by x.com itself for guest requests. */
@@ -75,14 +76,26 @@ export interface RawTrend {
   rank: number;
 }
 
+const TREND_FETCH_CACHE_TTL_SECONDS = 15 * 60;
+
 /**
- * Fetches the trend list for one WOEID.
- *
+ * Fetches the trend list for one WOEID, cached for 15 minutes per WOEID —
+ * trends don't move fast enough to justify hitting the API on every poll.
+ */
+export async function fetchTrends(woeid: number): Promise<RawTrend[]> {
+  return withCache(
+    `trend-fetch:${woeid}`,
+    TREND_FETCH_CACHE_TTL_SECONDS,
+    () => fetchTrendsUncached(woeid),
+  );
+}
+
+/**
  * Retries exactly once on 401/403 with a fresh guest token — tokens expire, but
  * an unbounded retry loop against an unauthenticated endpoint is how you get
  * IP-banned.
  */
-export async function fetchTrends(woeid: number): Promise<RawTrend[]> {
+async function fetchTrendsUncached(woeid: number): Promise<RawTrend[]> {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const token = await getGuestToken();

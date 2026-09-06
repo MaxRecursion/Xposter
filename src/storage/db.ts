@@ -361,6 +361,11 @@ function applyMigrations(db: Database.Database): void {
   addColumnIfMissing(db, 'original_posts', 'quoted_author_handle', 'TEXT');
   addColumnIfMissing(db, 'original_posts', 'engagement_mode', 'TEXT');
   addColumnIfMissing(db, 'interactions', 'content_structure', 'TEXT');
+  // LLM-as-judge eval loop: independent quality score for a posted reply,
+  // computed after its engagement metrics are synced.
+  addColumnIfMissing(db, 'interactions', 'judge_score', 'REAL');
+  addColumnIfMissing(db, 'interactions', 'judge_reasoning', 'TEXT');
+  addColumnIfMissing(db, 'interactions', 'judge_evaluated_at', 'INTEGER');
   addColumnIfMissing(db, 'original_posts', 'content_structure', 'TEXT');
   // Auto-follow-back scheduling: when this unix timestamp arrives, execute the follow
   addColumnIfMissing(db, 'follower_events', 'scheduled_at', 'INTEGER');

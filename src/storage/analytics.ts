@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
 import { detectTopics } from '../context/topics.js';
+import { JUDGE_PASS_THRESHOLD } from '../eval/judge.js';
 
 export interface FollowerGrowthPoint {
   day: string;
@@ -74,6 +75,9 @@ export interface AnalyticsOverview {
     successful_replies: number;
     actions_per_1k_impressions: number | null;
     quality_sample_size: number;
+    avg_judge_score: number | null;
+    judge_pass_rate: number | null;
+    judge_sample_size: number;
   };
   follower_growth: FollowerGrowthPoint[];
   reply_by_classification: ReplyClassPerformance[];
@@ -234,6 +238,7 @@ export function getAnalyticsOverview(days = 30): AnalyticsOverview {
 
   const quality = loadReplyQuality(db, since);
   const tournament = loadTournamentQuality(db, since);
+  const judge = loadJudgeQuality(db, since);
 
   return {
     days: windowDays,
@@ -244,6 +249,9 @@ export function getAnalyticsOverview(days = 30): AnalyticsOverview {
       successful_replies: successfulReplies,
       actions_per_1k_impressions: quality.overall.actions_per_1k_impressions,
       quality_sample_size: quality.overall.sample_size,
+      avg_judge_score: judge.avg_judge_score,
+      judge_pass_rate: judge.judge_pass_rate,
+      judge_sample_size: judge.judge_sample_size,
     },
     follower_growth: followerGrowth,
     reply_by_classification: replyByClassification,
@@ -375,6 +383,29 @@ function loadReplyQuality(db: ReturnType<typeof getDb>, since: number) {
     by_topic: topicRows.slice(0, 20),
     by_stance: groupQuality(rows, (r) => r.stance ?? 'none'),
     by_content_structure: groupQuality(rows, (r) => r.content_structure ?? 'standard'),
+  };
+}
+
+function loadJudgeQuality(
+  db: ReturnType<typeof getDb>,
+  since: number,
+): { avg_judge_score: number | null; judge_pass_rate: number | null; judge_sample_size: number } {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS sample_size,
+      AVG(judge_score) AS avg_score,
+      SUM(CASE WHEN judge_score >= ${JUDGE_PASS_THRESHOLD} THEN 1 ELSE 0 END) AS passed
+    FROM interactions
+    WHERE judge_evaluated_at IS NOT NULL AND posted_at >= ?
+  `).get(since) as { sample_size: number; avg_score: number | null; passed: number };
+
+  if (row.sample_size === 0) {
+    return { avg_judge_score: null, judge_pass_rate: null, judge_sample_size: 0 };
+  }
+  return {
+    avg_judge_score: Math.round((row.avg_score ?? 0) * 10) / 10,
+    judge_pass_rate: Math.round((row.passed / row.sample_size) * 1000) / 10,
+    judge_sample_size: row.sample_size,
   };
 }
 
