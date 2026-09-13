@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+
+@theme {
+	--font-serif: Georgia, 'Times New Roman', ui-serif, serif;
+}
+
+html {
+	color-scheme: light;
+}

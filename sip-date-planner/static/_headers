@@ -1,0 +1,11 @@
+/*
+  Cache-Control: public, max-age=3600
+
+/data/index.json
+  Cache-Control: public, max-age=3600
+
+/data/meta.json
+  Cache-Control: public, max-age=3600
+
+/data/funds/*
+  Cache-Control: public, max-age=31536000, immutable

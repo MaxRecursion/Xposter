@@ -9,6 +9,8 @@ node_modules/
 # Runtime data and local browser session
 browser-profile/
 data/
+!sip-date-planner/static/data/
+!sip-date-planner/static/data/**
 logs/
 Backups/
 .xposter_backup_result.txt

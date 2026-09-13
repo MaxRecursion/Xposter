@@ -1,0 +1,60 @@
+name: Nightly data
+
+on:
+  schedule:
+    - cron: '30 20 * * *'
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: pipeline/.cache
+          key: mfapi-${{ github.run_id }}
+          restore-keys: mfapi-
+      - run: pnpm install --frozen-lockfile
+      - name: Previous fund count
+        id: prev
+        run: |
+          if [ -f static/data/meta.json ]; then
+            echo "count=$(node -e "console.log(JSON.parse(require('fs').readFileSync('static/data/meta.json','utf8')).fundCount||0)")" >> "$GITHUB_OUTPUT"
+          else
+            echo "count=0" >> "$GITHUB_OUTPUT"
+          fi
+      - run: pnpm pipeline
+      - name: Upstream breakage guard
+        env:
+          PREV: ${{ steps.prev.outputs.count }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync } from 'node:fs';
+          const prev = Number(process.env.PREV || 0);
+          const next = JSON.parse(readFileSync('static/data/meta.json', 'utf8')).fundCount;
+          if (prev > 0 && next < prev * 0.9) {
+            console.error(`Fund count dropped more than 10%: ${prev} -> ${next}`);
+            process.exit(1);
+          }
+          console.log(`fund count ${prev} -> ${next}`);
+          EOF
+      - name: Commit data if changed
+        run: |
+          git config user.name "sip-date-planner-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add static/data
+          if git diff --staged --quiet; then
+            echo "No data changes"
+          else
+            git commit -m "chore: nightly NAV artifacts"
+            git push
+          fi
