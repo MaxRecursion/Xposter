@@ -1,0 +1,42 @@
+name: SIP Date Planner CI
+
+on:
+  pull_request:
+    paths:
+      - 'sip-date-planner/**'
+      - '.github/workflows/sip-date-planner-ci.yml'
+  push:
+    paths:
+      - 'sip-date-planner/**'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: sip-date-planner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: sip-date-planner/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm check:bundle
+      - name: Preview
+        run: pnpm preview --host 127.0.0.1 --port 4173 &
+      - name: Wait for preview
+        run: npx --yes wait-on@8.0.3 http://127.0.0.1:4173 --timeout 60000
+      - uses: treosh/lighthouse-ci-action@v12
+        with:
+          configPath: sip-date-planner/lighthouserc.json
+          uploadArtifacts: true
+          temporaryPublicStorage: true
